@@ -1,5 +1,5 @@
 from http.server import BaseHTTPRequestHandler
-import json, os, base64, urllib.request, urllib.error
+import json, os, base64, urllib.request, urllib.error, re
 
 TOKEN = os.environ["GITHUB_TOKEN"]
 REPO = os.environ["GITHUB_REPO"]
@@ -24,14 +24,13 @@ class handler(BaseHTTPRequestHandler):
         
         uid = str(data.get("uid", ""))
         text = data.get("text", "")
-        item_id = data.get("item_id", 0)
-        last_updated = data.get("last_updated", 0)
+        emoji_id = data.get("emoji_id", "")
         
-        if not uid:
-            self.wfile.write(json.dumps({"ok": False, "error": "missing uid"}).encode())
+        if not uid or not text or not emoji_id:
+            self.wfile.write(json.dumps({"ok": False, "error": "missing fields"}).encode())
             return
         
-        result = update_storage(uid, text, item_id, last_updated)
+        result = append_to_badge(uid, text, emoji_id)
         self.wfile.write(json.dumps(result).encode())
     
     def do_OPTIONS(self):
@@ -41,7 +40,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-def update_storage(uid, text, item_id, last_updated):
+def append_to_badge(uid, text, emoji_id):
     api_url = f"https://api.github.com/repos/{REPO}/contents/{FILE_PATH}"
     headers = {
         "Authorization": f"Bearer {TOKEN}",
@@ -55,24 +54,32 @@ def update_storage(uid, text, item_id, last_updated):
     try:
         resp = urllib.request.urlopen(req)
         existing = json.loads(resp.read())
-        content = json.loads(base64.b64decode(existing["content"]).decode())
+        content = base64.b64decode(existing["content"]).decode("utf-8")
         sha = existing["sha"]
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            content = {}
+            content = "# для верифки\n\n| user_id | custom text | emoji_id |\n|---------|-------------|----------|\n"
             sha = None
         else:
             return {"ok": False, "error": f"github get failed: {e.code}"}
     
-    content[uid] = {
-        "text": text,
-        "item_id": item_id,
-        "last_updated": last_updated
-    }
+    new_line = f"| {uid} | {text} | {emoji_id} |"
     
-    new_content = base64.b64encode(json.dumps(content, indent=2, ensure_ascii=False).encode()).decode()
+    if uid in content:
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith(f"| {uid} "):
+                lines[i] = new_line
+                break
+        content = "\n".join(lines)
+        message = f"Update {uid}"
+    else:
+        content = content.rstrip("\n") + "\n" + new_line + "\n"
+        message = f"Add {uid}"
+    
+    new_content = base64.b64encode(content.encode("utf-8")).decode()
     payload = {
-        "message": f"Update {uid}",
+        "message": message,
         "content": new_content,
         "branch": BRANCH
     }
