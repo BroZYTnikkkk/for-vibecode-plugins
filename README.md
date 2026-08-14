@@ -18,7 +18,6 @@ you can also hit me up on tg ([@jaxbastard](https://t.me/jaxbastard)) and i'll a
 | папка, файл | RU: что внутри | EN: what's inside |
 |-------------|----------------|-------------------|
 | `allpg/` | папки плагинов, каждая содержит `.plugin` и `<name>-analysis.md` | plugin folders, each contains `.plugin` and `<name>-analysis.md` |
-| `allpg/<name>/` | файлы конкретного плагина: исходник + разбор | specific plugin files: source + analysis |
 | `plugins-index.md` | список имеющихся плагинов и анализов | all the plugins and analyses we've got |
 | `repo-vs-context7.md` | почему репо + нейронка лучше context7 для разработки плагинов | why repo + AI beats context7 for plugin development |
 
