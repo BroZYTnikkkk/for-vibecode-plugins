@@ -17,7 +17,7 @@ you can also hit me up on tg ([@jaxbastard](https://t.me/jaxbastard)) and i'll a
 
 | папка, файл | RU: что внутри | EN: what's inside |
 |-------------|----------------|-------------------|
-| `allpg/` | папки плагинов, каждая содержит `.plugin` и `-analysis.md` | plugin folders, each contains `.plugin` and `-analysis.md` |
+| `allpg/` | папки плагинов, каждая содержит `.plugin` и `<name>-analysis.md` | plugin folders, each contains `.plugin` and `<name>-analysis.md` |
 | `allpg/<name>/` | файлы конкретного плагина: исходник + разбор | specific plugin files: source + analysis |
 | `allpg/jaxtools/server/` | серверная часть (Vercel) для jaxtools | server-side (Vercel) for jaxtools |
 | `allpg/jaxtools/jt-badge.md` | таблица верификации пользователей jaxtools | jaxtools user verification table |
