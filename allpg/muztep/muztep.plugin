@@ -1,0 +1,796 @@
+__id__ = "muztep"
+__name__ = "MuzTep downloader"
+__description__ = "поиск и отправка треков с muztep.net\n.sm {автор -/— название}\n.ism {запрос} — инлайн поиск"
+__icon__ = "ZHynhs/1"
+__version__ = "1.2.0"
+__author__ = "@jaxbastard"
+__min_version__ = "12.5.1"
+__requirements__ = ["mutagen"]
+
+import os
+import re
+import time
+import json
+from urllib.parse import urlparse
+
+import requests
+from bs4 import BeautifulSoup
+import mutagen
+
+from android_utils import copy_to_clipboard, run_on_ui_thread
+from org.telegram.messenger import R as R_tg, NotificationCenter
+from base_plugin import BasePlugin, HookResult, HookStrategy, MethodReplacement, MethodHook
+from client_utils import run_on_queue, PLUGINS_QUEUE, send_audio, send_text, get_user_config, get_last_fragment
+from file_utils import get_cache_dir
+from hook_utils import find_class
+from ui.bulletin import BulletinHelper
+
+from org.telegram.tgnet import TLRPC
+
+BASE_URL = "https://muztep.net"
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 13) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Mobile Safari/537.36"
+    ),
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://muztep.net/",
+}
+
+MARKER = "\u200d\u200c\u200c"
+
+
+class BypassInternalUriCheck(MethodReplacement):
+    def replace_hooked_method(self, param):
+        return False
+
+
+class _InlineButtonHook(MethodHook):
+    def __init__(self, plugin):
+        self._plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            btn = param.args[1] if param.args and len(param.args) > 1 else None
+            if btn is None or not hasattr(btn, "data") or btn.data is None:
+                return
+            data = bytes(btn.data).decode("utf-8", errors="ignore")
+            if not data.startswith("muztep_"):
+                return
+            param.setResult(None)
+            cell = param.args[0] if param.args and len(param.args) > 0 else None
+            self._plugin._handle_inline_button(cell, data)
+        except Exception:
+            pass
+
+
+class _CellSetupHook(MethodHook):
+    def __init__(self, plugin):
+        self._plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            msg = param.args[0] if param.args else None
+            if msg is None:
+                return
+            if not hasattr(msg, "messageOwner") or msg.messageOwner is None:
+                return
+            msg_text = str(getattr(msg, "messageText", "") or "")
+            if MARKER not in msg_text:
+                return
+            self._plugin._rebuild_markup(msg)
+        except Exception:
+            pass
+
+
+class _ChatOpenHook(MethodHook):
+    def __init__(self, plugin):
+        self._plugin = plugin
+
+    def after_hooked_method(self, param):
+        try:
+            fragment = param.thisObject
+            dialog_id = int(fragment.getDialogId())
+            if not dialog_id:
+                return
+            self._plugin._on_chat_opened(dialog_id)
+        except Exception:
+            pass
+
+
+class MuzTepPlugin(BasePlugin):
+
+    TRACKS_PER_PAGE = 4
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+        self._uri_hook = None
+        self._inline_sessions = {}
+        self._btn_unhooks = []
+        self._load_all_sessions()
+        self._install_inline_button_hooks()
+        self._install_cell_setup_hook()
+        self._install_chat_open_hook()
+
+    def on_plugin_unload(self):
+        self._unhook_uri()
+        for u in list(self._btn_unhooks):
+            try:
+                self.unhook_method(u)
+            except Exception:
+                pass
+        self._btn_unhooks.clear()
+
+    def _hook_uri(self):
+        try:
+            AndroidUtils = find_class("org.telegram.messenger.AndroidUtilities")
+            Uri = find_class("android.net.Uri")
+            method = AndroidUtils.getDeclaredMethod("isInternalUri", Uri)
+            method.setAccessible(True)
+            self._uri_hook = self.hook_method(method, BypassInternalUriCheck())
+        except Exception:
+            pass
+
+    def _unhook_uri(self):
+        try:
+            if self._uri_hook:
+                self.unhook_method(self._uri_hook)
+                self._uri_hook = None
+        except Exception:
+            pass
+
+    def on_send_message_hook(self, account, params):
+        result = HookResult()
+
+        if not hasattr(params, "message") or not isinstance(params.message, str):
+            return result
+
+        text = params.message.strip()
+        peer_id = params.peer if hasattr(params, "peer") else None
+
+        if text.lower().startswith(".sm "):
+            raw = text[4:].strip()
+
+            sep = None
+            for candidate in (" — ", " - "):
+                if candidate in raw:
+                    sep = candidate
+                    break
+
+            if not sep:
+                BulletinHelper.show_error("неверный формат, используй: .sm {автор -/— название}")
+                result.strategy = HookStrategy.CANCEL
+                return result
+
+            parts = raw.split(sep, 1)
+            artist_q = parts[0].strip()
+            title_q = parts[1].strip()
+
+            run_on_queue(
+                lambda: self._search_and_send(artist_q, title_q, peer_id),
+                PLUGINS_QUEUE,
+            )
+            result.strategy = HookStrategy.CANCEL
+            return result
+
+        if text.lower().startswith(".ism "):
+            query = text[5:].strip()
+            if not query:
+                BulletinHelper.show_error("укажи запрос: .ism автор или название")
+                result.strategy = HookStrategy.CANCEL
+                return result
+
+            run_on_queue(
+                lambda: self._inline_search_start(query, peer_id),
+                PLUGINS_QUEUE,
+            )
+            result.strategy = HookStrategy.CANCEL
+            return result
+
+        return result
+
+    def _install_inline_button_hooks(self):
+        try:
+            Class = find_class("java.lang.Class")
+            clazz = Class.forName("org.telegram.ui.ChatActivity$ChatMessageCellDelegate")
+            for method in clazz.getDeclaredMethods():
+                if method.getName() == "didPressBotButton":
+                    self.hook_method(method, _InlineButtonHook(self))
+        except Exception:
+            pass
+
+    def _install_cell_setup_hook(self):
+        try:
+            Class = find_class("java.lang.Class")
+            clazz = Class.forName("org.telegram.ui.Cells.ChatMessageCell")
+            for method in clazz.getDeclaredMethods():
+                if method.getName() == "setMessageObject":
+                    self.hook_method(method, _CellSetupHook(self))
+        except Exception:
+            pass
+
+    def _install_chat_open_hook(self):
+        try:
+            Class = find_class("java.lang.Class")
+            clazz = Class.forName("org.telegram.ui.ChatActivity")
+            self.hook_all_methods(clazz, "onResume", _ChatOpenHook(self))
+        except Exception:
+            pass
+
+    def _rebuild_markup(self, msg_obj):
+        try:
+            dialog_id = int(msg_obj.getDialogId())
+            session = self._inline_sessions.get(dialog_id)
+            if session is None:
+                return
+            page = session.get("page", 1)
+            tracks = self._get_cached_page_tracks(session, page)
+            if not tracks:
+                return
+            markup = self._build_markup(dialog_id, tracks, page)
+            msg_obj.messageOwner.reply_markup = markup
+            msg_obj.messageOwner.flags |= 64
+            try:
+                msg_obj.measureInlineBotButtons()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _get_cached_page_tracks(self, session, page):
+        cache = session.get("meta_cache", {})
+        start = (page - 1) * self.TRACKS_PER_PAGE
+        raw = session["all_tracks"][start:start + self.TRACKS_PER_PAGE]
+        tracks = []
+        for t in raw:
+            url = t["track_url"]
+            entry = cache.get(url)
+            if entry:
+                tracks.append({"track_url": url, "track_id": t["track_id"], "label": entry["label"]})
+        return tracks
+
+    def _refresh_message_ui(self, msg_obj):
+        try:
+            account = int(get_user_config().currentAccount)
+            dialog_id = msg_obj.getDialogId()
+            nc = NotificationCenter.getInstance(account)
+            try:
+                nc.postNotificationName(228, dialog_id)
+                return
+            except Exception:
+                pass
+            try:
+                from java.util import ArrayList
+                arr = ArrayList()
+                arr.add(msg_obj)
+                nc.postNotificationName(50, dialog_id, arr)
+                return
+            except Exception:
+                pass
+            try:
+                fragment = get_last_fragment()
+                if fragment is None:
+                    return
+                for field_name in ("chatListView", "listView", "recyclerListView"):
+                    try:
+                        f = fragment.getClass().getDeclaredField(field_name)
+                        f.setAccessible(True)
+                        rv = f.get(fragment)
+                        if rv is not None:
+                            rv.getAdapter().notifyDataSetChanged()
+                            return
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _load_all_sessions(self):
+        try:
+            peers_raw = self.get_setting("session_peers", None)
+            if not peers_raw:
+                return
+            peer_ids = json.loads(peers_raw)
+            for peer_id in peer_ids:
+                saved = self._load_session(peer_id)
+                if saved:
+                    self._inline_sessions[peer_id] = {
+                        "query": saved["query"],
+                        "all_tracks": saved["all_tracks"],
+                        "meta_cache": saved.get("meta_cache", {}),
+                        "page": saved.get("page", 1),
+                    }
+        except Exception:
+            pass
+
+    def _save_session(self, peer_id, session):
+        try:
+            data = {
+                "query": session["query"],
+                "page": session.get("page", 1),
+                "all_tracks": session["all_tracks"],
+                "meta_cache": session.get("meta_cache", {}),
+            }
+            self.set_setting("session_" + str(peer_id), json.dumps(data))
+            try:
+                peers_raw = self.get_setting("session_peers", None)
+                peers = json.loads(peers_raw) if peers_raw else []
+                if peer_id not in peers:
+                    peers.append(peer_id)
+                    self.set_setting("session_peers", json.dumps(peers))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _load_session(self, peer_id):
+        try:
+            raw = self.get_setting("session_" + str(peer_id), None)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except Exception:
+            return None
+
+    def _remove_session(self, peer_id):
+        try:
+            self.set_setting("session_" + str(peer_id), None)
+            peers_raw = self.get_setting("session_peers", None)
+            if peers_raw:
+                peers = json.loads(peers_raw)
+                if peer_id in peers:
+                    peers.remove(peer_id)
+                    self.set_setting("session_peers", json.dumps(peers))
+        except Exception:
+            pass
+
+    def _on_chat_opened(self, dialog_id):
+        pass
+
+    def _handle_inline_button(self, cell, data):
+        if data == "muztep_noop":
+            return
+
+        if data.startswith("muztep_pick:"):
+            parts = data.split(":", 2)
+            if len(parts) == 3:
+                s_peer = int(parts[1])
+                idx = int(parts[2])
+                peer_id = self._peer_from_cell(cell)
+                run_on_queue(lambda: self._inline_pick(s_peer, idx, peer_id), PLUGINS_QUEUE)
+
+        elif data.startswith("muztep_page:"):
+            parts = data.split(":", 2)
+            if len(parts) == 3:
+                s_peer = int(parts[1])
+                page = int(parts[2])
+                msg_obj = cell.getMessageObject() if cell is not None else None
+                peer_id = self._peer_from_cell(cell)
+                run_on_queue(lambda: self._inline_page(s_peer, page, peer_id, msg_obj), PLUGINS_QUEUE)
+
+    def _peer_from_cell(self, cell):
+        try:
+            if cell is not None:
+                mo = cell.getMessageObject()
+                if mo is not None and hasattr(mo, "messageOwner") and mo.messageOwner is not None:
+                    return int(mo.messageOwner.dialog_id)
+        except Exception:
+            pass
+        return None
+
+    def _inline_search_start(self, query, peer_id):
+        try:
+            BulletinHelper.show_info("ищу: " + query)
+            all_tracks = self._fetch_track_links(query)
+            if not all_tracks:
+                BulletinHelper.show_error("ничего не нашёл: " + query)
+                return
+
+            session = {
+                "query": query,
+                "all_tracks": all_tracks,
+                "meta_cache": {},
+                "page": 1,
+            }
+            self._inline_sessions[peer_id] = session
+
+            tracks = self._fetch_page_tracks(session, 1)
+            text = "Результаты по запросу " + query + " " + MARKER
+
+            self._save_session(peer_id, session)
+            run_on_ui_thread(lambda: send_text(peer_id, text))
+
+        except Exception as e:
+            err = str(e)
+            BulletinHelper.show_with_button(
+                "ошибка поиска: " + err,
+                R_tg.raw.error,
+                "Копировать",
+                lambda: copy_to_clipboard(err),
+                duration=BulletinHelper.DURATION_PROLONG,
+            )
+
+    def _inline_page(self, session_peer, page, peer_id, msg_obj):
+        try:
+            session = self._inline_sessions.get(session_peer)
+            if not session:
+                BulletinHelper.show_error("сессия не найдена, запусти .ism снова")
+                return
+
+            if msg_obj is None:
+                BulletinHelper.show_error("потеряли ячейку, запусти .ism снова")
+                return
+
+            tracks = self._fetch_page_tracks(session, page)
+            if not tracks:
+                BulletinHelper.show_error("больше треков нет")
+                return
+
+            session["page"] = page
+            self._save_session(peer_id, session)
+
+            run_on_ui_thread(lambda: self._refresh_message_ui(msg_obj))
+
+        except Exception as e:
+            BulletinHelper.show_error("ошибка страницы: " + str(e))
+
+    def _inline_pick(self, session_peer, idx, peer_id):
+        try:
+            session = self._inline_sessions.get(session_peer)
+            if not session:
+                BulletinHelper.show_error("трек не найден, попробуй снова")
+                return
+
+            page = session.get("page", 1)
+            abs_idx = (page - 1) * self.TRACKS_PER_PAGE + idx
+            all_tracks = session["all_tracks"]
+            if abs_idx >= len(all_tracks):
+                BulletinHelper.show_error("трек не найден, попробуй снова")
+                return
+
+            raw = all_tracks[abs_idx]
+            cache = session.get("meta_cache", {})
+            cached = cache.get(raw["track_url"])
+            if cached:
+                real_artist = cached["artist"]
+                real_title = cached["title"]
+                thumb_url = cached["thumb_url"]
+            else:
+                meta = self._get_track_meta(raw["track_url"])
+                real_artist = meta["artist"] or ""
+                real_title = meta["title"] or raw["track_url"]
+                thumb_url = meta["thumb_url"]
+
+            BulletinHelper.show_info("выгружаю: " + real_artist + " — " + real_title)
+
+            cdn_url = self._get_cdn_url(raw, real_artist, real_title)
+            if not cdn_url:
+                send_text(
+                    peer_id,
+                    "<b>" + real_title + "</b> — " + real_artist + "\n"
+                    + "<a href=\"" + raw["track_url"] + "\">слушать на MuzTep</a>",
+                    parse_mode="HTML",
+                )
+                BulletinHelper.show_info("ссылка отправлена")
+                return
+
+            tmp_path = self._download(cdn_url, real_artist, real_title)
+
+            thumb_bytes = None
+            if thumb_url:
+                try:
+                    r = requests.get(thumb_url, headers=HEADERS, timeout=15)
+                    r.raise_for_status()
+                    thumb_bytes = r.content
+                except Exception:
+                    pass
+
+            self._hook_uri()
+            try:
+                self._send_track(
+                    peer_id,
+                    tmp_path,
+                    real_artist + " — " + real_title + "\n---------\n" + raw["track_url"],
+                    real_artist,
+                    real_title,
+                    thumb_bytes,
+                )
+                BulletinHelper.show_info("найс: " + real_artist + " — " + real_title)
+            finally:
+                self._unhook_uri()
+
+        except Exception as e:
+            self._unhook_uri()
+            err = str(e)
+            BulletinHelper.show_with_button(
+                "залупа: " + err,
+                R_tg.raw.error,
+                "Копировать",
+                lambda: copy_to_clipboard(err),
+                duration=BulletinHelper.DURATION_PROLONG,
+            )
+
+    def _fetch_track_links(self, query):
+        url = BASE_URL + "/search/" + requests.utils.quote(query)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "lxml")
+        tracks = []
+        for track_link in soup.find_all("a", href=re.compile(r"^/track/")):
+            track_url = BASE_URL + track_link["href"]
+            m = re.search(r"/track/[^/]+/(\d+)", track_url)
+            if not m:
+                continue
+            tracks.append({"track_url": track_url, "track_id": m.group(1)})
+        return tracks
+
+    def _fetch_page_tracks(self, session, page):
+        cache = session.setdefault("meta_cache", {})
+        start = (page - 1) * self.TRACKS_PER_PAGE
+        raw = session["all_tracks"][start:start + self.TRACKS_PER_PAGE]
+        tracks = []
+        for t in raw:
+            url = t["track_url"]
+            if url not in cache:
+                try:
+                    meta = self._get_track_meta(url)
+                    artist = meta["artist"] or ""
+                    title = meta["title"] or url
+                    label = (artist + " — " + title) if artist else title
+                    cache[url] = {"artist": artist, "title": title, "label": label, "thumb_url": meta["thumb_url"]}
+                except Exception:
+                    cache[url] = {"artist": "", "title": url, "label": url, "thumb_url": None}
+            entry = cache[url]
+            tracks.append({"track_url": url, "track_id": t["track_id"], "label": entry["label"]})
+        return tracks
+
+    def _build_markup(self, peer_id, tracks, page):
+        total_pages = 5
+        markup = TLRPC.TL_replyInlineMarkup()
+
+        for i, t in enumerate(tracks):
+            row = TLRPC.TL_keyboardButtonRow()
+            btn = TLRPC.TL_keyboardButtonCallback()
+            btn.text = t["label"]
+            btn.data = ("muztep_pick:" + str(peer_id) + ":" + str(i)).encode("utf-8")
+            btn.requires_password = False
+            row.buttons.add(btn)
+            markup.rows.add(row)
+
+        nav_row = TLRPC.TL_keyboardButtonRow()
+
+        if page > 1:
+            btn_prev = TLRPC.TL_keyboardButtonCallback()
+            btn_prev.text = "◀"
+            btn_prev.data = ("muztep_page:" + str(peer_id) + ":" + str(page - 1)).encode("utf-8")
+            btn_prev.requires_password = False
+            nav_row.buttons.add(btn_prev)
+        else:
+            btn_stub = TLRPC.TL_keyboardButtonCallback()
+            btn_stub.text = " "
+            btn_stub.data = b"muztep_noop"
+            btn_stub.requires_password = False
+            nav_row.buttons.add(btn_stub)
+
+        btn_page = TLRPC.TL_keyboardButtonCallback()
+        btn_page.text = str(page) + "/" + str(total_pages)
+        btn_page.data = b"muztep_noop"
+        btn_page.requires_password = False
+        nav_row.buttons.add(btn_page)
+
+        if page < total_pages:
+            btn_next = TLRPC.TL_keyboardButtonCallback()
+            btn_next.text = "▶"
+            btn_next.data = ("muztep_page:" + str(peer_id) + ":" + str(page + 1)).encode("utf-8")
+            btn_next.requires_password = False
+            nav_row.buttons.add(btn_next)
+        else:
+            btn_stub2 = TLRPC.TL_keyboardButtonCallback()
+            btn_stub2.text = " "
+            btn_stub2.data = b"muztep_noop"
+            btn_stub2.requires_password = False
+            nav_row.buttons.add(btn_stub2)
+
+        markup.rows.add(nav_row)
+        return markup
+
+    def _search_and_send(self, artist_q, title_q, peer_id):
+        tmp_path = None
+        try:
+            BulletinHelper.show_info("ищу: " + artist_q + " — " + title_q)
+
+            track = self._search_track(artist_q + " " + title_q)
+            if not track:
+                BulletinHelper.show_error("нет такого, еблан: " + artist_q + " — " + title_q)
+                return
+
+            meta = self._get_track_meta(track["track_url"])
+            real_title = meta["title"] if meta["title"] else title_q
+            real_artist = meta["artist"] if meta["artist"] else artist_q
+            thumb_url = meta["thumb_url"]
+
+            BulletinHelper.show_info("выгружаю: " + real_artist + " — " + real_title)
+
+            cdn_url = self._get_cdn_url(track, real_artist, real_title)
+
+            if not cdn_url:
+                if peer_id:
+                    send_text(
+                        peer_id,
+                        "<b>" + real_title + "</b> — " + real_artist + "\n"
+                        + "<a href=\"" + track["track_url"] + "\">слушать на MuzTep</a>",
+                        parse_mode="HTML",
+                    )
+                BulletinHelper.show_info("ошибка бля, на ссылку просто")
+                return
+
+            tmp_path = self._download(cdn_url, real_artist, real_title)
+
+            thumb_bytes = None
+            if thumb_url:
+                try:
+                    r = requests.get(thumb_url, headers=HEADERS, timeout=15)
+                    r.raise_for_status()
+                    thumb_bytes = r.content
+                except Exception:
+                    pass
+
+            if peer_id:
+                self._hook_uri()
+                try:
+                    self._send_track(
+                        peer_id,
+                        tmp_path,
+                        real_artist + " — " + real_title + "\n---------\n" + track["track_url"],
+                        real_artist,
+                        real_title,
+                        thumb_bytes,
+                    )
+                    BulletinHelper.show_info("найс: " + real_artist + " — " + real_title)
+                finally:
+                    self._unhook_uri()
+            else:
+                BulletinHelper.show_error("хуйня")
+
+        except Exception as e:
+            self._unhook_uri()
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            err = str(e)
+            BulletinHelper.show_with_button(
+                "залупа: " + err,
+                R_tg.raw.error,
+                "Копировать",
+                lambda: copy_to_clipboard(err),
+                duration=BulletinHelper.DURATION_PROLONG,
+            )
+
+    def _search_track(self, query):
+        url = BASE_URL + "/search/" + requests.utils.quote(query)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "lxml")
+        link = soup.find("a", href=re.compile(r"^/track/"))
+        if not link:
+            return None
+
+        track_url = BASE_URL + link["href"]
+        track_id_match = re.search(r"/track/[^/]+/(\d+)", track_url)
+        if not track_id_match:
+            return None
+
+        return {"track_url": track_url, "track_id": track_id_match.group(1)}
+
+    def _get_track_meta(self, track_url):
+        resp = requests.get(track_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "lxml")
+        actions = soup.find(class_="track-actions")
+
+        title = None
+        artist = None
+        thumb_url = None
+
+        if actions:
+            title = actions.get("data-title")
+            artist = actions.get("data-artist")
+            thumb_url = actions.get("data-thumb")
+
+        return {"title": title, "artist": artist, "thumb_url": thumb_url}
+
+    def _send_track(self, peer_id, path, caption, artist, title, cover_bytes):
+        try:
+            from client_utils import _prepare_document, send_message
+            from org.telegram.tgnet import TLRPC
+            from org.telegram.messenger import ImageLoader
+            from android.graphics import BitmapFactory
+        except Exception:
+            send_audio(peer_id, path, caption=caption)
+            return
+
+        document = _prepare_document(path, "audio/mpeg")
+        if document is None:
+            send_audio(peer_id, path, caption=caption)
+            return
+
+        attr = TLRPC.TL_documentAttributeAudio()
+        attr.duration = self._duration(path)
+        attr.title = title or ""
+        attr.performer = artist or ""
+        attr.flags = attr.flags | 1 | 2
+        document.attributes.add(attr)
+
+        if cover_bytes:
+            try:
+                bmp = BitmapFactory.decodeByteArray(cover_bytes, 0, len(cover_bytes))
+                if bmp is not None:
+                    thumb = ImageLoader.scaleAndSaveImage(bmp, 320, 320, 80, False)
+                    if thumb is not None:
+                        document.thumbs.add(thumb)
+                    bmp.recycle()
+            except Exception:
+                pass
+
+        send_message({"peer": peer_id, "document": document, "path": path, "caption": caption})
+
+    def _duration(self, path):
+        try:
+            m = mutagen.File(path)
+            if m is not None and m.info is not None:
+                return float(m.info.length)
+        except Exception:
+            pass
+        return 0.0
+
+    def _get_cdn_url(self, track, artist, title):
+        api_url = (
+            BASE_URL + "/api/download/" + track["track_id"]
+            + "?artist=" + requests.utils.quote(artist)
+            + "&title=" + requests.utils.quote(title)
+        )
+
+        headers = dict(HEADERS)
+        headers["Referer"] = track["track_url"]
+
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+
+        data = resp.json()
+        return data.get("url")
+
+    def _download(self, url, artist, title):
+        cache_dir = get_cache_dir()
+
+        with requests.get(url, headers=HEADERS, stream=True, timeout=120) as r:
+            r.raise_for_status()
+            ext = self._audio_ext(r.headers.get("Content-Type", ""), url)
+            tmp_path = os.path.join(cache_dir, self._safe_name(artist, title) + ext)
+            with open(tmp_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+
+        return tmp_path
+
+    def _safe_name(self, artist, title):
+        name = (artist + " - " + title).strip(" -")
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", name)[:120].strip()
+        return name or "track"
+
+    def _audio_ext(self, content_type, url):
+        ct = content_type.split(";")[0].strip().lower()
+        if ct in ("audio/mp4", "audio/x-m4a", "audio/aac"):
+            return ".m4a"
+        if ct in ("audio/mpeg", "audio/mp3"):
+            return ".mp3"
+        if urlparse(url).path.lower().endswith(".m4a"):
+            return ".m4a"
+        return ".mp3"
