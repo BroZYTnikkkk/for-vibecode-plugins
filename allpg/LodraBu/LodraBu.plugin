@@ -1,16 +1,37 @@
 __id__ = "LodraBu"
-__name__ = "плагин выйти (в окно)"
-__description__ = "добавляет в дравер профиля кнопку выйти (в окно)"
+__name__ = "LodraBu"
+__description__ = "позволяет быстро сходить нахуй и вернуться"
 __icon__ = "PixelAnimeGirls/28"
-__version__ = "1.0.2"
+__version__ = "1.0.3.1"
 __author__ = "@jaxbastard"
 __min_version__ = "12.5.1"
+
+import traceback
 
 from base_plugin import BasePlugin, MethodHook
 from hook_utils import find_class, get_private_field
 from java import jclass
+from java.lang import Boolean, Integer, Float
+from android_utils import copy_to_clipboard
+from ui.bulletin import BulletinHelper
 
 LOGOUT_ITEM_ID = 9999
+ACCOUNT_ITEM_ID_BASE = 90000
+
+
+def _show_copyable_error(short_msg, exc, fragment=None):
+    try:
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        BulletinHelper.show_with_button(
+            short_msg,
+            jclass("org.telegram.messenger.R").raw.error,
+            "Copy",
+            on_click=lambda: copy_to_clipboard(trace),
+            fragment=fragment,
+        )
+    except Exception:
+        pass
+
 
 class ItemClickHook(MethodHook):
     def __init__(self, plugin, activity):
@@ -22,6 +43,7 @@ class ItemClickHook(MethodHook):
         if item_id == LOGOUT_ITEM_ID:
             self.plugin.on_logout_click(self.activity)
 
+
 class CreateMenuHook(MethodHook):
     def __init__(self, plugin):
         self.plugin = plugin
@@ -29,7 +51,6 @@ class CreateMenuHook(MethodHook):
     def after_hooked_method(self, param):
         activity = param.thisObject
 
-        # Проверяем, что открыт собственный профиль
         try:
             UserConfig = jclass("org.telegram.messenger.UserConfig")
             my_id = UserConfig.getInstance(
@@ -43,7 +64,7 @@ class CreateMenuHook(MethodHook):
             return
 
         otherItem = get_private_field(activity, "otherItem")
-        if otherItem is None:
+        if otherItem is None: ##ыыыы сыкс сэвэн
             return
 
         context = activity.getContext()
@@ -52,45 +73,128 @@ class CreateMenuHook(MethodHook):
 
         icon_id = res.getIdentifier("msg_leave_solar", "drawable", pkg)
 
-        try:
-            LocaleController = jclass("org.telegram.messenger.LocaleController")
-            label = LocaleController.getString("LeaveChannel")
-        except Exception:
-            try:
-                str_id = res.getIdentifier("LeaveChannel", "string", pkg)
-                label = res.getString(str_id) if str_id != 0 else "выйти"
-            except Exception:
-                label = "Выход"
+        LocaleController = jclass("org.telegram.messenger.LocaleController")
+        label = LocaleController.getString("LogOut")
 
         otherItem.addSubItem(LOGOUT_ITEM_ID, icon_id, label)
 
-        Class = jclass("java.lang.Class")
-        Integer = jclass("java.lang.Integer")
+        try:
+            listener = activity.getActionBar().getActionBarMenuOnItemClick()
+            Class = jclass("java.lang.Class")
+            listener_clazz = Class.forName(listener.getClass().getName())
 
-        listener = activity.getActionBar().getActionBarMenuOnItemClick()
-        listener_clazz = Class.forName(listener.getClass().getName())
-        click_method = listener_clazz.getDeclaredMethod(
-            "onItemClick",
-            Integer.TYPE
-        )
-        click_method.setAccessible(True)
-        self.plugin.hook_method(click_method, ItemClickHook(self.plugin, activity))
+            click_method = listener_clazz.getDeclaredMethod("onItemClick", Integer.TYPE)
+            click_method.setAccessible(True)
+            self.plugin.hook_method(click_method, ItemClickHook(self.plugin, activity))
+        except Exception as e:
+            _show_copyable_error("LodraBu: ошибка кнопки выхода", e, activity)
+
+
+class FillItemsHook(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def after_hooked_method(self, param):
+        activity = param.thisObject
+        items = param.args[0]
+
+        try:
+            search_item = get_private_field(activity, "searchItem")
+            if search_item is not None and search_item.isSearchFieldVisible2():
+                return
+        except Exception:
+            pass
+
+        try:
+            UserConfig = jclass("org.telegram.messenger.UserConfig")
+            current_account = activity.getCurrentAccount()
+
+            other_accounts = []
+            for a in range(UserConfig.MAX_ACCOUNT_COUNT):
+                if a == current_account:
+                    continue
+                if UserConfig.getInstance(a).isClientActivated():
+                    other_accounts.append(a)
+
+            if not other_accounts:
+                return
+
+            UItem = jclass("org.telegram.ui.Components.UItem")
+            AccountCellFactory = jclass("org.telegram.ui.SettingsActivity$AccountCell$Factory")
+
+            LocaleController = jclass("org.telegram.messenger.LocaleController")
+            header_text = LocaleController.getString("SettingsAccounts")
+
+            ArrayList = jclass("java.util.ArrayList")
+            block = ArrayList()
+            block.add(UItem.asHeader(header_text))
+            for a in other_accounts:
+                block.add(AccountCellFactory.of(ACCOUNT_ITEM_ID_BASE + a, a))
+            block.add(UItem.asShadow(None))
+
+            insert_at = 1 if items.size() > 0 else 0
+            items.addAll(insert_at, block)
+        except Exception as e:
+            _show_copyable_error("LodraBu: ошибка секции аккаунтов", e, activity)
+
+
+class ClickHook(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def after_hooked_method(self, param):
+        item = param.args[0]
+        try:
+            item_id = get_private_field(item, "id")
+        except Exception:
+            return
+
+        if item_id is None or item_id < ACCOUNT_ITEM_ID_BASE:
+            return
+
+        account = item_id - ACCOUNT_ITEM_ID_BASE
+        try:
+            LaunchActivity = jclass("org.telegram.ui.LaunchActivity")
+            instance = LaunchActivity.instance
+            if instance is not None:
+                instance.switchToAccount(account, True)
+        except Exception as e:
+            _show_copyable_error("LodraBu: ошибка переключения аккаунта", e)
+
 
 class LogoutDrawerButton(BasePlugin):
 
     def on_plugin_load(self):
         Class = jclass("java.lang.Class")
-        Boolean = jclass("java.lang.Boolean")
 
-        clazz = Class.forName("org.telegram.ui.ProfileActivity")
-        create_method = clazz.getDeclaredMethod(
-            "createActionBarMenu",
-            Boolean.TYPE
-        )
+        profile_clazz = Class.forName("org.telegram.ui.ProfileActivity")
+        create_method = profile_clazz.getDeclaredMethod("createActionBarMenu", Boolean.TYPE)
         create_method.setAccessible(True)
         self.hook_method(create_method, CreateMenuHook(self))
 
+        settings_clazz = Class.forName("org.telegram.ui.SettingsActivity")
+        array_list_cls = Class.forName("java.util.ArrayList")
+        universal_adapter_cls = Class.forName("org.telegram.ui.Components.UniversalAdapter")
+        uitem_cls = Class.forName("org.telegram.ui.Components.UItem")
+        view_cls = Class.forName("android.view.View")
+
+        fill_items_method = settings_clazz.getDeclaredMethod(
+            "fillItems",
+            array_list_cls, universal_adapter_cls
+        )
+        fill_items_method.setAccessible(True)
+        self.hook_method(fill_items_method, FillItemsHook(self))
+
+        click_method = settings_clazz.getDeclaredMethod(
+            "onClick",
+            uitem_cls, view_cls, Integer.TYPE, Float.TYPE, Float.TYPE
+        )
+        click_method.setAccessible(True)
+        self.hook_method(click_method, ClickHook(self))
+
     def on_logout_click(self, activity):
         LogoutActivity = find_class("org.telegram.ui.LogoutActivity")
+        if LogoutActivity is None:
+            return
         fragment = LogoutActivity()
         activity.presentFragment(fragment)
