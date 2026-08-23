@@ -2,12 +2,14 @@ name: Notify Telegram
 
 on:
   push:
+  create:
+  delete:
+  watch:
+  fork:
   issues:
     types: [opened, closed, reopened]
   pull_request:
     types: [opened, closed, reopened]
-  release:
-    types: [published]
 
 jobs:
   notify:
@@ -21,8 +23,4 @@ jobs:
           message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
           format: markdown
           message: |
-            🚀 *${{ github.event_name }}* in `${{ github.repository }}`
-
-            ${{ github.event.head_commit.message || github.event.issue.title || github.event.pull_request.title || github.event.release.name }}
-
-            [View on GitHub](${{ github.event.head_commit.url || github.event.issue.html_url || github.event.pull_request.html_url || github.event.release.html_url }})
+            ${{ github.event_name == 'push' && format('📝 *Push* in `{0}`{1}{2}', github.repository, github.event.head_commit && format('\n\n{0}', github.event.head_commit.message) || '', github.event.head_commit && format('\n\n[View commit]({0})', github.event.head_commit.url) || '') || '' }}${{ github.event_name == 'create' && format('✨ *Created* `{0}` in `{1}`\n\n[View on GitHub]({2})', github.event.ref, github.repository, github.event.repository.html_url) || '' }}${{ github.event_name == 'delete' && format('🗑️ *Deleted* `{0}` from `{1}`\n\n[View on GitHub]({2})', github.event.ref, github.repository, github.event.repository.html_url) || '' }}${{ github.event_name == 'watch' && format('⭐ *New star* on `{0}`\n\nTotal stars: {1}\n\n[View on GitHub]({2})', github.repository, github.event.repository.stargazers_count, github.event.repository.html_url) || '' }}${{ github.event_name == 'fork' && format('🍴 *New fork* of `{0}`\n\nBy: `{1}`\n\n[View fork]({2})', github.repository, github.event.forkee.owner.login, github.event.forkee.html_url) || '' }}${{ github.event_name == 'issues' && format('📌 *Issue {0}* in `{1}`\n\n{2}\n\n[View issue]({3})', github.event.action, github.repository, github.event.issue.title, github.event.issue.html_url) || '' }}${{ github.event_name == 'pull_request' && format('🔀 *PR {0}* in `{1}`\n\n{2}\n\n[View PR]({3})', github.event.action, github.repository, github.event.pull_request.title, github.event.pull_request.html_url) || '' }}
