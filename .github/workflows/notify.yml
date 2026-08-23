@@ -1,0 +1,28 @@
+name: Notify Telegram
+
+on:
+  push:
+  issues:
+    types: [opened, closed, reopened]
+  pull_request:
+    types: [opened, closed, reopened]
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send to Telegram Topic
+        uses: appleboy/telegram-action@v1.0.0
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          format: markdown
+          message: |
+            🚀 *${{ github.event_name }}* in `${{ github.repository }}`
+
+            ${{ github.event.head_commit.message || github.event.issue.title || github.event.pull_request.title || github.event.release.name }}
+
+            [View on GitHub](${{ github.event.head_commit.url || github.event.issue.html_url || github.event.pull_request.html_url || github.event.release.html_url }})
