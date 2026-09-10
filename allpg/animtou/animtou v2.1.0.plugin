@@ -1,19 +1,17 @@
 __id__ = "animtou"
 __name__ = "анимированные касания"
-__description__ = "добавляет прикольную анимацию при каждом нажатии"
+__description__ = "добавляет прикольную анимацию при каждом нажатии (идея — @itskotovski и @mishabotov)"
 __author__ = "@jaxbastard & @zwylair"
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __icon__ = "RandomStikery324/35"
-__min_version__ = "11.12.1"
+__min_version__ = "12.5.1"
 
 from typing import Any, List
 import traceback
-import threading
-from time import sleep
 from java import jclass
 from android_utils import run_on_ui_thread, copy_to_clipboard
 from base_plugin import BasePlugin, MethodHook
-from java.lang import Class as JClass, Float as JFloat, Boolean
+from java.lang import Class as JClass, Boolean
 from ui.settings import Header, Input, Divider, Text
 from ui.bulletin import BulletinHelper
 from client_utils import get_last_fragment, get_messages_controller
@@ -31,6 +29,7 @@ UPDATE_MESSAGE_ID = 4
 
 _ripple_cache = {}
 _max_cache_size = 10
+_patched_shader_code = None
 
 
 def _show_copyable_error(short_msg, exc):
@@ -46,6 +45,39 @@ def _show_copyable_error(short_msg, exc):
         pass
 
 
+def patch_shader_code(code):
+    replace_map = {
+        "return half4(0.0, 0.0, 0.0, 1.0);": "return half4(0.0, 0.0, 0.0, 0.0);",
+        "return img.eval(uv) + half4(add, add, add, 1.);": "return img.eval(uv) + half4(add, add, add, 0.0);",
+        "sdfRoundedBox(uv - size * .5, size * .5, radius)": "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
+    }
+    for k, v in replace_map.items():
+        code = code.replace(k, v)
+    return code
+
+
+def _get_patched_shader_code():
+    global _patched_shader_code
+    if _patched_shader_code is None:
+        _patched_shader_code = patch_shader_code(AndroidUtilities.readRes(R.raw.superripple_effect))
+    return _patched_shader_code
+
+
+def _make_patched_ripple(view):
+    ripple = SuperRipple(view)
+    try:
+        code = _get_patched_shader_code()
+        method = ripple.getClass().getDeclaredMethod("setupSizeUniforms", Boolean.TYPE)
+        method.setAccessible(True)
+        shader = RuntimeShader(code)
+        set_private_field(ripple, "shader", shader)
+        method.invoke(ripple, True)
+        set_private_field(ripple, "effect", RenderEffect.createRuntimeShaderEffect(shader, "img"))
+    except Exception as e:
+        _show_copyable_error("animtou: shader patch error", e)
+    return ripple
+
+
 class _animtouHook(MethodHook):
     def __init__(self, plugin):
         self.plugin = plugin
@@ -55,7 +87,16 @@ class _animtouHook(MethodHook):
             motion_event = param.args[0] if param.args and len(param.args) > 0 else None
             if motion_event is None:
                 return
-            self.plugin._handle_touch(param.thisObject, motion_event)
+        except Exception:
+            return
+
+        try:
+            this_object = param.thisObject
+        except Exception:
+            return
+
+        try:
+            self.plugin._handle_touch(this_object, motion_event)
         except Exception as e:
             try:
                 _show_copyable_error("animtou: hook error", e)
@@ -64,29 +105,6 @@ class _animtouHook(MethodHook):
 
     def after_hooked_method(self, param):
         return
-
-
-def patch_shader_code(code):
-    replace_map = {
-        "return half4(0.0, 0.0, 0.0, 1.0);": "return half4(0.0, 0.0, 0.0, 0.0);",
-        "return img.eval(uv) + half4(add, add, add, 1.);": "return img.eval(uv) + half4(add, add, add, 0.0);",
-    }
-    for k, v in replace_map.items():
-        code = code.replace(k, v)
-    return code
-
-
-class SuperRippleInitHook(MethodHook):
-    def after_hooked_method(self, param):
-        try:
-            code = patch_shader_code(AndroidUtilities.readRes(R.raw.superripple_effect))
-            method = param.thisObject.getClass().getDeclaredMethod("setupSizeUniforms", Boolean.TYPE)
-            method.setAccessible(True)
-            set_private_field(param.thisObject, "shader", shader := RuntimeShader(code))
-            method.invoke(param.thisObject, True)
-            set_private_field(param.thisObject, "effect", RenderEffect.createRuntimeShaderEffect(shader, "img"))
-        except Exception:
-            pass
 
 
 def get_all_decor_views():
@@ -120,16 +138,16 @@ def make_ripple(view, x, y, intensity):
             return
         if Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU:
             return
-        
+
         key = view.hashCode()
         if key not in _ripple_cache or _ripple_cache[key] is None:
-            _ripple_cache[key] = SuperRipple(view)
+            _ripple_cache[key] = _make_patched_ripple(view)
             if len(_ripple_cache) > _max_cache_size:
                 oldest = next(iter(_ripple_cache))
                 del _ripple_cache[oldest]
-        
+
         _ripple_cache[key].animate(x, y, intensity)
-    
+
     run_on_ui_thread(_internal)
 
 
@@ -149,10 +167,10 @@ class animtouPlugin(BasePlugin):
                 BulletinHelper.show_info("zwylib обнаружена, автообновление доступно")
                 self.set_setting("zwylib_missing", False)
         except ImportError:
-            def delayed_error():
-                sleep(2)
-                run_on_ui_thread(lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"))
-            threading.Thread(target=delayed_error, daemon=True).start()
+            run_on_ui_thread(
+                lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"),
+                2000
+            )
             self.set_setting("zwylib_missing", True)
 
         try:
@@ -178,12 +196,6 @@ class animtouPlugin(BasePlugin):
 
             try:
                 dispatch_method.setAccessible(True)
-            except Exception:
-                pass
-
-            try:
-                sr_cls = jclass("org.telegram.ui.Stars.SuperRipple")
-                self.hook_all_constructors(sr_cls, SuperRippleInitHook())
             except Exception:
                 pass
 
@@ -288,6 +300,9 @@ class animtouPlugin(BasePlugin):
         except Exception:
             return default
 
+    def _on_intensity_change(self, new_value):
+        self._cached_intensity = self._as_float(new_value, self._cached_intensity)
+
     def _open_channel(self, _view=None):
         try:
             run_on_ui_thread(lambda: get_messages_controller().openByUserName("jxbplug", get_last_fragment(), 1))
@@ -300,55 +315,44 @@ class animtouPlugin(BasePlugin):
         except Exception as e:
             _show_copyable_error("animtou: _open_channel2 error", e)
 
-    def create_settings(self):
+    def _open_idea_author(self, _view=None):
         try:
-            from org.telegram.messenger import LocaleController
-            lang = LocaleController.getInstance().getCurrentLocale().getLanguage()
-        except Exception:
-            lang = "en"
+            run_on_ui_thread(lambda: get_messages_controller().openByUserName("mishabotov", get_last_fragment(), 1))
+        except Exception as e:
+            _show_copyable_error("animtou: _open_idea_author error", e)
 
-        strings = {
-            "ru": {
-                "title": "риппл эффект",
-                "intensity": "интенсивность (0.1 - 3.0)",
-                "apply": "применить",
-                "channel": "бастардские плагины",
-                "channel2": "zwyPlugins",
-            },
-            "en": {
-                "title": "ripple effect",
-                "intensity": "intensity (0.1 - 3.0)",
-                "apply": "apply",
-                "channel": "bastard plugins",
-                "channel2": "zwyPlugins",
-            }
-        }
-        s = strings["ru" if str(lang).startswith("ru") else "en"]
-
+    def create_settings(self):
         intensity_default = str(self.get_setting("intensity", "0.55"))
 
         return [
-            Header(text=s["title"]),
-            Input(key="intensity", text=s["intensity"], default=intensity_default, icon="msg_brightness_high"),
-            Text(
-                text=s["apply"],
-                accent=True,
-                icon="ic_ab_done",
-                on_click=lambda _v=None: self._refresh_settings_cache()
+            Header(text="риппл эффект"),
+            Input(
+                key="intensity",
+                text="интенсивность (0.1 - 3.0)",
+                default=intensity_default,
+                icon="msg_brightness_high",
+                on_change=self._on_intensity_change,
             ),
             Divider(),
             Header(text="канал"),
             Text(
-                text=s["channel"],
+                text="бастардские плагины",
                 icon="msg_channel",
                 on_click=self._open_channel
             ),
             Divider(),
             Header(text="спасибо за помощь"),
             Text(
-                text=s["channel2"],
+                text="zwyPlugins",
                 icon="msg_channel",
                 on_click=self._open_channel2
+            ),
+            Divider(),
+            Header(text="автор идеи"),
+            Text(
+                text="миша-ня!",
+                icon="msg_channel",
+                on_click=self._open_idea_author
             ),
             Divider(text=f"animtou v{__version__} // лс: @cyryqs"),
         ]
