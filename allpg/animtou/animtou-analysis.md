@@ -1,5 +1,111 @@
 # Анализ разработки плагина animtou
 > Анимированные касания (SuperRipple-эффект) для AyuGram / ExteraGram
+> Версия документа: 2.1.0 — дополнено поверх исходного анализа
+> Новые источники: реальный `superripple_effect.agsl`
+
+---
+
+## Обновление 2.1.0 — что нового поверх исходного анализа
+
+Всё ниже — новое поверх исходного анализа (он сохранён целиком, см. "Архитектура: как
+это работает в целом" и далее).
+
+### Точный диагноз бага «экран по углам обрезается при анимации»
+
+Раздобыт реальный `superripple_effect.agsl` — вот что происходит на самом деле:
+
+```glsl
+half4 main(in float2 fragCoord) {
+    float add = 0.0;
+    float2 offset = float2(0.0);
+    for (int i = 0; i < 7; ++i) {
+        if (i >= count) break;
+        float3 ripple = rippleOffset_ios(fragCoord, float2(centerX[i], centerY[i]), intensity[i], t[i]);
+        offset += ripple.xy;
+        add += ripple.z;
+    }
+    float2 uv = fragCoord + offset;
+    if (sdfRoundedBox(uv - size * .5, size * .5, radius) > 0.0)
+        return half4(0.0, 0.0, 0.0, 1.0);
+    return img.eval(uv) + half4(add, add, add, 1.);
+}
+```
+
+Ключевая строка — `sdfRoundedBox(uv - size * .5, size * .5, radius)`. Это проверка
+"попадает ли смещённая рябью точка `uv` в скруглённый прямоугольник размером с View,
+с радиусами скругления по каждому углу `radius` (float4)". Если не попадает — считается,
+что мы "вышли" за пределы, и раньше это рисовалось сплошным чёрным (`alpha=1.0`) — это
+уже было исправлено первым патчем в `patch_shader_code`.
+
+Но сам факт, что граница — **скруглённая**, а не обычный прямоугольник, и есть причина,
+почему "обрезает" именно углы, а не любой край одинаково: у скруглённого прямоугольника
+кривизна границы сосредоточена ровно в углах, поэтому смещённая волной точка "вылетает"
+за эту границу там значительно охотнее, чем на прямом отрезке края. `radius` в оригинальном
+использовании (Stars-подарки, где `SuperRipple` применяется к скруглённой карточке/шторке)
+это осмысленно — эффект должен уважать скругление самой карточки. Когда плагин применяет
+`SuperRipple` к **полноэкранному decor view**, никакого "скругления карточки" там нет и
+не должно быть — а `radius`, судя по всему, всё равно выставляется в ненулевое значение
+внутри `setupSizeUniforms` (либо под скругление физического экрана, либо под дефолтное
+скругление Stars-шторки) и создаёт этот эффект в углах.
+
+**Фикс** — не Python-костыль, а прямая правка того же самого шейдер-кода, ровно тем же
+методом (`patch_shader_code`), что уже использовался для двух других строк:
+
+```python
+"sdfRoundedBox(uv - size * .5, size * .5, radius)":
+    "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
+```
+
+Радиус принудительно обнуляется прямо в шейдере — независимо от того, что туда
+передаёт `setupSizeUniforms`. Граница становится обычным прямоугольником, углы ведут
+себя так же, как и любая другая точка края.
+
+### Находка: `hook_all_constructors(SuperRipple, ...)` был шире, чем нужно
+
+Оригинальный код патчил шейдер через хук **на все конструкторы класса `SuperRipple`**:
+
+```python
+sr_cls = jclass("org.telegram.ui.Stars.SuperRipple")
+self.hook_all_constructors(sr_cls, SuperRippleInitHook())
+```
+
+Это хук на уровне класса — он сработает для **любого** `new SuperRipple(...)` в
+приложении, включая те, что создаёт сам Telegram для настоящих Stars-анимаций (покупка
+подарков и т.п.), не только для тех, что создаёт плагин. То есть побочным эффектом
+патч (прозрачный фон, а теперь ещё и обнулённый `radius`) применялся бы и к
+оригинальному Stars UI, незаметно меняя его вид — то, чего плагин, скорее всего,
+делать не должен.
+
+При этом плагин **сам** создаёт все нужные ему `SuperRipple` — единственное место:
+
+```python
+_ripple_cache[key] = SuperRipple(view)
+```
+
+Поскольку это наш собственный вызов конструктора, патчить шейдер можно сразу после
+создания, без глобального хука на класс:
+
+```python
+def _make_patched_ripple(view):
+    ripple = SuperRipple(view)
+    code = _get_patched_shader_code()
+    method = ripple.getClass().getDeclaredMethod("setupSizeUniforms", Boolean.TYPE)
+    method.setAccessible(True)
+    shader = RuntimeShader(code)
+    set_private_field(ripple, "shader", shader)
+    method.invoke(ripple, True)
+    set_private_field(ripple, "effect", RenderEffect.createRuntimeShaderEffect(shader, "img"))
+    return ripple
+```
+
+`hook_all_constructors` и класс `SuperRippleInitHook` из плагина убраны — они больше
+не нужны. Заодно это чуть дешевле: не висит хук, который дергается на каждое создание
+`SuperRipple` где угодно в приложении, а не только там, где он нам реально нужен.
+
+Также текст и патч шейдера теперь читаются и парсятся **один раз** (`_get_patched_shader_code`,
+модульный кэш `_patched_shader_code`), а не при создании каждого нового `SuperRipple` —
+`AndroidUtilities.readRes(...)` и три `str.replace(...)` за один такой вызов раньше
+выполнялись повторно на каждое новое окно/диалог.
 
 ---
 
@@ -7,7 +113,7 @@
 
 Плагин перехватывает **каждое касание** на уровне базового класса `android.view.View` через хук на `dispatchTouchEvent`. Это единственная точка входа всех тач-событий в Android — любой `View` во всём приложении проходит через неё. При обнаружении нажатия (ACTION_DOWN) плагин запускает `SuperRipple.animate()` — анимацию, которая уже встроена в Telegram, но нигде не вызывается при обычных касаниях.
 
-Второй слой — хук на конструктор `SuperRipple`, который патчит AGSL-шейдер, убирая непрозрачный фон эффекта.
+Второй слой — патч AGSL-шейдера, который убирает непрозрачный фон эффекта (патчится сразу после создания каждого `SuperRipple`, который создаёт сам плагин, — см. "Обновление 2.1.0" выше).
 
 ---
 
@@ -46,6 +152,32 @@ def before_hooked_method(self, param):
 ```
 
 `param.args[0]` — это `MotionEvent`, первый (и единственный) аргумент `dispatchTouchEvent`. `param.thisObject` — сам `View`, на котором произошло касание.
+
+**Найденный на практике нюанс:** хук висит буквально на всех `View` в приложении — включая те, что добавляют другие плагины. У некоторых сторонних плагинов (например, `Custom Profile` от `@RoflPlugins`, который добавляет свой кастомный блок с фото в профиль) свой `View`-класс, который Chaquopy иногда не может корректно завернуть в питоновский объект именно при чтении `param.thisObject` — падает с `TypeError: cannot create ... proxy from ... instance`, ещё до вызова `_handle_touch`. Риппл при этом продолжает нормально работать на всём остальном интерфейсе — ломается только сам конкретный тап по этому чужому элементу.
+
+Поэтому чтение `param.thisObject` вынесено в отдельный `try/except`, который тихо пропускает касание при такой ошибке — вместо того, чтобы каждый раз показывать буллетин с трейсом на то, что фактически не является багом animtou и ни на что не влияет:
+
+```python
+def before_hooked_method(self, param):
+    try:
+        motion_event = param.args[0] if param.args and len(param.args) > 0 else None
+        if motion_event is None:
+            return
+    except Exception:
+        return
+
+    try:
+        this_object = param.thisObject
+    except Exception:
+        return
+
+    try:
+        self.plugin._handle_touch(this_object, motion_event)
+    except Exception as e:
+        _show_copyable_error("animtou: hook error", e)
+```
+
+Ошибки внутри самой `_handle_touch` (уже наша логика) по-прежнему всплывают буллетином — тихо пропускается только сам факт нечитаемого `thisObject`, а не любые проблемы вообще.
 
 ---
 
@@ -139,7 +271,7 @@ def screen_to_local(view, raw_x, raw_y):
 ```python
 key = view.hashCode()
 if key not in _ripple_cache or _ripple_cache[key] is None:
-    _ripple_cache[key] = SuperRipple(view)
+    _ripple_cache[key] = _make_patched_ripple(view)
     if len(_ripple_cache) > _max_cache_size:
         oldest = next(iter(_ripple_cache))
         del _ripple_cache[oldest]
@@ -152,35 +284,29 @@ _ripple_cache[key].animate(x, y, intensity)
 
 `_max_cache_size = 10` — достаточно для всех реальных сценариев (активность + несколько диалогов).
 
+Создание идёт через `_make_patched_ripple(view)` вместо голого `SuperRipple(view)` —
+патч шейдера применяется прямо здесь, сразу после создания, а не через глобальный хук
+на конструктор (см. "Обновление 2.1.0" выше).
+
 ---
 
-### 9. `hook_all_constructors` + патч шейдера
-
-```python
-class SuperRippleInitHook(MethodHook):
-    def after_hooked_method(self, param):
-        code = patch_shader_code(AndroidUtilities.readRes(R.raw.superripple_effect))
-        method = param.thisObject.getClass().getDeclaredMethod("setupSizeUniforms", Boolean.TYPE)
-        method.setAccessible(True)
-        set_private_field(param.thisObject, "shader", shader := RuntimeShader(code))
-        method.invoke(param.thisObject, True)
-        set_private_field(param.thisObject, "effect", RenderEffect.createRuntimeShaderEffect(shader, "img"))
-```
+### 9. Патч шейдера — точечно, на своих экземплярах
 
 Оригинальный `SuperRipple` использует непрозрачный фон — шейдер прописывает `alpha = 1.0` в обоих return-путях. Для плагина это неприемлемо: рипл должен быть прозрачным (накладываться поверх UI, а не закрашивать его).
 
-`patch_shader_code` меняет два конкретных места в AGSL-коде шейдера:
+`patch_shader_code` меняет три конкретных места в AGSL-коде шейдера:
 
 ```python
 replace_map = {
     "return half4(0.0, 0.0, 0.0, 1.0);": "return half4(0.0, 0.0, 0.0, 0.0);",
     "return img.eval(uv) + half4(add, add, add, 1.);": "return img.eval(uv) + half4(add, add, add, 0.0);",
+    "sdfRoundedBox(uv - size * .5, size * .5, radius)": "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
 }
 ```
 
-`half4` — это GLSL/AGSL тип `(r, g, b, a)`. Замена `a = 1.0` на `a = 0.0` делает фон шейдера прозрачным, оставляя только сам эффект рипла.
+`half4` — это GLSL/AGSL тип `(r, g, b, a)`. Замена `a = 1.0` на `a = 0.0` делает фон шейдера прозрачным, оставляя только сам эффект рипла. Третья замена обнуляет радиус скругления границы эффекта — устраняет обрезание по углам (подробный разбор — в "Обновлении 2.1.0" выше).
 
-Хук вешается `after_hooked_method` — после того, как конструктор `SuperRipple` отработал и создал объект. Затем через `set_private_field` подменяются приватные поля `shader` и `effect` на пропатченные версии. `setupSizeUniforms` вызывается вручную, чтобы правильно инициализировать uniform-переменные нового шейдера.
+Патч применяется сразу после того, как плагин сам создаёт `SuperRipple(view)` — через `set_private_field` подменяются приватные поля `shader` и `effect` на пропатченные версии, `setupSizeUniforms` вызывается вручную, чтобы правильно инициализировать uniform-переменные нового шейдера.
 
 ---
 
@@ -233,9 +359,11 @@ def on_plugin_unload(self):
     _ripple_cache.clear()
 ```
 
-`hook_method` возвращает handle — ссылку на конкретную регистрацию хука. Сохранять её обязательно: `unhook_method` принимает именно её, а не класс или метод. Без явного снятия хука при выгрузке плагина — хук продолжит работать даже после его отключения, пока приложение не перезапустится.
+`hook_method` возвращает handle — ссылку на конкретную регистрацию хука, которую принимает `unhook_method`.
 
-`_ripple_cache.clear()` освобождает все `SuperRipple`-объекты, предотвращая утечку Java-объектов через Python-кэш.
+**Уточнение по доке:** по официальной странице [Xposed Method Hooking](https://plugins.exteragram.app/docs/xposed-hooking) хуки и так *"are automatically removed when your plugin is unloaded"* — то есть framework сам снимает регистрацию хука при выгрузке плагина, вручную вызывать `unhook_method` в `on_plugin_unload` не обязательно. Явный вызов в animtou — не ошибка и не костыль, а просто дополнительная подстраховка (например, на случай hot-reload плагина в рамках одной сессии, когда `on_plugin_unload` мог бы отработать раньше, чем framework успеет почистить регистрацию) — но рассчитывать, что без него хук "продолжит висеть после отключения плагина", неверно.
+
+`_ripple_cache.clear()` освобождает все `SuperRipple`-объекты, предотвращая утечку Java-объектов через Python-кэш — это не связано с хуками и остаётся нужным независимо от автоматической очистки хуков.
 
 ---
 
@@ -248,7 +376,39 @@ def _refresh_settings_cache(self):
 
 `get_setting` обращается к хранилищу настроек — это относительно медленная операция (десериализация, I/O). Вызывать её на каждое касание (а касаний — сотни в секунду при скролле) было бы расточительно.
 
-Значение кэшируется в Python-переменную при загрузке и при нажатии кнопки «применить» в настройках. В `_handle_touch` используется уже закэшированное значение — `self._cached_intensity`.
+Значение кэшируется в Python-переменную один раз при загрузке плагина (`on_plugin_load` вызывает `_refresh_settings_cache()`). В `_handle_touch` используется уже закэшированное значение — `self._cached_intensity`.
+
+**Как раньше обновлялся кэш при изменении настройки (тоже рабочий вариант):** в `create_settings()` была отдельная кнопка «применить», которая вызывала `_refresh_settings_cache()` по клику:
+
+```python
+Text(
+    text="применить",
+    accent=True,
+    icon="ic_ab_done",
+    on_click=lambda _v=None: self._refresh_settings_cache()
+)
+```
+
+Это честно работало, но требовало от пользователя лишнего тапа после ввода числа — легко забыть нажать и не понять, почему изменения не применились.
+
+**Как это сделано сейчас:** `Input` в `ui.settings` и так поддерживает `on_change` — коллбэк, который framework вызывает сам при каждом изменении значения (значение под `key` при этом уже сохранено framework'ом). Кнопка «применить» убрана, вместо неё:
+
+```python
+def _on_intensity_change(self, new_value):
+    self._cached_intensity = self._as_float(new_value, self._cached_intensity)
+```
+
+```python
+Input(
+    key="intensity",
+    text="интенсивность (0.1 - 3.0)",
+    default=intensity_default,
+    icon="msg_brightness_high",
+    on_change=self._on_intensity_change,
+)
+```
+
+Плюс: не нужен отдельный `get_setting` внутри — `new_value` уже пришло от framework'а, парсим сразу. Пользователю не нужно ничего нажимать отдельно — значение подхватывается сразу по мере ввода.
 
 ---
 
@@ -262,7 +422,9 @@ def _as_float(self, s, default):
         return default
 ```
 
-Пользователь вводит интенсивность текстом. `.replace(",", ".")` — обработка локалей, где дробная часть пишется через запятую (русская раскладка). `str(s)` защищает от случая, когда `get_setting` вернул не строку. При любой ошибке — возвращается `default`.
+Пользователь вводит интенсивность текстом. `.replace(",", ".")` — обработка локалей, где дробная часть пишется через запятую (русская раскладка). `str(s)` защищает от случая, когда значение оказалось не строкой. При любой ошибке — возвращается `default`.
+
+Эта функция не изменилась — её просто стали вызывать из другого места (`_on_intensity_change` вместо `_refresh_settings_cache`, см. раздел 14).
 
 ---
 
@@ -273,13 +435,26 @@ try:
     import zwylib
     zwylib.add_autoupdater_task(id, UPDATE_CHANNEL_ID, UPDATE_MESSAGE_ID)
 except ImportError:
-    def delayed_error():
-        sleep(2)
-        run_on_ui_thread(lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"))
-    threading.Thread(target=delayed_error, daemon=True).start()
+    run_on_ui_thread(
+        lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"),
+        2000
+    )
 ```
 
-`zwylib` — внешняя библиотека, не гарантированно установленная. Плагин её не требует — работает без неё. При отсутствии показывается ошибка, но через 2 секунды и в отдельном потоке, чтобы не блокировать `on_plugin_load`. `daemon=True` означает, что поток не помешает завершению приложения.
+`zwylib` — внешняя библиотека, не гарантированно установленная. Плагин её не требует — работает без неё. При отсутствии показывается ошибка с задержкой в 2 секунды, чтобы не мешать остальной инициализации `on_plugin_load`.
+
+**Как раньше делалась задержка (тоже рабочий вариант):** вручную поднимался отдельный Python-поток с `time.sleep`:
+
+```python
+def delayed_error():
+    sleep(2)
+    run_on_ui_thread(lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"))
+threading.Thread(target=delayed_error, daemon=True).start()
+```
+
+Рабочий подход, `daemon=True` гарантирует, что поток не помешает завершению приложения. Но это лишняя ручная многопоточность там, где она не нужна.
+
+**Как это сделано сейчас:** по доке [Android Utilities](https://plugins.exteragram.app/docs/android-utils) у `run_on_ui_thread` уже есть встроенный необязательный параметр задержки в миллисекундах (`run_on_ui_thread(func, delay)`). Один вызов вместо потока + `sleep` + импорта `threading`/`time.sleep` — то же самое поведение, без ручного управления потоком.
 
 `id` здесь — встроенная Python-функция, но в контексте плагина она переопределена или переиспользована как ссылка на `__id__` — идентификатор плагина.
 
@@ -338,14 +513,17 @@ local_x = raw_x - loc[0]
 local_y = raw_y - loc[1]
 ```
 
-### Патч приватных полей после конструктора
+### Патч приватных полей сразу после `new` — когда объект создаём мы сами
 
 ```python
-class MyInitHook(MethodHook):
-    def after_hooked_method(self, param):
-        obj = param.thisObject
-        set_private_field(obj, "fieldName", new_value)
+obj = SomeJavaClass(args)
+set_private_field(obj, "fieldName", new_value)
 ```
+
+Хук на конструктор (`hook_all_constructors`) нужен, только если объект создаёт **не
+наш код** — например, сам Telegram где-то внутри. Если создаём объект сами (как
+`SuperRipple(view)` в этом плагине) — глобальный хук на класс лишний и может задеть
+чужие вызовы того же конструктора.
 
 ### Кэш Java-объектов с лимитом размера (FIFO)
 
@@ -368,9 +546,6 @@ cache[key].doSomething()
 ```
 on_plugin_load()
     │
-    ├── hook_all_constructors(SuperRipple) → SuperRippleInitHook
-    │       └── after: патч шейдера (убрать alpha=1.0 → alpha=0.0)
-    │
     └── hook_method(View.dispatchTouchEvent) → _animtouHook
             └── before: _handle_touch(view, event)
                     ├── фильтр: только ACTION_DOWN (action_masked == 0)
@@ -379,6 +554,10 @@ on_plugin_load()
                     ├── получить все DecorView через WindowManagerGlobal.mViews
                     └── для каждого View:
                             screen_to_local() → make_ripple() → run_on_ui_thread()
+                                    ├── если SuperRipple для этого View ещё нет в кэше:
+                                    │       _make_patched_ripple(view)
+                                    │           ├── SuperRipple(view)
+                                    │           └── патч шейдера (alpha=0, radius=0) прямо на нём
                                     └── SuperRipple.animate(x, y, intensity)
 
 on_plugin_unload()
