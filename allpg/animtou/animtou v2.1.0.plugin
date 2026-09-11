@@ -354,5 +354,5 @@ class animtouPlugin(BasePlugin):
                 icon="msg_channel",
                 on_click=self._open_idea_author
             ),
-            Divider(text=f"animtou v{__version__} // лс: @cyryqs"),
+            Divider(text=f"animtou v{__version__} // лс: @jaxbastard"),
         ]
