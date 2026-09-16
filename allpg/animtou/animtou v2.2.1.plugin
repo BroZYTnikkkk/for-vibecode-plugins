@@ -1,18 +1,19 @@
 __id__ = "animtou"
-__name__ = "анимированные касания"
-__description__ = "добавляет прикольную анимацию при каждом нажатии (идея — @itskotovski и @mishabotov)"
+__name__ = "Анимированные касания"
+__description__ = "Добавляет прикольную анимацию при каждом нажатии\n(идея — @itskotovski и @mishabotov)"
 __author__ = "@jaxbastard & @zwylair"
-__version__ = "2.1.0"
+__version__ = "2.2.1"
 __icon__ = "RandomStikery324/35"
 __min_version__ = "12.5.1"
 
 from typing import Any, List
 import traceback
+import time
 from java import jclass
 from android_utils import run_on_ui_thread, copy_to_clipboard
 from base_plugin import BasePlugin, MethodHook
 from java.lang import Class as JClass, Boolean
-from ui.settings import Header, Input, Divider, Text
+from ui.settings import Header, Custom, Divider, Text
 from ui.bulletin import BulletinHelper
 from client_utils import get_last_fragment, get_messages_controller
 from base_plugin import MenuItemData, MenuItemType
@@ -28,8 +29,9 @@ UPDATE_CHANNEL_ID = 3726559342
 UPDATE_MESSAGE_ID = 4
 
 _ripple_cache = {}
-_max_cache_size = 10
+_max_cache_size = 30
 _patched_shader_code = None
+_current_dose = 0.01
 
 
 def _show_copyable_error(short_msg, exc):
@@ -46,9 +48,13 @@ def _show_copyable_error(short_msg, exc):
 
 
 def patch_shader_code(code):
+    code = "uniform float dose;\n" + code
     replace_map = {
         "return half4(0.0, 0.0, 0.0, 1.0);": "return half4(0.0, 0.0, 0.0, 0.0);",
-        "return img.eval(uv) + half4(add, add, add, 1.);": "return img.eval(uv) + half4(add, add, add, 0.0);",
+        "return img.eval(uv) + half4(add, add, add, 1.);": (
+            "half2 off = offset * dose;"
+            "return half4(img.eval(uv + off).r, img.eval(uv).g, img.eval(uv - off).b, img.eval(uv).a) + half4(add, add, add, 0.0);"
+        ),
         "sdfRoundedBox(uv - size * .5, size * .5, radius)": "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
     }
     for k, v in replace_map.items():
@@ -70,12 +76,19 @@ def _make_patched_ripple(view):
         method = ripple.getClass().getDeclaredMethod("setupSizeUniforms", Boolean.TYPE)
         method.setAccessible(True)
         shader = RuntimeShader(code)
+        shader.setFloatUniform("dose", _current_dose)
         set_private_field(ripple, "shader", shader)
         method.invoke(ripple, True)
         set_private_field(ripple, "effect", RenderEffect.createRuntimeShaderEffect(shader, "img"))
     except Exception as e:
         _show_copyable_error("animtou: shader patch error", e)
     return ripple
+
+
+def _set_current_dose(value):
+    global _current_dose
+    _current_dose = value
+    _ripple_cache.clear()
 
 
 class _animtouHook(MethodHook):
@@ -107,10 +120,34 @@ class _animtouHook(MethodHook):
         return
 
 
+_mviews_field_cache = {"field": None}
+
+
+def _get_mviews_field():
+    if _mviews_field_cache["field"] is not None:
+        return _mviews_field_cache["field"]
+    try:
+        Class = jclass("java.lang.Class")
+        wmg_class = Class.forName("android.view.WindowManagerGlobal")
+        field = wmg_class.getDeclaredField("mViews")
+        field.setAccessible(True)
+        _mviews_field_cache["field"] = field
+        return field
+    except Exception:
+        return None
+
+
+def _read_mviews():
+    wmg_instance = WindowManagerGlobal.getInstance()
+    field = _get_mviews_field()
+    if field is not None:
+        return field.get(wmg_instance)
+    return get_private_field(wmg_instance, "mViews")
+
+
 def get_all_decor_views():
     try:
-        wmg_instance = WindowManagerGlobal.getInstance()
-        views = get_private_field(wmg_instance, "mViews")
+        views = _read_mviews()
         if views is None:
             return []
         result = []
@@ -151,13 +188,77 @@ def make_ripple(view, x, y, intensity):
     run_on_ui_thread(_internal)
 
 
+ECHO_WINDOW_MS = 300
+ECHO_POLL_INTERVAL_MS = 80
+
+_echo_state = {
+    "active_until": 0,
+    "x": 0.0,
+    "y": 0.0,
+    "intensity": 0.6,
+    "known_views": set(),
+    "last_seen_size": None,
+}
+
+
+def _echo_poll():
+    now = int(time.time() * 1000)
+    if now >= _echo_state["active_until"]:
+        return
+
+    try:
+        views = _read_mviews()
+        if views is not None:
+            size = views.size()
+            if size != _echo_state["last_seen_size"]:
+                _echo_state["last_seen_size"] = size
+                for i in range(size):
+                    view = views.get(i)
+                    if view is None:
+                        continue
+                    key = view.hashCode()
+                    if key in _echo_state["known_views"]:
+                        continue
+                    _echo_state["known_views"].add(key)
+                    lx, ly = screen_to_local(view, _echo_state["x"], _echo_state["y"])
+                    make_ripple(view, lx, ly, _echo_state["intensity"])
+    except Exception:
+        pass
+
+    run_on_ui_thread(_echo_poll, ECHO_POLL_INTERVAL_MS)
+
+
+def _start_echo_tracking(x, y, intensity, known_views):
+    was_active = _echo_state["active_until"] > int(time.time() * 1000)
+    _echo_state["x"] = x
+    _echo_state["y"] = y
+    _echo_state["intensity"] = intensity
+    _echo_state["known_views"] = known_views
+    _echo_state["last_seen_size"] = None
+    _echo_state["active_until"] = int(time.time() * 1000) + ECHO_WINDOW_MS
+    if not was_active:
+        run_on_ui_thread(_echo_poll, ECHO_POLL_INTERVAL_MS)
+
+
 class animtouPlugin(BasePlugin):
+    INTENSITY_MIN = 0.1
+    INTENSITY_MAX = 3.0
+    INTENSITY_SCALE = 0.1
+    INTENSITY_UI_MIN = 1
+    INTENSITY_UI_MAX = 30
+
+    DOSE_UI_MIN = 0
+    DOSE_UI_MAX = 30
+    DOSE_SCALE = 0.1
+
     def __init__(self):
         super().__init__()
         self.view_unhook_ref = None
-        self._cached_intensity = 0.6
+        self._cached_intensity = 0.7
+        self._cached_dose_ui = self.DOSE_UI_MIN
         self._last_down_token = None
         self._last_up_token = None
+        self._seekbar_refs = []
 
     def on_plugin_load(self):
         try:
@@ -218,8 +319,7 @@ class animtouPlugin(BasePlugin):
 
             self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.DRAWER_MENU,
-                text="animtou",
-                subtext="настройки",
+                text="Animtou",
                 icon="msg_settings",
                 on_click=_open_settings,
             ))
@@ -242,6 +342,11 @@ class animtouPlugin(BasePlugin):
 
         try:
             _ripple_cache.clear()
+        except Exception:
+            pass
+
+        try:
+            _echo_state["active_until"] = 0
         except Exception:
             pass
 
@@ -275,24 +380,33 @@ class animtouPlugin(BasePlugin):
             all_views = get_all_decor_views()
 
             if len(all_views) > 1:
+                known_views = set()
                 for view in all_views:
                     lx, ly = screen_to_local(view, rx, ry)
                     make_ripple(view, lx, ly, self._cached_intensity)
+                    known_views.add(view.hashCode())
             else:
                 decor = owner.getRootView()
-                if decor is not None:
-                    make_ripple(decor, rx, ry, self._cached_intensity)
-                else:
-                    make_ripple(owner, rx, ry, self._cached_intensity)
+                target = decor if decor is not None else owner
+                make_ripple(target, rx, ry, self._cached_intensity)
+                known_views = {target.hashCode()} if target is not None else set()
+
+            _start_echo_tracking(rx, ry, self._cached_intensity, known_views)
 
         except Exception:
             pass
 
     def _refresh_settings_cache(self):
         try:
-            self._cached_intensity = self._as_float(self.get_setting("intensity", "0.55"), 0.55)
+            self._cached_intensity = self._clamp_intensity(self._as_float(self.get_setting("intensity", "0.55"), 0.55))
         except Exception:
-            self._cached_intensity = 0.55
+            self._cached_intensity = 0.7
+
+        try:
+            self._cached_dose_ui = self._clamp_dose_ui(self._as_float(self.get_setting("dose", str(self.DOSE_UI_MIN)), self.DOSE_UI_MIN))
+        except Exception:
+            self._cached_dose_ui = self.DOSE_UI_MIN
+        _set_current_dose(self._cached_dose_ui * self.DOSE_SCALE)
 
     def _as_float(self, s, default):
         try:
@@ -300,8 +414,60 @@ class animtouPlugin(BasePlugin):
         except Exception:
             return default
 
-    def _on_intensity_change(self, new_value):
-        self._cached_intensity = self._as_float(new_value, self._cached_intensity)
+    def _clamp_intensity(self, value):
+        return max(self.INTENSITY_MIN, min(self.INTENSITY_MAX, value))
+
+    def _clamp_dose_ui(self, value):
+        return max(self.DOSE_UI_MIN, min(self.DOSE_UI_MAX, value))
+
+    def _on_intensity_change(self, ui_value):
+        try:
+            real = self._clamp_intensity(round(float(ui_value)) * self.INTENSITY_SCALE)
+            self._cached_intensity = real
+            self.set_setting("intensity", str(real))
+        except Exception as e:
+            _show_copyable_error("animtou: intensity change error", e)
+
+    def _on_dose_change(self, ui_value):
+        try:
+            self._cached_dose_ui = self._clamp_dose_ui(round(float(ui_value)))
+            _set_current_dose(self._cached_dose_ui * self.DOSE_SCALE)
+            self.set_setting("dose", str(self._cached_dose_ui))
+        except Exception as e:
+            _show_copyable_error("animtou: dose change error", e)
+
+    def _build_seekbar(self, minimum, maximum, default, title, min_label, max_label, on_change):
+        try:
+            from com.exteragram.messenger.preferences.components import AltSeekbar
+            from java import dynamic_proxy
+            from org.telegram.messenger import ApplicationLoader
+
+            class _Drag(dynamic_proxy(AltSeekbar.OnDrag)):
+                def run(this, value):
+                    try:
+                        on_change(value)
+                    except Exception as e:
+                        _show_copyable_error("animtou: seekbar callback error", e)
+
+            listener = _Drag()
+            if not hasattr(self, "_seekbar_refs"):
+                self._seekbar_refs = []
+            self._seekbar_refs.append(listener)
+
+            bar = AltSeekbar(
+                ApplicationLoader.applicationContext,
+                listener,
+                minimum,
+                maximum,
+                title,
+                min_label,
+                max_label,
+            )
+            bar.setProgress(float(default))
+            return Custom(view=bar)
+        except Exception as e:
+            _show_copyable_error("animtou: seekbar build error", e)
+            return None
 
     def _open_channel(self, _view=None):
         try:
@@ -322,37 +488,52 @@ class animtouPlugin(BasePlugin):
             _show_copyable_error("animtou: _open_idea_author error", e)
 
     def create_settings(self):
-        intensity_default = str(self.get_setting("intensity", "0.55"))
+        intensity_ui_default = round(self._cached_intensity / self.INTENSITY_SCALE)
 
-        return [
-            Header(text="риппл эффект"),
-            Input(
-                key="intensity",
-                text="интенсивность (0.1 - 3.0)",
-                default=intensity_default,
-                icon="msg_brightness_high",
-                on_change=self._on_intensity_change,
-            ),
+        items = [
+            Header(text="Риппл эффект"),
+        ]
+
+        intensity_bar = self._build_seekbar(
+            self.INTENSITY_UI_MIN, self.INTENSITY_UI_MAX, intensity_ui_default,
+            "Интенсивность", str(self.INTENSITY_UI_MIN), str(self.INTENSITY_UI_MAX),
+            self._on_intensity_change,
+        )
+        if intensity_bar is not None:
+            items.append(intensity_bar)
+
+        items.append(Header(text="Уровень дозы"))
+
+        dose_bar = self._build_seekbar(
+            self.DOSE_UI_MIN, self.DOSE_UI_MAX, self._cached_dose_ui,
+            "хроматическая аберрация", "Выкл.", str(self.DOSE_UI_MAX),
+            self._on_dose_change,
+        )
+        if dose_bar is not None:
+            items.append(dose_bar)
+
+        items += [
             Divider(),
-            Header(text="канал"),
+            Header(text="Титры"),
             Text(
-                text="бастардские плагины",
+                text="Бастардские плагины",
+                subtext="Мой канал",
                 icon="msg_channel",
                 on_click=self._open_channel
             ),
-            Divider(),
-            Header(text="спасибо за помощь"),
             Text(
                 text="zwyPlugins",
+                subtext="Спасибо за помощь",
                 icon="msg_channel",
                 on_click=self._open_channel2
             ),
-            Divider(),
-            Header(text="автор идеи"),
             Text(
-                text="миша-ня!",
+                text="Миша-ня!",
+                subtext="Автор идеи",
                 icon="msg_channel",
                 on_click=self._open_idea_author
             ),
-            Divider(text=f"animtou v{__version__} // лс: @jaxbastard"),
+            Divider(text=f"animtou v{__version__} // ЛС: @jaxbastard"),
         ]
+
+        return items
