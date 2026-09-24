@@ -1,7 +1,8 @@
+[animtou-analysis-v2.3.0-final.md](https://github.com/user-attachments/files/32606472/animtou-analysis-v2.3.0-final.md)
 # Анализ разработки плагина animtou
 > Анимированные касания (SuperRipple-эффект) для AyuGram / ExteraGram
-> Версия документа: 2.2.1 — дополнено поверх исходного анализа
-> Новые источники: реальный `superripple_effect.agsl`, рабочий пример `AltSeekbar` (сторонний плагин)
+> Версия документа: 2.3.0
+> Источники: исходник `SuperRipple.java`
 
 ---
 
@@ -9,7 +10,7 @@
 
 Плагин перехватывает **каждое касание** на уровне базового класса `android.view.View` через хук на `dispatchTouchEvent`. Это единственная точка входа всех тач-событий в Android — любой `View` во всём приложении проходит через неё. При обнаружении нажатия (ACTION_DOWN) плагин запускает `SuperRipple.animate()` — анимацию, которая уже встроена в Telegram, но нигде не вызывается при обычных касаниях.
 
-Второй слой — патч AGSL-шейдера, который убирает непрозрачный фон эффекта (патчится сразу после создания каждого `SuperRipple`, который создаёт сам плагин, — см. разделы 8-9 ниже).
+Второй слой — патч AGSL-шейдера, который убирает непрозрачный фон эффекта, добавляет хроматическую аберрацию и убирает нежелательное скругление границ. Патч применяется сразу после создания каждого `SuperRipple`, который создаёт сам плагин.
 
 ---
 
@@ -19,7 +20,7 @@
 
 `dispatchTouchEvent(MotionEvent)` — это корневой метод доставки касаний в Android. Любой `View` (кнопка, список, фрагмент) вызывает именно его первым, до `onTouchEvent` и `onClick`. Хук на этот метод означает, что плагин видит **абсолютно каждое касание** во всём приложении, не привязываясь к конкретному экрану.
 
-Почему не `onTouchEvent`? Потому что `onTouchEvent` может не вызваться, если `dispatchTouchEvent` перехвачен где-то выше. `dispatchTouchEvent` гарантированно вызывается всегда.
+Почему не `onTouchEvent`? Потому что `onTouchEvent` может не вызваться, если `dispatchTouchEvent` перехвачен где-то выше. `dispatchTouchEvent` вызывается в начале цепочки доставки события.
 
 ```python
 view_cls = JClass.forName("android.view.View")
@@ -29,29 +30,15 @@ dispatch_method.setAccessible(True)
 self.view_unhook_ref = self.hook_method(dispatch_method, _animtouHook(self), priority=5)
 ```
 
-Важно: `getDeclaredMethod` требует **точную сигнатуру** — передаётся `motion_event_cls` как тип аргумента. Без этого Java-рефлекшн не найдёт метод, потому что перегрузок у `dispatchTouchEvent` нет, но JVM требует явного указания.
+Важно: `getDeclaredMethod` требует точную сигнатуру — передаётся `motion_event_cls` как тип аргумента.
 
 ---
 
 ### 2. `before_hooked_method`, а не `after_hooked_method`
 
-Хук срабатывает **до** выполнения оригинального метода. Это важно: анимация запускается в момент, когда палец только коснулся экрана, а не после того, как `View` обработал касание. Так эффект выглядит мгновенным.
+Хук срабатывает **до** выполнения оригинального метода. Это важно: анимация запускается в момент, когда палец только коснулся экрана, а не после того, как `View` обработал касание.
 
-Если бы использовался `after_hooked_method` — анимация запускалась бы с задержкой, после завершения всей цепочки обработки события.
-
-```python
-def before_hooked_method(self, param):
-    motion_event = param.args[0] if param.args and len(param.args) > 0 else None
-    if motion_event is None:
-        return
-    self.plugin._handle_touch(param.thisObject, motion_event)
-```
-
-`param.args[0]` — это `MotionEvent`, первый (и единственный) аргумент `dispatchTouchEvent`. `param.thisObject` — сам `View`, на котором произошло касание.
-
-**Найденный на практике нюанс:** хук висит буквально на всех `View` в приложении — включая те, что добавляют другие плагины. У некоторых сторонних плагинов (например, `Custom Profile` от `@RoflPlugins`, который добавляет свой кастомный блок с фото в профиль) свой `View`-класс, который Chaquopy иногда не может корректно завернуть в питоновский объект именно при чтении `param.thisObject` — падает с `TypeError: cannot create ... proxy from ... instance`, ещё до вызова `_handle_touch`. Риппл при этом продолжает нормально работать на всём остальном интерфейсе — ломается только сам конкретный тап по этому чужому элементу.
-
-Поэтому чтение `param.thisObject` вынесено в отдельный `try/except`, который тихо пропускает касание при такой ошибке — вместо того, чтобы каждый раз показывать буллетин с трейсом на то, что фактически не является багом animtou и ни на что не влияет:
+При этом чтение `param.thisObject` защищено отдельно. Хук находится на базовом `View` и может встретить сторонний View, который Chaquopy не может корректно завернуть в Python-объект. В таком случае конкретное касание пропускается, а сам animtou продолжает работать.
 
 ```python
 def before_hooked_method(self, param):
@@ -73,13 +60,11 @@ def before_hooked_method(self, param):
         _show_copyable_error("animtou: hook error", e)
 ```
 
-Ошибки внутри самой `_handle_touch` (уже наша логика) по-прежнему всплывают буллетином — тихо пропускается только сам факт нечитаемого `thisObject`, а не любые проблемы вообще.
-
 ---
 
 ### 3. Дедупликация по токену — защита от шторма событий
 
-`dispatchTouchEvent` вызывается на **каждом** `View` по пути доставки события. Одно касание генерирует десятки вызовов: корневой `DecorView` → `ViewGroup` → дочерний `View` → и т.д. Без защиты один тап запустил бы сотни анимаций.
+`dispatchTouchEvent` вызывается на **каждом** `View` по пути доставки события. Одно касание генерирует десятки вызовов: корневой `DecorView` → `ViewGroup` → дочерний `View` → и т.д. Без защиты один тап запустил бы множество анимаций.
 
 Решение — токен из `(downTime, actionMasked)`:
 
@@ -90,9 +75,9 @@ if self._last_down_token is not None and self._last_down_token == token:
 self._last_down_token = token
 ```
 
-`getDownTime()` возвращает время начала касания в мс — оно **одинаково** для всех событий одного тача, включая все промежуточные MOVE и UP, и уникально для каждого нового DOWN. Таким образом, первый `View`, через который прошло событие, ставит токен — все остальные его видят и пропускают.
+`getDownTime()` одинаков для событий одного тача, поэтому первый `View`, через который прошло событие, ставит токен, а остальные его пропускают.
 
-Фильтр по `action_masked != 0` отсекает всё кроме `ACTION_DOWN` (код 0). MOVE (код 2) и UP (код 1) игнорируются — анимация нужна только при нажатии.
+Фильтр по `action_masked != 0` отсекает всё кроме `ACTION_DOWN`.
 
 ---
 
@@ -107,9 +92,9 @@ except Exception:
     ry = float(motion_event.getY())
 ```
 
-`getX/getY` возвращают координаты **относительно текущего View** — т.е. локальные. `getRawX/getRawY` — абсолютные экранные координаты. Поскольку хук висит на базовом `View`, а анимация применяется к `DecorView` (корень всего окна), нужны именно абсолютные координаты. Потом они пересчитываются через `screen_to_local`.
+`getX/getY` возвращают координаты относительно текущего View, а `getRawX/getRawY` — абсолютные экранные координаты. Поскольку анимация применяется к `DecorView`, нужны экранные координаты, которые затем пересчитываются через `screen_to_local`.
 
-`getRawX/getRawY` — более новое API, поэтому есть fallback на `getX/getY` на случай ошибки.
+Этот fallback оставлен: он касается непосредственно получения координат и имеет рабочую альтернативу.
 
 ---
 
@@ -118,70 +103,28 @@ except Exception:
 ```python
 def get_all_decor_views():
     wmg_instance = WindowManagerGlobal.getInstance()
-    views = get_private_field(wmg_instance, "mViews")
+    views = _get_mviews_field().get(wmg_instance)
     for i in range(views.size()):
         result.append(views.get(i))
 ```
 
-`WindowManagerGlobal` — синглтон Android, который управляет всеми окнами приложения. Приватное поле `mViews` содержит список всех корневых `View` — `DecorView` каждого активного окна (основное окно, диалоги, попапы, клавиатура и т.д.).
+`WindowManagerGlobal` — синглтон Android, который управляет окнами приложения. Приватное поле `mViews` содержит список корневых View активных окон.
 
-Почему это нужно? Telegram может показывать несколько окон одновременно (например, диалог поверх активности). Если запускать рипл только на `getRootView()` текущего `View`, то касание в диалоге не получит анимацию на фоновом окне. Перебирая все `mViews` — анимация везде.
+Это нужно, потому что Telegram может показывать несколько окон одновременно. Если запускать ripple только на `getRootView()` текущего View, отдельный диалог или popup может не получить эффект.
 
-```python
-if len(all_views) > 1:
-    for view in all_views:
-        lx, ly = screen_to_local(view, rx, ry)
-        make_ripple(view, lx, ly, self._cached_intensity)
-else:
-    decor = owner.getRootView()
-    make_ripple(decor, rx, ry, self._cached_intensity)
-```
+Если окно одно, можно использовать корневой View напрямую. При нескольких окнах плагин проходит по `mViews` и пересчитывает координаты для каждого.
 
-Если окно одно — берём `getRootView()` как более простой и надёжный путь.
+#### Кэширование `mViews`
 
-**Изменилось в 2.2.0 — «отголосок» на новые окна.** Изначальной идеей было сделать риппл на универсальном слое, по итогу решил, что эффект должен захватывать новые вьюхи в рантайм
+Поиск Java-поля не выполняется при каждом обращении. `Field` сохраняется после первого поиска:
 
-Тупиковый путь, который не стал делать вообще: буквально «риппл поверх диалогов/попапов, независимо от того, что на экране». `RenderEffect`/`RuntimeShader` искажают только содержимое той же самой вью, на которую повешены — не видят и не могут исказить то, что нарисовано в других окнах под ними. Отдельное окно поверх всего (`WindowManager.addView`) само по себе пустое, искажать ему нечего. Реализовать можно было бы только через живой захват экрана (`MediaProjection`/`PixelCopy`) — принципиально другой движок эффекта, требующий системного разрешения на запись экрана при каждом использовании. Признал нецелесообразным.
-
-Вместо этого — пока рябь ещё «жива» (эмпирическая оценка длительности — 300мс), поллингом проверяется, не появились ли новые decor view:
-
-```python
-ECHO_WINDOW_MS = 300
-ECHO_POLL_INTERVAL_MS = 80
-
-def _echo_poll():
-    now = int(time.time() * 1000)
-    if now >= _echo_state["active_until"]:
-        return
-    views = _read_mviews()
-    if views is not None:
-        size = views.size()
-        if size != _echo_state["last_seen_size"]:
-            _echo_state["last_seen_size"] = size
-            for i in range(size):
-                view = views.get(i)
-                key = view.hashCode()
-                if key in _echo_state["known_views"]:
-                    continue
-                _echo_state["known_views"].add(key)
-                lx, ly = screen_to_local(view, _echo_state["x"], _echo_state["y"])
-                make_ripple(view, lx, ly, _echo_state["intensity"])
-    run_on_ui_thread(_echo_poll, ECHO_POLL_INTERVAL_MS)
-```
-
-На каждую новую вьюху — рябь заново, теми же координатами и интенсивностью. Это не буквальное продолжение одной и той же волны (физически невозможно для только что появившейся вью), а синхронизированный по координатам повтор — визуально ощущается как «риппл реагирует на всё, что появилось».
-
-Хук на `WindowManagerGlobal.addView` для отслеживания новых окон рассматривал и отклонил — точная сигнатура этого метода гуляет между версиями Android, а гадать с сигнатурами рефлексии в этом проекте уже не раз выходило боком (см. историю с `find_class(...).getDeclaredMethod(...)` в LodraBu). Поллинг медленнее, но не завязан на конкретную сигнатуру — только на то же самое `mViews`, которое уже читаю стабильно.
-
-**Оптимизация, потребовавшаяся сразу же:** первая версия отголоска сама добавила заметное подлагивание при открытии чатов — по времени совпадает с окном поллинга, конкурирующим за главный поток именно в момент, когда Telegram и так занят переходом между экранами. Две правки:
-
-1. Кэш `Field`-объекта для `mViews` — раньше каждый вызов заново делал `getDeclaredField`+`setAccessible` (дорогой поиск в рефлексии), теперь это делается один раз за жизнь плагина:
 ```python
 _mviews_field_cache = {"field": None}
 
 def _get_mviews_field():
     if _mviews_field_cache["field"] is not None:
         return _mviews_field_cache["field"]
+
     Class = jclass("java.lang.Class")
     wmg_class = Class.forName("android.view.WindowManagerGlobal")
     field = wmg_class.getDeclaredField("mViews")
@@ -189,13 +132,64 @@ def _get_mviews_field():
     _mviews_field_cache["field"] = field
     return field
 ```
-2. Поллинг перестал пересобирать список на каждый тик — сначала дешёвая `views.size()`, и только если число реально изменилось, тогда уже полный перебор (см. код `_echo_poll` выше). В подавляющем большинстве тиков (обычная навигация внутри того же окна, без нового decor view) это сводится к «взять кэшированный `Field`, вызвать `.size()`, сравнить два int».
 
-После этой правки стало заметно лучше, но подлагивание при открытии чатов было и раньше, до всякого отголоска — часть цены, судя по всему, неотъемлема для самого способа хука (`dispatchTouchEvent` базового `View` вызывается по разу на каждую вью в цепочке диспатча одного физического тапа, и часть этой цены — JNI-переход Python↔Java на каждый вызов, который своим кодом не убрать, не отказавшись от самого способа хука). Открытый вопрос, пока не решил.
+Это убирает повторные `getDeclaredField()` и `setAccessible()`.
 
 ---
 
-### 6. `screen_to_local` — пересчёт координат
+### 6. Отголосок на новые окна
+
+Риппл должен реагировать и на новые окна/диалоги, которые открываются, пока исходная анимация ещё идёт.
+
+Пока рябь активна, плагин некоторое время проверяет `mViews`:
+
+```python
+ECHO_WINDOW_MS = 300
+ECHO_POLL_INTERVAL_MS = 80
+```
+
+Если количество окон изменилось, выполняется обход новых View. Уже известные окна пропускаются.
+
+```python
+size = views.size()
+if size != _echo_state["last_seen_size"]:
+    _echo_state["last_seen_size"] = size
+    for i in range(size):
+        view = views.get(i)
+        key = view.hashCode()
+        if key in _echo_state["known_views"]:
+            continue
+        _echo_state["known_views"].add(key)
+        lx, ly = screen_to_local(
+            view,
+            _echo_state["x"],
+            _echo_state["y"]
+        )
+        make_ripple(
+            view,
+            lx,
+            ly,
+            _echo_state["intensity"]
+        )
+```
+
+Проверка `views.size()` перед полным обходом нужна: в обычных тиках, когда новое окно не появилось, нет смысла заново перебирать весь список.
+
+Раньше я рассматривал hook на `WindowManagerGlobal.addView`, но не использовал его: сигнатура может различаться между версиями Android. Polling по уже используемому `mViews` не требует угадывать такую сигнатуру.
+
+---
+
+### 7. Почему я не делаю отдельный ripple поверх всех окон
+
+Отдельное окно через `WindowManager.addView()` не даёт доступа к содержимому окон под ним. `RenderEffect` и `RuntimeShader` работают с содержимым конкретного View/RenderNode и не могут сами по себе искажать другие окна.
+
+Живой захват экрана через системные механизмы был бы уже другим движком эффекта и для этой задачи не нужен.
+
+Поэтому я использую отдельный `SuperRipple` на каждом появившемся decor View, пока исходная анимация ещё активна. Это не одна физически продолжающаяся волна, а синхронизированный по координатам повтор.
+
+---
+
+### 8. `screen_to_local` — пересчёт координат
 
 ```python
 def screen_to_local(view, raw_x, raw_y):
@@ -204,263 +198,349 @@ def screen_to_local(view, raw_x, raw_y):
     return raw_x - loc[0], raw_y - loc[1]
 ```
 
-`getLocationOnScreen` заполняет массив `[x, y]` абсолютной позицией левого верхнего угла `View` на экране. Вычитая её из экранных координат касания, получаем локальные координаты внутри этого `View`. Без этого анимация была бы смещена, особенно на окнах с нестандартной позицией.
+`getLocationOnScreen` даёт абсолютную позицию левого верхнего угла View. Вычитание этой позиции из экранных координат касания даёт локальные координаты внутри конкретного окна.
 
 ---
 
-### 7. `SuperRipple` — что это и откуда
+### 9. `SuperRipple` — что это и откуда
 
-`SuperRipple` — внутренний класс Telegram из пакета `org.telegram.ui.Stars`. Изначально используется только для эффектов в Stars-покупках. Метод `animate(x, y, intensity)` запускает AGSL-шейдерную анимацию рипла прямо на переданном `View`.
+`SuperRipple` — внутренний класс Telegram из `org.telegram.ui.Stars`. Он используется Telegram для shader-анимаций и имеет метод:
 
-Плагин переиспользует эту готовую систему, не реализуя собственную анимацию.
+```python
+ripple.animate(x, y, intensity)
+```
+
+Плагин переиспользует готовую Telegram-анимацию, а не реализует собственный ripple-движок.
+
+Я намеренно не ставлю hook на все конструкторы `SuperRipple`: плагин сам создаёт нужные ему экземпляры, поэтому патч можно применять непосредственно к своему объекту.
+
+Это важно, чтобы не менять оригинальные Stars-анимации Telegram, которые создаются в других местах приложения.
 
 ---
 
-### 8. Кэш `SuperRipple` по `hashCode` — почему нельзя создавать каждый раз
+### 10. Кэш `SuperRipple` по `hashCode`
 
 ```python
 key = view.hashCode()
+
 if key not in _ripple_cache or _ripple_cache[key] is None:
     _ripple_cache[key] = _make_patched_ripple(view)
+
     if len(_ripple_cache) > _max_cache_size:
         oldest = next(iter(_ripple_cache))
         del _ripple_cache[oldest]
+
 _ripple_cache[key].animate(x, y, intensity)
 ```
 
-Создание `SuperRipple` — дорогая операция: выделяется буфер для шейдера, компилируется AGSL-код, аллоцируется `RenderEffect`. Если создавать новый объект на каждый тап — это гарантированный UI-джанк и утечка памяти.
+Создавать `SuperRipple` заново на каждый тап невыгодно: создаются shader/RenderEffect и связанные объекты. Поэтому хранится один объект на View.
 
-Кэш хранит по одному `SuperRipple` на каждый `View` (ключ — `hashCode`). Лимит в 30 записей с вытеснением самой старой (FIFO через `next(iter(...))`) — защита от бесконтрольного роста, если пользователь открывает много разных окон.
+Лимит кэша защищает от бесконтрольного роста при появлении большого количества окон. Вытесняется самая старая запись.
 
-`_max_cache_size = 30` — достаточно для всех реальных сценариев (активность + несколько диалогов).
-
-Создание идёт через `_make_patched_ripple(view)` вместо голого `SuperRipple(view)` — патч шейдера применяется прямо здесь, сразу после создания.
-
-**Так было не всегда — в 2.1.0 нашёл и убрал лишнее.** Изначально шейдер патчился через хук на **все конструкторы класса `SuperRipple`**:
-
-```python
-sr_cls = jclass("org.telegram.ui.Stars.SuperRipple")
-self.hook_all_constructors(sr_cls, SuperRippleInitHook())
-```
-
-Это хук на уровне класса — он сработает для **любого** `new SuperRipple(...)` в приложении, включая те, что создаёт сам Telegram для настоящих Stars-анимаций (покупка подарков и т.п.), не только для тех, что создаёт плагин. Побочным эффектом патч (прозрачный фон, обнулённый `radius`) применялся бы и к оригинальному Stars UI, незаметно меняя его вид — то, чего плагин делать не должен.
-
-При этом плагин **сам** создаёт все нужные ему `SuperRipple` — единственное место, `_ripple_cache[key] = SuperRipple(view)` (код выше). Поскольку это собственный вызов конструктора, патчить шейдер можно сразу после создания, без глобального хука на класс — ровно то, что делает `_make_patched_ripple` сейчас. `hook_all_constructors` и класс `SuperRippleInitHook` из плагина убраны — они больше не нужны, и заодно это дешевле: не висит хук, который дёргается на каждое создание `SuperRipple` где угодно в приложении, а не только там, где он реально нужен.
-
-Заодно в том же проходе текст и патч шейдера стали читаться и парситься **один раз** (`_get_patched_shader_code`, модульный кэш `_patched_shader_code`, см. раздел 9), а не при создании каждого нового `SuperRipple` — `AndroidUtilities.readRes(...)` и `str.replace(...)` раньше выполнялись повторно на каждое новое окно/диалог.
+Патч применяется в `_make_patched_ripple(view)` сразу после создания объекта.
 
 ---
 
-### 9. Патч шейдера — точечно, на своих экземплярах
+### 11. Патч шейдера — прозрачность, радиус и хроматическая аберрация
 
-Оригинальный `SuperRipple` использует непрозрачный фон — шейдер прописывает `alpha = 1.0` в обоих return-путях. Для плагина это неприемлемо: рипл должен быть прозрачным (накладываться поверх UI, а не закрашивать его).
+Оригинальный AGSL `SuperRipple` использует непрозрачный фон. Я изменяю конкретные участки shader-кода.
 
-`patch_shader_code` меняет четыре конкретных места в AGSL-коде шейдера (в 2.1.0 их было три; четвёртая добавлена в 2.2.0, см. ниже):
+Основные изменения:
 
 ```python
 replace_map = {
-    "return half4(0.0, 0.0, 0.0, 1.0);": "return half4(0.0, 0.0, 0.0, 0.0);",
-    "return img.eval(uv) + half4(add, add, add, 1.);": (
-        "half2 off = offset * dose;"
-        "return half4(img.eval(uv + off).r, img.eval(uv).g, img.eval(uv - off).b, img.eval(uv).a) + half4(add, add, add, 0.0);"
-    ),
-    "sdfRoundedBox(uv - size * .5, size * .5, radius)": "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
+    "return half4(0.0, 0.0, 0.0, 1.0);":
+        "return half4(0.0, 0.0, 0.0, 0.0);",
+
+    "return img.eval(uv) + half4(add, add, add, 1.);":
+        (
+            "half2 off = offset * dose;"
+            "return half4("
+            "img.eval(uv + off).r,"
+            "img.eval(uv).g,"
+            "img.eval(uv - off).b,"
+            "img.eval(uv).a"
+            ") + half4(add, add, add, 0.0);"
+        ),
+
+    "sdfRoundedBox(uv - size * .5, size * .5, radius)":
+        "sdfRoundedBox(uv - size * .5, size * .5, float4(0.0))",
 }
 ```
 
-`half4` — это GLSL/AGSL тип `(r, g, b, a)`. Замена `a = 1.0` на `a = 0.0` делает фон шейдера прозрачным, оставляя только сам эффект рипла.
-
-**Третья замена (сделана в 2.1.0) — обнуление радиуса скругления, устраняет обрезание по углам при анимации.** Реальный AGSL до патча:
+Перед исходным кодом добавляется:
 
 ```glsl
-half4 main(in float2 fragCoord) {
-    float add = 0.0;
-    float2 offset = float2(0.0);
-    for (int i = 0; i < 7; ++i) {
-        if (i >= count) break;
-        float3 ripple = rippleOffset_ios(fragCoord, float2(centerX[i], centerY[i]), intensity[i], t[i]);
-        offset += ripple.xy;
-        add += ripple.z;
-    }
-    float2 uv = fragCoord + offset;
-    if (sdfRoundedBox(uv - size * .5, size * .5, radius) > 0.0)
-        return half4(0.0, 0.0, 0.0, 1.0);
-    return img.eval(uv) + half4(add, add, add, 1.);
-}
+uniform float dose;
 ```
 
-Ключевая строка — `sdfRoundedBox(uv - size * .5, size * .5, radius)`: проверка "попадает ли смещённая рябью точка `uv` в скруглённый прямоугольник размером с View, с радиусами скругления по каждому углу `radius` (float4)". Если не попадает — считается, что вышли за пределы (раньше рисовалось сплошным чёрным, `alpha=1.0` — это первая замена).
+#### Прозрачность
 
-Сам факт, что граница скруглённая, а не обычный прямоугольник, и есть причина, почему "обрезает" именно углы, а не любой край одинаково: у скруглённого прямоугольника кривизна границы сосредоточена ровно в углах, поэтому смещённая волной точка "вылетает" за эту границу там значительно охотнее, чем на прямом отрезке края. `radius` в оригинальном использовании (Stars-подарки, где `SuperRipple` применяется к скруглённой карточке/шторке) это осмысленно — эффект должен уважать скругление самой карточки. Когда плагин применяет `SuperRipple` к полноэкранному decor view, никакого "скругления карточки" там нет и не должно быть — а `radius`, судя по всему, всё равно выставляется в ненулевое значение внутри `setupSizeUniforms` (либо под скругление физического экрана, либо под дефолтное скругление Stars-шторки) и создаёт этот эффект в углах. Радиус принудительно обнуляется прямо в шейдере — независимо от того, что туда передаёт `setupSizeUniforms`. Граница становится обычным прямоугольником, углы ведут себя так же, как и любая другая точка края.
+`alpha = 1.0` заменяется на `alpha = 0.0`, чтобы shader не закрашивал содержимое View непрозрачным фоном.
 
-**Добавлено в 2.2.0 — «доза» (хроматическая аберрация).** Вторая замена расширена: вместо единого сэмпла `img.eval(uv)` теперь три отдельных сэмпла R/G/B со смещением по новому uniform `dose`. Понадобилось отдельно объявить сам uniform в начале исходника (`uniform float dose;` — без этого AGSL не скомпилировался бы, переменной раньше не существовало вообще):
+#### Обнуление radius
 
-```python
-def patch_shader_code(code):
-    code = "uniform float dose;\n" + code
-    ...
-```
+Оригинальный `SuperRipple` учитывает `radius`, рассчитанный для его исходного использования. При применении к полноэкранному decor View это приводит к нежелательному поведению по углам.
 
-Первая версия формулы сдвига была ошибочной — смещение считалось от центра **экрана**, статично, никак не привязанное к самой волне:
+Поэтому проверка получает `float4(0.0)` вместо исходного `radius`.
+
+#### Хроматическая аберрация
+
+R, G и B берутся из разных координат:
+
 ```glsl
-half2 off = (uv - size * .5) * dose;
+img.eval(uv + off).r
+img.eval(uv).g
+img.eval(uv - off).b
 ```
-Переделано на смещение от `offset` — той же переменной, что двигает саму рябь (`offset += ripple.xy` в цикле по волнам):
+
+Смещение:
+
 ```glsl
 half2 off = offset * dose;
 ```
-Так аберрация стала характеристикой самого риппла, а не отдельным несвязанным эффектом.
 
-**Критичный регрессионный баг** в первой версии сборки нового `half4` для расщеплённых каналов альфа была жёстко прописана `0.0`:
+привязано непосредственно к `offset` риппла.
+
+Это лучше, чем ранний вариант:
+
 ```glsl
-return half4(img.eval(uv + off).r, img.eval(uv).g, img.eval(uv - off).b, 0.0) + ...
+half2 off = (uv - size * .5) * dose;
 ```
-До этого (`return img.eval(uv) + half4(...)`) альфа бралась из `img.eval(uv)` естественным образом — сложением, а не перезаписью. А тут её случайно заменил литералом. Поскольку `SuperRipple` кэшируется на вью и остаётся навешанным как `RenderEffect` даже после угасания самой ряби, разбитая альфа оставалась насовсем — вьюха рендерилась прозрачной не только во время анимации, а вообще всегда после первого тапа. Исправлено — код выше (`replace_map`) уже содержит рабочую версию с `img.eval(uv).a` вместо литерала.
 
-Тупиковый путь по масштабу дозы: изначально закладывал отдельный маленький масштаб (`DOSE_SCALE = 0.01`, UI 0–5), думал, что смещение канала должно быть очень маленьким числом. После перехода на привязку к `offset` (который уже сам по себе умеренная по величине, ограниченная физикой риппла величина) выяснил, что нужды в отдельном крошечном масштабе нет — итоговая версия использует тот же масштаб и диапазон, что и сила (см. раздел 14).
+потому что тот вариант зависел от положения относительно центра View, а не от самой волны.
 
-Патч применяется сразу после того, как плагин сам создаёт `SuperRipple(view)` — через `set_private_field` подменяются приватные поля `shader` и `effect` на пропатченные версии, `setupSizeUniforms` вызывается вручную, чтобы правильно инициализировать uniform-переменные нового шейдера. Значение `dose` выставляется отдельным вызовом сразу после создания шейдера: `shader.setFloatUniform("dose", _current_dose)`.
+Альфа остаётся:
+
+```glsl
+img.eval(uv).a
+```
+
+а не постоянным `0.0`. Это важно, потому что `SuperRipple` остаётся установленным как RenderEffect и после окончания самой анимации.
 
 ---
 
-### 10. `run_on_ui_thread` в `make_ripple`
+### 12. Кэш текста shader
+
+Текст и патч shader не нужно читать и разбирать для каждого нового `SuperRipple`.
+
+Код патча хранится в модульном кэше:
+
+```python
+_patched_shader_code = None
+```
+
+Первый вызов читает ресурс и выполняет `replace`, последующие получают уже готовую строку.
+
+Так `AndroidUtilities.readRes(...)` и обработка строк не повторяются при создании каждого нового ripple.
+
+---
+
+### 13. Доступ к `SuperRipple.shader` в версии 2.3.0
+
+В исходнике Telegram `SuperRipple` поле `shader` имеет тип `RuntimeShader` и объявлено как `public final`.
+
+В runtime нельзя использовать:
+
+```python
+ripple.JA.shader = shader
+```
+
+Конкретный объект `SuperRipple` не предоставляет `JA`, поэтому такой путь приводит к:
+
+```text
+AttributeError: 'SuperRipple' object has no attribute 'JA'
+```
+
+При этом сам патч shader нужен: плагину требуется заменить исходный `RuntimeShader` на новый, содержащий прозрачность и chromatic aberration.
+
+Поэтому я использую обычный Java reflection и кэширую найденный `Field`:
+
+```python
+_shader_field = None
+
+def _get_shader_field(ripple):
+    global _shader_field
+
+    if _shader_field is None:
+        field = ripple.getClass().getDeclaredField("shader")
+        field.setAccessible(True)
+        _shader_field = field
+
+    return _shader_field
+```
+
+После создания нового shader:
+
+```python
+shader = RuntimeShader(code)
+shader.setFloatUniform("dose", _current_dose)
+_get_shader_field(ripple).set(ripple, shader)
+```
+
+Поиск поля выполняется один раз, а не при каждом создании ripple.
+
+Я не заменяю этот доступ на `JA`: для конкретного runtime это оказалось несовместимо.
+
+---
+
+### 14. `effect` и `setupSizeUniforms`
+
+`SuperRipple.effect` — публичное поле, поэтому private reflection для него не нужен.
+
+После замены shader создаётся новый эффект:
+
+```python
+ripple.effect = RenderEffect.createRuntimeShaderEffect(
+    shader,
+    "img"
+)
+```
+
+`setupSizeUniforms(boolean)` при этом остаётся private. Метод нужен для инициализации uniform-параметров нового shader.
+
+Я ищу его один раз и кэширую:
+
+```python
+_setup_size_method = None
+```
+
+Дальше сохранённый `Method` используется повторно.
+
+Точную сигнатуру `boolean` я оставляю в explicit reflection, потому что здесь важен конкретный overload.
+
+---
+
+### 15. `run_on_ui_thread` в `make_ripple`
 
 ```python
 def make_ripple(view, x, y, intensity):
     def _internal():
         ...
         _ripple_cache[key].animate(x, y, intensity)
+
     run_on_ui_thread(_internal)
 ```
 
-Хук `dispatchTouchEvent` выполняется в UI-потоке, но `make_ripple` вызывается из `_handle_touch`, который в принципе может прийти с любого потока. Кроме того, вся работа с `View` в Android обязана выполняться в UI-потоке. `run_on_ui_thread` гарантирует это, выстраивая вызов в `Handler.post`.
+Работа с View и `SuperRipple` выполняется в UI-потоке.
 
-Весь тяжёлый код (`hashCode`, обращение к кэшу, вызов `.animate()`) выполняется внутри `_internal` — уже в UI-потоке, что безопасно.
+Даже если конкретный hook сейчас вызывается из UI-потока, отдельный `run_on_ui_thread` оставляет границу выполнения безопасной для вызовов из других путей.
 
 ---
 
-### 11. Проверка `Build.VERSION.SDK_INT < TIRAMISU`
+### 16. Проверка версии Android
+
+В текущей версии плагина отдельной проверки:
 
 ```python
-if Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU:
-    return
+Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
 ```
 
-`RenderEffect` и `RuntimeShader` появились в Android 12 (API 31), но `SuperRipple` в Telegram использует AGSL — Android Graphics Shading Language, появившийся только в Android 13 (API 33, Tiramisu). На более старых версиях просто ничего не происходит, плагин не падает.
+нет.
+
+`Build` также не импортируется.
+
+Для данного плагина эта локальная проверка не нужна: `SuperRipple` является частью целевой версии Telegram, для которой предназначен плагин, а сам код не должен дублировать проверку среды в каждой операции.
 
 ---
 
-### 12. `priority=5` при регистрации хука
+### 17. `priority=5` при регистрации хука
 
 ```python
-self.view_unhook_ref = self.hook_method(dispatch_method, _animtouHook(self), priority=5)
+self.view_unhook_ref = self.hook_method(
+    dispatch_method,
+    _animtouHook(self),
+    priority=5
+)
 ```
 
-Приоритет определяет порядок выполнения, если на один метод повешено несколько хуков. `5` — нейтральное значение (не самое высокое и не самое низкое). Это гарантирует, что другие плагины с более высоким приоритетом могут встать перед animtou, не конфликтуя с ним.
+`priority=5` оставлен. Он определяет порядок выполнения hook'ов на одном методе и не относится к лишним операциям в горячем пути.
 
 ---
 
-### 13. Хранение `view_unhook_ref` и чистый `on_plugin_unload`
+### 18. `on_plugin_unload`
 
 ```python
-self.view_unhook_ref = self.hook_method(dispatch_method, _animtouHook(self), priority=5)
-
 def on_plugin_unload(self):
     if self.view_unhook_ref:
         self.unhook_method(self.view_unhook_ref)
         self.view_unhook_ref = None
+
     _ripple_cache.clear()
 ```
 
-`hook_method` возвращает handle — ссылку на конкретную регистрацию хука, которую принимает `unhook_method`.
+Очистка `_ripple_cache` нужна, потому что Python-кэш удерживает ссылки на Java-объекты.
 
-**Уточнение по доке:** по официальной странице [Xposed Method Hooking](https://plugins.exteragram.app/docs/xposed-hooking) хуки и так *"are automatically removed when your plugin is unloaded"* — то есть framework сам снимает регистрацию хука при выгрузке плагина, вручную вызывать `unhook_method` в `on_plugin_unload` не обязательно. Явный вызов в animtou — не ошибка и не костыль, а просто дополнительная подстраховка (например, на случай hot-reload плагина в рамках одной сессии, когда `on_plugin_unload` мог бы отработать раньше, чем framework успеет почистить регистрацию)
-
-`_ripple_cache.clear()` освобождает все `SuperRipple`-объекты, предотвращая утечку Java-объектов через Python-кэш — это не связано с хуками и остаётся нужным независимо от автоматической очистки хуков.
+Я также оставляю явное снятие hook через сохранённый handle. Framework умеет автоматически удалять hook при выгрузке плагина, но явное снятие делает lifecycle самого плагина очевидным и безопасным для повторной загрузки.
 
 ---
 
-### 14. Кэш интенсивности `_cached_intensity`
+### 19. Кэш интенсивности
 
 ```python
 def _refresh_settings_cache(self):
-    self._cached_intensity = self._as_float(self.get_setting("intensity", "0.55"), 0.55)
+    self._cached_intensity = self._clamp_intensity(
+        self._as_float(
+            self.get_setting("intensity", "0.55"),
+            0.55
+        )
+    )
 ```
 
-`get_setting` обращается к хранилищу настроек — это относительно медленная операция (десериализация, I/O). Вызывать её на каждое касание было бы расточительно.
+Значение интенсивности хранится в Python-переменной, чтобы не обращаться к настройкам при каждом тапе.
 
-Значение кэшируется в Python-переменную один раз при загрузке плагина (`on_plugin_load` вызывает `_refresh_settings_cache()`). В `_handle_touch` используется уже закэшированное значение — `self._cached_intensity`.
+Диапазон:
 
-**Как раньше обновлялся кэш при изменении настройки (тоже рабочий вариант):** в `create_settings()` была отдельная кнопка «применить», которая вызывала `_refresh_settings_cache()` по клику:
+```text
+0.1–3.0
+```
+
+Контрол — `AltSeekbar`, а не текстовое поле.
+
+Для UI используется масштаб:
 
 ```python
-Text(
-    text="применить",
-    accent=True,
-    icon="ic_ab_done",
-    on_click=lambda _v=None: self._refresh_settings_cache()
-)
+INTENSITY_UI_MIN = 1
+INTENSITY_UI_MAX = 30
+INTENSITY_SCALE = 0.1
 ```
 
-Это честно работало, но требовало от пользователя лишнего тапа после ввода числа — легко забыть нажать и не понять, почему изменения не применились.
-
-**Как это было сделано после отказа от кнопки «применить» (тоже рабочий вариант, но не актуальный — см. ниже, в 2.2.0 контрол сменился на слайдер):** `Input` в `ui.settings` и так поддерживает `on_change` — коллбэк, который framework вызывает сам при каждом изменении значения (значение под `key` при этом уже сохранено framework'ом).
+То есть положение 1 соответствует `0.1`, а 30 — `3.0`.
 
 ```python
-def _on_intensity_change(self, new_value):
-    self._cached_intensity = self._as_float(new_value, self._cached_intensity)
+def _on_intensity_change(self, ui_value):
+    real = self._clamp_intensity(
+        round(float(ui_value)) * self.INTENSITY_SCALE
+    )
+    self._cached_intensity = real
+    self.set_setting("intensity", str(real))
 ```
+
+---
+
+### 20. `AltSeekbar` — слайдер интенсивности
+
+Штатного `Slider` из Material Components для этого экрана я не использую: прямое создание `com.google.android.material.slider.Slider` приводило к проблеме с Material-атрибутами темы.
+
+Рабочий компонент — exteraGram:
 
 ```python
-Input(
-    key="intensity",
-    text="интенсивность (0.1 - 3.0)",
-    default=intensity_default,
-    icon="msg_brightness_high",
-    on_change=self._on_intensity_change,
-)
+com.exteragram.messenger.preferences.components.AltSeekbar
 ```
 
-Плюс: не нужен отдельный `get_setting` внутри — `new_value` уже пришло от framework'а, парсим сразу. Пользователю не нужно ничего нажимать отдельно — значение подхватывается сразу по мере ввода.
-
-**Найденный баг: значение ничем не ограничивалось.** Подпись поля обещала диапазон 0.1–3.0, но фактически можно было ввести хоть 500 — `_as_float` просто парсит число, без проверки границ, и такое значение действительно применялось к риплу. Исправлено добавлением явного клампа:
+Он вставляется в настройки через `Custom(view=...)`.
 
 ```python
-INTENSITY_MIN = 0.1
-INTENSITY_MAX = 3.0
-
-def _clamp_intensity(self, value):
-    return max(self.INTENSITY_MIN, min(self.INTENSITY_MAX, value))
-
-def _on_intensity_change(self, new_value):
-    parsed = self._as_float(new_value, self._cached_intensity)
-    clamped = self._clamp_intensity(parsed)
-    self._cached_intensity = clamped
-    if clamped != parsed:
-        self.set_setting("intensity", str(clamped), reload_settings=True)
-```
-
-Ограничивается не только применяемое значение (`_cached_intensity`), но и то, что хранится и показывается в самом поле — если ввести число за пределами диапазона, поле само перезапишется на ближайшую границу. `set_setting(key, value, reload_settings=True)` — официальный способ из доки `plugin-settings`: `reload_settings=True` пересобирает экран настроек, так что исправленное значение сразу видно в UI, а не только «применяется невидимо».
-
-`_refresh_settings_cache()` (вызывается при загрузке плагина) тоже клампит прочитанное значение — если в хранилище с прошлых версий уже лежит что-то невалидное, при старте оно тоже приводится в границы.
-
-**Изменилось в 2.2.0 — контрол сменился с текстового `Input` на слайдер.** Захотелось физический ползунок вместо ручного набора числа. В доке `ui.settings` штатного слайдера не нашлось (список контролов там подан как исчерпывающий: `Header, Input, Divider, Switch, Selector, Text, EditText`, без Slider).
-
-Тупиковый путь: попробовал `com.google.android.material.slider.Slider` напрямую — он есть в зависимостях ETG, показалось логичным просто взять готовое. Конструктор `Slider(context)` падал:
-```
-java.lang.UnsupportedOperationException: Failed to resolve attribute at index 3
-	at com.google.android.material.tooltip.TooltipDrawable.createFromAttributes
-	at com.google.android.material.slider.BaseSlider.createLabelPool
-```
-Причина — `Slider` при создании сам строит всплывающую подсказку (`TooltipDrawable`) и лезет за Material-специфичными атрибутами темы. Тема приложения — `Theme.TMessages` → `Theme.AppCompat.Light` → ..., не `Theme.MaterialComponents.*`, нужных атрибутов там просто нет. 
-
-Рабочий путь нашёл, разобрав реальный пример из стороннего плагина — и выяснил сразу две вещи, которых не было в доке:
-
-1. В `ui.settings` **есть** `Custom(view=...)` — обёртка для вставки произвольной Java `View` в список настроек. Пропущена в примере доки, на практике работает.
-2. У exteraGram есть **свой** компонент слайдера — `com.exteragram.messenger.preferences.components.AltSeekbar`, сделанный специально для их preferences-экранов, не сырой `SeekBarView` (не пришлось бы писать свой `UItem.UItemFactory`-класс через `class-proxy`, самый тяжёлый инструмент из всех, что разбирал, — пришлось бы, откажись от `Custom`).
-
-```python
-def _build_seekbar(self, minimum, maximum, default, title, min_label, max_label, on_change):
+def _build_seekbar(
+    self,
+    minimum,
+    maximum,
+    default,
+    title,
+    min_label,
+    max_label,
+    on_change
+):
     from com.exteragram.messenger.preferences.components import AltSeekbar
     from java import dynamic_proxy
 
@@ -471,37 +551,59 @@ def _build_seekbar(self, minimum, maximum, default, title, min_label, max_label,
     listener = _Drag()
     self._seekbar_refs.append(listener)
 
-    bar = AltSeekbar(activity, listener, minimum, maximum, title, min_label, max_label)
+    bar = AltSeekbar(
+        activity,
+        listener,
+        minimum,
+        maximum,
+        title,
+        min_label,
+        max_label
+    )
     bar.setProgress(float(default))
     return Custom(view=bar)
 ```
 
-`minimum`/`maximum` конструктора — строго `int` (Java-сторона не делает неявное `float → int` сужение, поймал `TypeError: Cannot convert float object to int`, когда там по невнимательности остался `float`). `listener` — `AltSeekbar.OnDrag`, однометодный интерфейс, реализуется напрямую через `dynamic_proxy`, без `client_utils`-обёрток (тот же паттерн, что уже проверен рабочим). Важная деталь из чужого примера, которую взял себе: ссылки на listener-объекты нужно **держать живыми** (`self._seekbar_refs.append(listener)`) — иначе `dynamic_proxy`-объект может собрать GC, и колбэк молча перестанет срабатывать.
+Ссылки на listener сохраняются в `_seekbar_refs`, чтобы proxy-объект не был собран GC.
 
-Отдельно выяснил эмпирически (не из доки): бейдж рядом с заголовком в `AltSeekbar` не показывает сырой прогресс — он **интерполирует число между `min_label` и `max_label`**, распарсенными как числа, по позиции ползунка. Лейблы — не украшение, они определяют, что реально увидит пользователь как текущее значение.
-
-Итоговая раскладка после нескольких неверных попыток (путал реальное применяемое значение с тем, что просто показывается на слайдере): сила реально работает в диапазоне 0.1–3.0, масштаб UI→реальное значение ×0.1, на слайдере отображается как `1–30`:
-
-```python
-INTENSITY_UI_MIN = 1
-INTENSITY_UI_MAX = 30
-INTENSITY_SCALE = 0.1
-
-def _on_intensity_change(self, ui_value):
-    real = self._clamp_intensity(round(float(ui_value)) * self.INTENSITY_SCALE)
-    self._cached_intensity = real
-    self.set_setting("intensity", str(real))
-```
-
-`_clamp_intensity`/`INTENSITY_MIN`/`INTENSITY_MAX` не поменялись по смыслу — та же функция и те же границы, что были для текстового поля, просто теперь применяются к значению, пришедшему от слайдера, а не распарсенному из текста. Тем же самым `_build_seekbar()` и по той же схеме масштабирования сделана и «доза» (хроматическая аберрация) — единственная действительно новая настройка в 2.2.0, детали формулы смещения и регрессионного бага с альфой — в разделе 9 выше. Ниже — то, что специфично именно для настройки дозы, не для шейдера.
+`minimum` и `maximum` конструктора должны быть `int`.
 
 ---
 
-### 15. «Доза» — новая настройка в 2.2.0, персистентный uniform вместо параметра вызова
+### 21. Кламп интенсивности
 
-В отличие от силы (которая передаётся заново при каждом вызове `.animate(x, y, intensity)`), доза не параметр вызова — это uniform-переменная, выставленная на уже созданном `RuntimeShader`. А `SuperRipple` кэшируется по вью (`_ripple_cache`, раздел 8) и переиспользуется между касаниями. Из этого следует нюанс, которого не было у силы: если просто поменять значение uniform-а, уже созданные и закэшированные шейдеры об этом не узнают.
+```python
+INTENSITY_MIN = 0.1
+INTENSITY_MAX = 3.0
 
-Решение — модульная переменная плюс явный сброс кэша при изменении дозы:
+def _clamp_intensity(self, value):
+    return max(
+        self.INTENSITY_MIN,
+        min(self.INTENSITY_MAX, value)
+    )
+```
+
+Кламп нужен как для значения из UI, так и для старого/некорректного значения, которое уже могло лежать в настройках.
+
+В 2.3.0 эта защита сохраняется: диапазон, который показывает UI, соответствует диапазону реально применяемого эффекта.
+
+---
+
+### 22. «Доза» — хроматическая аберрация
+
+Доза является uniform-переменной shader:
+
+```glsl
+uniform float dose;
+```
+
+Она задаётся при создании пропатченного `RuntimeShader`:
+
+```python
+shader.setFloatUniform("dose", _current_dose)
+```
+
+Поскольку `SuperRipple` кэшируется, изменение дозы должно приводить к созданию новых shader.
 
 ```python
 _current_dose = 0.01
@@ -512,30 +614,26 @@ def _set_current_dose(value):
     _ripple_cache.clear()
 ```
 
-`_ripple_cache.clear()` тут обязателен — иначе старые уже созданные `SuperRipple` на других вью так и останутся со старым значением дозы до следующего пересоздания (а пересоздаются они только когда вью впервые встречается — см. раздел 8). Само значение проставляется на шейдер сразу после создания, рядом с уже существующим `set_private_field(ripple, "shader", shader)`:
-
-```python
-shader.setFloatUniform("dose", _current_dose)
-```
-
-Диапазон и масштаб — по той же схеме и тем же `_build_seekbar()`, что и у силы (раздел 14), но с нижней границей `0` (честное «выкл.», а не малое ненулевое значение):
+Для UI:
 
 ```python
 DOSE_UI_MIN = 0
 DOSE_UI_MAX = 30
 DOSE_SCALE = 0.1
-
-def _on_dose_change(self, ui_value):
-    self._cached_dose_ui = self._clamp_dose_ui(round(float(ui_value)))
-    _set_current_dose(self._cached_dose_ui * self.DOSE_SCALE)
-    self.set_setting("dose", str(self._cached_dose_ui))
 ```
 
-Подписи на слайдере — `"выкл."` вместо `str(DOSE_UI_MIN)` (это просто текст, не обязан быть числом) и `str(DOSE_UI_MAX)` для максимума.
+`0` означает выключенную аберрацию.
+
+```python
+def _on_dose_change(self, ui_value):
+    ui_value = self._clamp_dose_ui(round(float(ui_value)))
+    _set_current_dose(ui_value * self.DOSE_SCALE)
+    self.set_setting("dose", str(ui_value))
+```
 
 ---
 
-### 16. `_as_float` — безопасный парсинг настройки
+### 23. `_as_float` — безопасный парсинг
 
 ```python
 def _as_float(self, s, default):
@@ -545,53 +643,142 @@ def _as_float(self, s, default):
         return default
 ```
 
-Пользователь вводит интенсивность текстом. `.replace(",", ".")` — обработка локалей, где дробная часть пишется через запятую (русская раскладка). `str(s)` защищает от случая, когда значение оказалось не строкой. При любой ошибке — возвращается `default`.
+`replace(",", ".")` позволяет принимать дробные значения с запятой.
 
-Эта функция не изменилась — её просто стали вызывать из другого места (`_on_intensity_change` вместо `_refresh_settings_cache`, см. раздел 14). Она по-прежнему отвечает только за парсинг — за то, что число не выходит за диапазон, отвечает отдельная `_clamp_intensity` (тоже раздел 14), это разные задачи и разные функции.
+Эта функция отвечает только за преобразование значения. Проверка диапазона выполняется отдельно через `_clamp_intensity`.
+
+Fallback здесь оставлен, потому что некорректное пользовательское значение действительно может попасть в настройки.
 
 ---
 
-### 17. Автообновление через `zwylib`
+### 24. Автообновление через `zwylib`
 
 ```python
 try:
     import zwylib
-    zwylib.add_autoupdater_task(id, UPDATE_CHANNEL_ID, UPDATE_MESSAGE_ID)
+    zwylib.add_autoupdater_task(
+        id,
+        UPDATE_CHANNEL_ID,
+        UPDATE_MESSAGE_ID
+    )
 except ImportError:
     run_on_ui_thread(
-        lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"),
+        lambda: BulletinHelper.show_error(
+            "animtou доступен, но без автообновления"
+        ),
         2000
     )
 ```
 
-`zwylib` — внешняя библиотека, не гарантированно установленная. Плагин её не требует — работает без неё. При отсутствии показывается ошибка с задержкой в 2 секунды, чтобы не мешать остальной инициализации `on_plugin_load`.
+`zwylib` необязателен. При его отсутствии основная функциональность плагина продолжает работать.
 
-**Как раньше делалась задержка (тоже рабочий вариант):** вручную поднимался отдельный Python-поток с `time.sleep`:
-
-```python
-def delayed_error():
-    sleep(2)
-    run_on_ui_thread(lambda: BulletinHelper.show_error("animtou доступен, но без автообновления"))
-threading.Thread(target=delayed_error, daemon=True).start()
-```
-
-Рабочий подход, `daemon=True` гарантирует, что поток не помешает завершению приложения. Но это лишняя ручная многопоточность там, где она не нужна.
-
-**Как это сделано сейчас:** по доке [Android Utilities](https://plugins.exteragram.app/docs/android-utils) у `run_on_ui_thread` уже есть встроенный необязательный параметр задержки в миллисекундах (`run_on_ui_thread(func, delay)`). Один вызов вместо потока + `sleep` + импорта `threading`/`time.sleep` — то же самое поведение, без ручного управления потоком.
-
-`id` здесь — встроенная Python-функция, но в контексте плагина она переопределена или переиспользована как ссылка на `__id__` — идентификатор плагина.
+Ручной Python-thread с `sleep(2)` здесь не нужен: задержка уже поддерживается `run_on_ui_thread(func, delay)`.
 
 ---
 
-### 18. Открытие настроек через `PluginsController`
+### 25. Открытие настроек через `PluginsController`
 
 ```python
-PC = find_class("com.exteragram.messenger.plugins.PluginsController")
+PC = find_class(
+    "com.exteragram.messenger.plugins.PluginsController"
+)
+
 if PC:
     PC.openPluginSettings(__id__)
 ```
 
-Встроенного способа открыть настройки собственного плагина из пункта меню нет. Решение — напрямую вызвать `PluginsController.openPluginSettings` с `__id__` плагина. `find_class` возвращает `None` если класс не найден (например, в аю), поэтому есть проверка `if PC`.
+Проверка `PC` оставлена, потому что класс может отсутствовать в другом окружении.
+
+---
+
+## Что я не стал убирать в 2.3.0
+
+Я не удаляю защиту только потому, что она выглядит как «лишняя».
+
+Оставлены проверки и fallback'и, у которых есть реальный сценарий:
+
+- получение `param.thisObject`;
+- получение координат;
+- необязательный `zwylib`;
+- `PluginsController`;
+- пользовательский парсинг чисел;
+- Java reflection;
+- работа с UI-thread;
+- очистка кэшей;
+- дедупликация событий;
+- ограничение размера кэша.
+
+Удалены только конструкции, которые не выполняли полезной работы:
+
+- неиспользуемые импорты `Any`, `List`;
+- `Build` вместе с локальной проверкой Android;
+- `_last_up_token`;
+- пустой `after_hooked_method`;
+- повторный поиск уже найденных reflection `Field`/`Method`.
+
+---
+
+## Полная схема работы — версия 2.3.0
+
+```text
+on_plugin_load()
+    │
+    ├── загрузка настроек в кэш
+    │
+    └── hook View.dispatchTouchEvent
+            │
+            └── before_hooked_method
+                    │
+                    ├── получить MotionEvent
+                    ├── получить thisObject
+                    ├── только ACTION_DOWN
+                    ├── дедупликация по (downTime, action)
+                    ├── получить raw X/Y
+                    │
+                    └── получить WindowManagerGlobal.mViews
+                            │
+                            └── Field берётся из кэша
+                                    │
+                                    └── для каждого DecorView
+                                            │
+                                            ├── screen_to_local()
+                                            │
+                                            └── make_ripple()
+                                                    │
+                                                    └── UI thread
+                                                            │
+                                                            ├── cache hit
+                                                            │     └── animate()
+                                                            │
+                                                            └── cache miss
+                                                                  │
+                                                                  ├── SuperRipple(view)
+                                                                  ├── получить shader Field из кэша
+                                                                  ├── получить shader code из кэша
+                                                                  ├── создать RuntimeShader
+                                                                  ├── установить dose
+                                                                  ├── заменить shader
+                                                                  ├── создать RenderEffect
+                                                                  ├── получить setupSizeUniforms
+                                                                  │     из кэша
+                                                                  ├── setup uniforms
+                                                                  └── animate()
+
+echo polling
+    │
+    ├── пока ripple активен
+    ├── взять mViews
+    ├── сравнить size()
+    └── если появилось новое окно
+            ├── найти новый DecorView
+            ├── пересчитать координаты
+            └── создать синхронизированный ripple
+
+on_plugin_unload()
+    │
+    ├── снять сохранённый hook
+    └── очистить _ripple_cache
+```
 
 ---
 
@@ -602,28 +789,38 @@ if PC:
 ```python
 view_cls = JClass.forName("android.view.View")
 motion_event_cls = JClass.forName("android.view.MotionEvent")
-method = view_cls.getDeclaredMethod("dispatchTouchEvent", motion_event_cls)
+method = view_cls.getDeclaredMethod(
+    "dispatchTouchEvent",
+    motion_event_cls
+)
 method.setAccessible(True)
-unhook_ref = self.hook_method(method, MyHook(self), priority=5)
+unhook_ref = self.hook_method(
+    method,
+    MyHook(self),
+    priority=5
+)
 ```
 
 ### Дедупликация событий через downTime-токен
 
 ```python
-token = (int(motion_event.getDownTime()), int(motion_event.getActionMasked()))
+token = (
+    int(motion_event.getDownTime()),
+    int(motion_event.getActionMasked())
+)
+
 if self._last_token == token:
     return
+
 self._last_token = token
 ```
 
 ### Получение всех окон приложения
 
 ```python
-from android.view import WindowManagerGlobal
-from hook_utils import get_private_field
-
 wmg = WindowManagerGlobal.getInstance()
-views = get_private_field(wmg, "mViews")
+field = _get_mviews_field()
+views = field.get(wmg)
 all_views = [views.get(i) for i in range(views.size())]
 ```
 
@@ -636,63 +833,73 @@ local_x = raw_x - loc[0]
 local_y = raw_y - loc[1]
 ```
 
-### Патч приватных полей сразу после `new` — когда объект создаём мы сами
+### Кэширование reflection
 
 ```python
-obj = SomeJavaClass(args)
-set_private_field(obj, "fieldName", new_value)
-```
+_field = None
 
-Хук на конструктор (`hook_all_constructors`) нужен, только если объект создаёт **не
-наш код** — например, сам Telegram где-то внутри. Если создаём объект сами (как
-`SuperRipple(view)` в этом плагине) — глобальный хук на класс лишний и может задеть
-чужие вызовы того же конструктора.
+def get_field(obj):
+    global _field
 
-### Кэш Java-объектов с лимитом размера (FIFO)
+    if _field is None:
+        _field = obj.getClass().getDeclaredField("name")
+        _field.setAccessible(True)
 
-```python
-cache = {}
-MAX = 10
-
-key = obj.hashCode()
-if key not in cache:
-    cache[key] = ExpensiveJavaObject(obj)
-    if len(cache) > MAX:
-        del cache[next(iter(cache))]
-cache[key].doSomething()
+    return _field
 ```
 
 ---
 
-## Полная схема работы
-
-```
-on_plugin_load()
-    │
-    └── hook_method(View.dispatchTouchEvent) → _animtouHook
-            └── before: _handle_touch(view, event)
-                    ├── фильтр: только ACTION_DOWN (action_masked == 0)
-                    ├── дедупликация по (downTime, action) токену
-                    ├── получить raw координаты касания
-                    ├── получить все DecorView через WindowManagerGlobal.mViews
-                    └── для каждого View:
-                            screen_to_local() → make_ripple() → run_on_ui_thread()
-                                    ├── если SuperRipple для этого View ещё нет в кэше:
-                                    │       _make_patched_ripple(view)
-                                    │           ├── SuperRipple(view)
-                                    │           └── патч шейдера (alpha=0, radius=0) прямо на нём
-                                    └── SuperRipple.animate(x, y, intensity)
-
-on_plugin_unload()
-    ├── unhook_method(view_unhook_ref)
-    └── _ripple_cache.clear()
-```
-
----
-
-## Открытые вопросы (замечено, но не разобрано)
+## Открытые вопросы
 
 ### Риппл не срабатывает при закрытии некоторых контекстных меню
 
-При открытом меню «три точки» (в чате, в профиле, в канале) — тап вне меню закрывает его (стандартное поведение самого Telegram), но при этом риппл почему-то не запускается на этот тап. Обнаружено в 2.2.0, не исследовано. Правдоподобная гипотеза (не проверена): такие меню обычно реализованы через `PopupWindow` с собственной логикой закрытия по тапу снаружи (`OutsideTouchListener` или аналог) — если этот тап перехватывается на уровне, до которого не долетает `dispatchTouchEvent` базового `View` в том виде, в каком мы его хукаем, наш хук его просто не увидит. Требует отдельного разбора.
+При открытом меню «три точки» (в чате, в профиле, в канале) тап вне меню закрывает его, но при этом риппл может не запускаться на этот тап.
 
+Вероятная причина — такие меню могут использовать отдельное окно или собственную обработку outside touch, из-за чего событие не проходит через ожидаемый путь `dispatchTouchEvent`.
+
+Это отдельная проблема и в текущей архитектуре 2.3.0 не изменена.
+
+---
+
+## История версий
+
+### 2.3.0
+
+1. Удалены неиспользуемые импорты.
+2. Убрана локальная проверка `Build.VERSION.SDK_INT` и импорт `Build`.
+3. Убран неиспользуемый `_last_up_token`.
+4. Убран пустой `after_hooked_method`.
+5. `WindowManagerGlobal.mViews` использует кэшированный `Field`.
+6. `SuperRipple.shader` использует кэшированный `Field` для замены shader.
+7. `setupSizeUniforms(boolean)` ищется один раз и переиспользуется.
+8. Исправлен ошибочный доступ `ripple.JA.shader`, из-за которого патч shader не применялся.
+9. Патч прозрачности сохранён.
+10. Патч хроматической аберрации сохранён.
+11. `dose` uniform сохранён.
+12. Поддержка нескольких окон и echo новых окон сохранена.
+13. Кэш `SuperRipple` сохранён.
+14. Работа через штатный `SuperRipple` сохранена.
+
+### 2.2.1
+
+- Небольшое изменение интерфейса внутри плагина.
+- Сохранён механизм `AltSeekbar`.
+- Сохранён патч shader и настройки эффекта.
+
+### 2.2.0
+
+- Добавлена новая настройка «уровень дозы» — хроматическая аберрация риппла.
+- Интенсивность стала настоящим слайдером.
+- Риппл начал реагировать на новые окна/диалоги, которые открываются, пока анимация ещё идёт.
+- Добавлена оптимизация echo polling.
+- Исправлен масштаб и привязка chromatic aberration к `offset`.
+- Исправлена ошибка с альфой в shader.
+
+### 2.1.0
+
+- Патч shader перенесён с глобального constructor hook на экземпляры `SuperRipple`, которые создаёт сам плагин.
+- Добавлена прозрачность фона.
+- Добавлено принудительное обнуление `radius`.
+- Добавлен кэш `SuperRipple`.
+- Патч shader стал локальным и не затрагивает оригинальные Stars-анимации Telegram.
