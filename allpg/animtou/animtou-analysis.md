@@ -1,4 +1,3 @@
-[animtou-analysis-v2.3.0-final.md](https://github.com/user-attachments/files/32606472/animtou-analysis-v2.3.0-final.md)
 # Анализ разработки плагина animtou
 > Анимированные касания (SuperRipple-эффект) для AyuGram / ExteraGram
 > Версия документа: 2.3.0
