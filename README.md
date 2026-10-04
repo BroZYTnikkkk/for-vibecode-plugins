@@ -17,10 +17,10 @@ you can also hit me up on tg ([@jaxbastard](https://t.me/jaxbastard)) and i'll a
 
 | папка, файл | RU: что внутри | EN: what's inside |
 |-------------|----------------|-------------------|
-| allpg/ | папки плагинов, каждая содержит .plugin и <n>-analysis.md | plugin folders, each contains .plugin and <n>-analysis.md |
-| plugins-index.md | список имеющихся плагинов и анализов | all the plugins and analyses we've got |
-| repo-plus-context7.md | почему репо + context7 лучше использовать вместе | why repo + context7 work better together |
-| context7.json | настройки индексации репо в context7 | config for indexing this repo in context7 |
+| `allpg/` | папки плагинов, каждая содержит .plugin и <n>-analysis.md | plugin folders, each contains .plugin and <n>-analysis.md |
+| `plugins-index.md` | список имеющихся плагинов и анализов | all the plugins and analyses we've got |
+| `repo-plus-context7.md` | почему репо + context7 лучше использовать вместе | why repo + context7 work better together |
+| `context7.json` | настройки индексации репо в context7 | config for indexing this repo in context7 |
 
 ---
 
