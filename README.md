@@ -19,7 +19,7 @@ you can also hit me up on tg ([@jaxbastard](https://t.me/jaxbastard)) and i'll a
 |-------------|----------------|-------------------|
 | `allpg/` | папки плагинов, каждая содержит `.plugin` и `<name>-analysis.md` | plugin folders, each contains `.plugin` and `<name>-analysis.md` |
 | `plugins-index.md` | список имеющихся плагинов и анализов | all the plugins and analyses we've got |
-| `repo-vs-context7.md` | почему репо + нейронка лучше context7 для разработки плагинов | why repo + AI beats context7 for plugin development |
+| `repo-plus-context7.md` | почему репо + context7 лучше использовать вместе | why repo + context7 work better together |
 
 ---
 
