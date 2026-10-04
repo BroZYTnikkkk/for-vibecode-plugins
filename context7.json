@@ -1,0 +1,17 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "for-vibecoders",
+  "description": "Practical analyses and examples of ExteraGram 12.5.1+ / AyuGram plugins (Python, Chaquopy, Xposed-style hooks). Not a full API reference. Docs are in Russian.",
+  "folders": [
+    "allpg"
+  ],
+  "excludeFolders": [
+    "allpg/jaxtools"
+  ],
+  "rules": [
+    "This repo is a collection of practical examples and analyses of real plugins. It is not a full API reference and not a limit on what plugins can do; for the API see the official docs at plugins.exteragram.app/docs, the Telegram for Android sources and decompiled ExteraGram.",
+    "Plugins target ExteraGram 12.5.1+ and AyuGram, are written in Python (Chaquopy) and use Xposed-style hooks. The analyses are written in Russian.",
+    "Treat the patterns in the analyses as proven examples with reasons behind them; adapt them or go beyond them when the task needs it.",
+    "Class and method names can change between app versions (R8), so verify them against the target version instead of assuming names from these examples."
+  ]
+}
