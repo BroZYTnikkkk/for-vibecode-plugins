@@ -4,11 +4,12 @@
 >
 > - [security.md](security.md) — как проверять чужие плагины и почему два плагина исключены
 > - [java-dex.md](java-dex.md) — плагины с вшитым Java-кодом (DEX): как устроены и как их разбирать
+> - [elyx.md](elyx.md) — формат Elyx (ZIP-проект вместо одного файла) и как в нём разложены реальные плагины
 > - [../community-plugins.md](../community-plugins.md) — плагины с открытой лицензией на GitHub (ссылками)
 
 пометки в таблицах:
 - **[DEX]** основная логика на Java, подробнее в [java-dex.md](java-dex.md)
-- **[elyx]** плагин в формате Elyx (ZIP-проект вместо одного файла)
+- **[elyx]** плагин в формате Elyx, подробнее в [elyx.md](elyx.md)
 - **[только смотреть]** полезно как пример реализации, использовать не советуем
 - **[не доделан]** автор не закончил плагин
 
@@ -85,6 +86,7 @@
 | Log Overlay [DEX] | @dexPlugin & @koshbko & @mihailkotovski | плавающее окно логов | — |
 | LogOverlay | @YouRooni | окно логов с командой и пунктом в боковом меню | хук логгера приложения |
 | File Viewer & Editor | @JavaScript_XD | просмотр и правка текстовых файлов, `.openfile` | плавающее окно через `WindowManager` |
+| Time Nickname | @mishabotov | время в имени профиля, обновляется по таймеру | `account.updateProfile` через `ConnectionsManager.sendRequest`, обработка `FLOOD_WAIT_N`, обновление локального юзера и `NotificationCenter.mainUserInfoChanged`, чтобы имя сменилось без перезапуска |
 | neofetch | @bandaliyev | `.neo` отправляет данные устройства | самый простой пример команды с заменой текста и цитатой |
 | exteraFetch | @shareui | то же самое в стиле neofetch | — |
 | Server Status | @YouRooni | пинг датацентров и веб-сервисов | своя кнопка в настройках exteraGram (`MainPreferencesActivity.fillItems/onClick`) и экран на `UniversalFragment` |
@@ -112,6 +114,6 @@
 
 ## не вошли
 
-- **Time Nickname** — заражённая копия, см. [security.md](security.md)
+- **заражённая копия Time Nickname** — чужая вставка в конце файла, см. [security.md](security.md). оригинал чистый и есть в каталоге выше
 - **TheLooker** — слежка и закрытое ядро с чужого сервера, см. [security.md](security.md)
 - дубликаты и старые версии (Material Player 1.0.0 ×3, Player Widget, Visual Ecstasy, Custom Profile) — оставлено по одной версии
