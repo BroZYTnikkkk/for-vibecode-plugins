@@ -23,6 +23,7 @@ want to add your plugin? open a PR to [`community-plugins.md`](community-plugins
 | `community/` | разбор ~55 чужих плагинов: каталог, безопасность, Java/DEX внутри плагинов, формат Elyx | review of ~55 third-party plugins: catalog, security, embedded Java/DEX, Elyx format |
 | `repo-plus-context7.md` | почему репо + context7 лучше использовать вместе | why repo + context7 work better together |
 | `context7.json` | настройки индексации репо в context7 | config for indexing this repo in context7 |
+| `skill/` | скилл для ИИ-агентов по написанию плагинов (на основе makarworld/exteragram-plugin-skill) | agent skill for writing plugins (based on makarworld/exteragram-plugin-skill) |
 
 ---
 
