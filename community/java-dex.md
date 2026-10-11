@@ -160,7 +160,7 @@ for n, blob in enumerate(blobs, 1):
 | плагин | автор | классов | что делает Java-часть (по декомпиляту) |
 |---|---|---|---|
 | Custom Profile | @RoflPlugins | ~400 | целый мини-клиент: свой сервер профилей, WebSocket, TLS, кастомный рендер профиля, хуки `onDraw`/`dispatchDraw`, адаптеров списков и `sendMessage` |
-| Material Player | @RnPlugins | 30 | новый экран плеера в стиле Material Expressive, хуки `MainTabsActivity.createView`, `checkPlayer`; тексты песен через lrclib.net |
+| Material Player [не доделан] | @RnPlugins | 30 | плагин не закончен автором. новый экран плеера в стиле Material Expressive, хуки `MainTabsActivity.createView`, `checkPlayer`; тексты песен через lrclib.net |
 | Text Animation | @itskotovski & @mishabotov | 18 | анимации набора текста: появление букв, плавающий курсор, «рассыпание» стёртых символов |
 | Продвинутый поиск | @dekma0091 | 8 | свой экран поиска по чатам с фильтрами по дате, юзеру и типу медиа |
 | Photo Picker Plus | @dekma0091 | 6 | доработка `ChatAttachAlertPhotoLayout`: пиллы, даты, тулбар папок |
