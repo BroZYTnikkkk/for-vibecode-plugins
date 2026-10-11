@@ -92,6 +92,8 @@
 | Settings Sync [DEX] | @RnPlugins | синхронизация настроек клиента и плагинов | — |
 | Запись экрана | @swagnonher | запись экрана из клиента | `onActivityResult` для системного разрешения |
 | Device Fingerprint Spoofer | @Daxo_OS | подмена модели устройства в списке сеансов | только для понимания; меняет то, что видит сервер Telegram |
+| Plugin Security | @mihailkotovski & @mishabotov | проверка плагинов на опасный код, локально и через ИИ | эвристики поиска опасных паттернов, см. [security.md](security.md) |
+| Plugin Verifier | @JasonVurhyz | локальная проверка плагинов и сверка с базой проверенных | распаковка вшитых DEX и подсветка кода в `BottomSheet`, см. [security.md](security.md) |
 | Heroku Host | @swagnonher & @codrago | запуск юзербота Heroku внутри клиента | см. [security.md](security.md) |
 
 ## плагины для плагинов и библиотеки
