@@ -20,7 +20,7 @@ want to add your plugin? open a PR to [`community-plugins.md`](community-plugins
 | `allpg/` | папки плагинов, каждая содержит .plugin и <n>-analysis.md | plugin folders, each contains .plugin and <n>-analysis.md |
 | `plugins-index.md` | список плагинов с анализами в этом репо | plugins with analyses stored in this repo |
 | `community-plugins.md` | каталог плагинов, библиотек и сторов других авторов (ссылками) | catalog of plugins, libraries and stores by other authors (links) |
-| `community/` | разбор чужих плагинов: безопасность, Java/DEX внутри плагинов | notes on third-party plugins: security, embedded Java/DEX |
+| `community/` | разбор ~55 чужих плагинов: каталог, безопасность, Java/DEX внутри плагинов | review of ~55 third-party plugins: catalog, security, embedded Java/DEX |
 | `repo-plus-context7.md` | почему репо + context7 лучше использовать вместе | why repo + context7 work better together |
 | `context7.json` | настройки индексации репо в context7 | config for indexing this repo in context7 |
 
