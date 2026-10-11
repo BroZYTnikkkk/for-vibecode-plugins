@@ -1,5 +1,7 @@
 # plugins index
 
+plugins with analyses stored in this repo. plugins by other authors: [community-plugins.md](community-plugins.md)
+
 | name | version | description | plugin | analysis |
 |---|---|---|---|---|
 | animtou | 2.3.0 | adds a cool animation every time you click | [open](https://github.com/corerudo/for-vibecoders/blob/main/allpg/animtou/animtou%20v2.3.0.plugin) | [open](https://github.com/corerudo/for-vibecoders/blob/main/allpg/animtou/animtou-analysis.md) |
