@@ -4,6 +4,7 @@
 >
 > - [security.md](security.md) — как проверять чужие плагины и почему два плагина исключены
 > - [java-dex.md](java-dex.md) — плагины с вшитым Java-кодом (DEX): как устроены и как их разбирать
+> - [analyses/](analyses/) — подробные разборы отдельных плагинов: Time Nickname, n0transcriber, Spoiler Remover, TempSub, Server Status, MiniApp DevTools
 > - [elyx.md](elyx.md) — формат Elyx (ZIP-проект вместо одного файла) и как в нём разложены реальные плагины
 > - [../community-plugins.md](../community-plugins.md) — плагины с открытой лицензией на GitHub (ссылками)
 
@@ -39,7 +40,7 @@
 
 | плагин | автор | что делает | чему научиться |
 |---|---|---|---|
-| Spoiler Remover | @JasonVurhyz | убирает спойлеры с текста и медиа | два режима: визуальный (хук `ChatMessageCell.setMessageObject`) и постоянный (правка входящих апдейтов `TL_updateNewMessage`) |
+| [Spoiler Remover](analyses/spoiler-remover.md) | @JasonVurhyz | убирает спойлеры с текста и медиа | два режима: визуальный (хук `ChatMessageCell.setMessageObject`) и постоянный (правка входящих апдейтов `TL_updateNewMessage`) |
 | noLinkPreview | @RnPlugins with @PluginIDE | `.лх ссылка текст` отправляет превью ссылки без самой ссылки | ссылка-entity на невидимый символ `U+2060` и сдвиг остальных entities |
 | Replacing Characters | @Nikita218000 | правила автозамены текста перед отправкой | хук отправки с пользовательскими правилами |
 | Quote | @mihailkotovski & @JasonVurhyz | цитаты-картинки из выбранных сообщений | хуки выделения сообщений в `ChatActivity`, нативный рендер в стикер |
@@ -50,7 +51,7 @@
 | Recent Actions+ | @anivplugins @mraniv | доработанный журнал действий канала | фильтры `TL_channelAdminLogEventsFilter` |
 | NoForwardLimit [DEX] | @zwylair | снимает лимит выделения сообщений для пересылки | Kotlin в DEX, сжатие lzma, хуки выделения в `ChatActivity` |
 | Chat Lock | @eCubzPlugins | пароль на чаты и папки, команды `.лок .анлок` | системная блокировка через `KeyguardManager`, хуки `ChatActivity`/`DialogsActivity`, пункт в меню чата |
-| TempSub | @itNotMax | подписка на канал с автоотпиской по дате | кнопка рядом с «Подписаться», `channels.joinChannel/leaveChannel`, архивация, периодическая проверка |
+| [TempSub](analyses/tempsub.md) | @itNotMax | подписка на канал с автоотпиской по дате | кнопка рядом с «Подписаться», `channels.joinChannel/leaveChannel`, архивация, периодическая проверка |
 | DragnDrop Send | @koshbko | отправка файлов перетаскиванием из других приложений | `View.OnDragListener` через `dynamic_proxy`, `SendMessagesHelper.prepareSendingMedia` |
 | Системное меню текста [DEX] | @YouRooni | действия Android в меню выделения текста | подкласс `ActionMode.Callback2` в Java (разобран в [java-dex.md](java-dex.md)) |
 | Translatica Pro | @AGeekApple | перевод и пересказ сообщений прямо в чате | `messages.translateText`, `messages.summarizeText`, хук `ChatMessageCell.setMessageObject` |
@@ -62,7 +63,7 @@
 
 | плагин | автор | что делает | чему научиться |
 |---|---|---|---|
-| n0transcriber | @n0white | расшифровка голосовых через Groq Whisper, очистка текста LLaMA | полная замена `TranscribeButton.onTap` и запись результата в нативную расшифровку Telegram |
+| [n0transcriber](analyses/n0transcriber.md) | @n0white | расшифровка голосовых через Groq Whisper, очистка текста LLaMA | полная замена `TranscribeButton.onTap` и запись результата в нативную расшифровку Telegram |
 | Voice to Text | @PESSDES_Plugins | расшифровка через Deepgram, текст в подпись голосового | `messages.editMessage` с цитатой |
 | Termux Bridge | @S1mclick | скрипты и нейросети из Termux поверх клиента | локальный сокет с токеном, см. [security.md](security.md) |
 
@@ -82,14 +83,14 @@
 
 | плагин | автор | что делает | чему научиться |
 |---|---|---|---|
-| MiniApp DevTools | @xusanboyman200 | DevTools (eruda) внутри мини-приложений | хуки `WebView` и внедрение JS через `evaluateJavascript` |
+| [MiniApp DevTools](analyses/miniapp-devtools.md) | @xusanboyman200 | DevTools (eruda) внутри мини-приложений | хуки `WebView` и внедрение JS через `evaluateJavascript` |
 | Log Overlay [DEX] | @dexPlugin & @koshbko & @mihailkotovski | плавающее окно логов | — |
 | LogOverlay | @YouRooni | окно логов с командой и пунктом в боковом меню | хук логгера приложения |
 | File Viewer & Editor | @JavaScript_XD | просмотр и правка текстовых файлов, `.openfile` | плавающее окно через `WindowManager` |
-| Time Nickname | @mishabotov | время в имени профиля, обновляется по таймеру | `account.updateProfile` через `ConnectionsManager.sendRequest`, обработка `FLOOD_WAIT_N`, обновление локального юзера и `NotificationCenter.mainUserInfoChanged`, чтобы имя сменилось без перезапуска |
+| [Time Nickname](analyses/time-nickname.md) | @mishabotov | время в имени профиля, обновляется по таймеру | `account.updateProfile` через `ConnectionsManager.sendRequest`, обработка `FLOOD_WAIT_N`, обновление локального юзера и `NotificationCenter.mainUserInfoChanged`, чтобы имя сменилось без перезапуска |
 | neofetch | @bandaliyev | `.neo` отправляет данные устройства | самый простой пример команды с заменой текста и цитатой |
 | exteraFetch | @shareui | то же самое в стиле neofetch | — |
-| Server Status | @YouRooni | пинг датацентров и веб-сервисов | своя кнопка в настройках exteraGram (`MainPreferencesActivity.fillItems/onClick`) и экран на `UniversalFragment` |
+| [Server Status](analyses/server-status.md) | @YouRooni | пинг датацентров и веб-сервисов | своя кнопка в настройках exteraGram (`MainPreferencesActivity.fillItems/onClick`) и экран на `UniversalFragment`. вкладка «медиа» показывает случайные числа, а не реальную скорость |
 | RAM-Info Pill | @YouRooni | память и батарея в виджете-пилле | регистрация своего пилла через `PillRegistry` |
 | Settings Sync [DEX] | @RnPlugins | синхронизация настроек клиента и плагинов | — |
 | Запись экрана | @swagnonher | запись экрана из клиента | `onActivityResult` для системного разрешения |
