@@ -60,6 +60,7 @@ For a fuller first plugin (`.hello` command + settings + outgoing-message hook),
 | `ui.settings` | `Header`/`Divider`/`Switch`/`Selector`/`Input`/`EditText`/`Text`/`Custom`, `SimpleSettingFactory` | [settings.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/settings.md) |
 | `client_utils` | `run_on_queue`, `send_request`, `send_text`/`send_photo`/`send_document`/`send_video`/`send_audio`/`send_message`, `edit_message`, `get_last_fragment`/`get_messages_controller`/..., `NotificationCenterDelegate` | [client-utils.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/client-utils.md) |
 | `android_utils` | `run_on_ui_thread`, `R` (Runnable proxy), `OnClickListener`/`OnLongClickListener`, `log`, `copy_to_clipboard` | [android-utils.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/android-utils.md) |
+| Xposed hooking | `MethodHook`, `MethodReplacement`, `HookFilter`, `hook_method` | [xposed-hooking.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/xposed-hooking.md) |
 | `hook_utils` | `find_class`, `get_private_field`/`set_private_field`, static variants — reflection | [hook-utils.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/hook-utils.md) |
 | `extera_utils.classes` | `@java_subclass`, `@joverride`/`@joverload`/`@jmethod`/`jfield`/`@jconstructor`, MVEL, `JA`/`JGS`/`JIR`/`JS` modifiers | [class-proxy.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/class-proxy.md) |
 | `extera_utils.text_formatting` | `parse_text(text, parse_mode="HTML"\|"Markdown")`, `TLEntityType` | [text-formatting.md](https://raw.githubusercontent.com/BroZYTnikkkk/for-vibecode-plugins/main/skill/reference/text-formatting.md) |
@@ -144,6 +145,7 @@ Rules: never commit third-party `.plugin` files (no open license) — only our a
 4. **Slow work on the UI thread** — use `run_on_queue(...)` (from `client_utils`) for network/file/long compute.
 5. **Wrong account** — see Multi-Account Rule above.
 6. **Shadowing SDK/stdlib module names** — never name a local file `json.py`, `ui.py`, `java.py`, `elyx.py`.
+7. **Non-existent APIs** — `Hook` is not exported from `base_plugin` (use `MethodHook`); `add_on_create_menu_hook` does not exist (menus go through `hook_method` + reflection, see `allpg/LodraBu/LodraBu-analysis.md`).
 
 ## Elyx (Structured Multi-File Plugins)
 
