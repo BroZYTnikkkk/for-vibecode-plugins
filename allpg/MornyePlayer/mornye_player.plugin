@@ -73,7 +73,7 @@ from ui.alert import AlertDialogBuilder
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider, Header, Input, Selector, Switch, Text
 
-from java import dynamic_proxy, jarray, jbyte, jclass
+from java import dynamic_proxy, jarray, jbyte, jclass, jfloat
 from java.lang import Boolean as JBoolean
 from java.lang import Float as JFloat
 from java.lang import String as JString
@@ -812,7 +812,7 @@ class VolumeHook(MethodHook):
                 return
             value = param.args[0]
             value = float(value.floatValue()) if hasattr(value, "floatValue") else float(value)
-            param.args[0] = JFloat.valueOf(max(0.0, min(1.0, value * gain)))
+            param.args[0] = jfloat(max(0.0, min(1.0, value * gain)))
         except Exception:
             pass
 
@@ -2892,6 +2892,7 @@ class JsRuntime:
         self.server = None
         self.lock = threading.Lock()
         self.lanes = {}
+        self.host_stats = [0, 0.0]
         self.ctl = queue.Queue()
         self.results = {}
         self.seq = itertools.count(1)
@@ -3131,6 +3132,7 @@ def _bridge_handler(rt):
                     rt.on_worker_error(params.get("k", ""), body[:500])
                     return self._send(200, "{}")
                 if name == "host":
+                    started = time.time()
                     message = unpack(body)
                     if message.get("g"):
                         rt.manager.record_logs(message.get("e", ""), message["g"])
@@ -3141,7 +3143,15 @@ def _bridge_handler(rt):
                         reply = {"x": str(e)}
                     except Exception as e:
                         reply = {"x": "%s: %s" % (type(e).__name__, e)}
-                    return self._send(200, json.dumps(reply, default=default))
+                    out = self._send(200, json.dumps(reply, default=default))
+                    if message.get("n") not in ("sleep", "request", "downloadCall", "downloadSegmentsCall", "fileCall",
+                                                "mediaInfo", "mediaConvert", "legacyLyrics", "authCall", "sessionCall"):
+                        stats = rt.host_stats
+                        stats[0] += 1
+                        stats[1] += time.time() - started
+                        if stats[0] % 200 == 0:
+                            log("[Mornye] bridge: %d local host calls, %.1f ms each in Python" % (stats[0], stats[1] * 1000 / stats[0]))
+                    return out
             except Exception as e:
                 return self._send(500, json.dumps({"x": str(e)}))
             self._send(404, "{}")
@@ -5461,7 +5471,14 @@ class DownloadQueue:
             self.workers.append(t)
 
     def add(self, track, service=None, quality=None):
-        request = request_from_track(track, service if service is not None else self.manager.default_service(),
+        if service is None:
+            source = track.get("provider_id") or ""
+            manifest = self.manager.manifest(source) if source else None
+            if manifest is not None and self.manager.is_enabled(source) and manifest.has_type("download_provider"):
+                service = source
+            else:
+                service = self.manager.default_service()
+        request = request_from_track(track, service,
                                      quality or self.manager.state.get("quality") or "LOSSLESS",
                                      self.manager.state.get("auto_fallback", True))
         item = {"id": secrets.token_hex(6), "request": request, "title": request["track_name"],
@@ -5534,6 +5551,9 @@ class DownloadQueue:
                 if result.get("success"):
                     item.update({"status": "done", "progress": 1.0, "path": result.get("file_path") or ""})
                 else:
+                    if result.get("error_type") != "cancelled":
+                        log("[Mornye] download failed (%s, %s): %s" % (result.get("service") or "-", result.get("error_type") or "-",
+                                                                      result.get("error") or ""))
                     item.update({"status": "cancelled" if result.get("error_type") == "cancelled" else "failed",
                                  "error": result.get("error") or "", "error_type": result.get("error_type") or "",
                                  "service": result.get("service") or ""})
@@ -5942,9 +5962,9 @@ class AppApi:
             elif op == "seek" and msg is not None:
                 mc.seekToProgress(msg, float(max(0.0, min(1.0, value))))
             elif op == "shuffle":
-                mc.toggleShuffleMusic(1)
+                mc.setPlaybackOrderType(0 if SharedConfig.shuffleMusic else 2)
             elif op == "repeat":
-                mc.toggleRepeatMode()
+                SharedConfig.setRepeatMode((int(SharedConfig.repeatMode) + 1) % 3)
             elif op == "stop":
                 mc.cleanupPlayer(True, True)
             elif op == "mix":
@@ -6341,6 +6361,27 @@ class _ValueCallback(dynamic_proxy(jclass("android.webkit.ValueCallback"))):
             pass
 
 
+_BACK_CALLBACK = {}
+
+
+def _back_callback(fn):
+    """OnBackInvokedCallback (Android 13+); with predictive back the key listener never sees Back."""
+    cls = _BACK_CALLBACK.get("cls")
+    if cls is None:
+        class _Back(dynamic_proxy(jclass("android.window.OnBackInvokedCallback"))):
+            def __init__(self, fn):
+                super().__init__()
+                self.fn = fn
+
+            def onBackInvoked(self):
+                try:
+                    self.fn()
+                except Exception as e:
+                    log("[Mornye] back: %s" % e)
+        cls = _BACK_CALLBACK["cls"] = _Back
+    return cls(fn)
+
+
 def fullscreen_webview(activity, url, on_back=None, on_close=None):
     """A full-screen dialog holding one WebView; Back goes to on_back first."""
     Dialog = jclass("android.app.Dialog")
@@ -6363,15 +6404,24 @@ def fullscreen_webview(activity, url, on_back=None, on_close=None):
     except Exception:
         pass
 
+    last = [0.0]
+
+    def back():
+        # The key listener and the back callback can both fire on some builds.
+        now = time.time()
+        if now - last[0] < 0.3:
+            return
+        last[0] = now
+        if on_back is None:
+            dialog.dismiss()
+        else:
+            on_back(view, dialog)
+
     def on_key(code, event):
         if code != 4:
             return False
-        if event.getAction() != 1:
-            return True
-        if on_back is None:
-            dialog.dismiss()
-            return True
-        on_back(view, dialog)
+        if event.getAction() == 1:
+            back()
         return True
 
     def closed():
@@ -6382,9 +6432,16 @@ def fullscreen_webview(activity, url, on_back=None, on_close=None):
         if on_close:
             on_close()
 
+    dialog.setCancelable(False)
     dialog.setOnKeyListener(_KeyListener(on_key))
     dialog.setOnDismissListener(_DismissListener(closed))
     dialog.show()
+    if Build.VERSION.SDK_INT >= 33:
+        try:
+            # Registered after show() so it sits above the dialog's own default callback.
+            dialog.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(0, _back_callback(back))
+        except Exception as e:
+            log("[Mornye] back callback: %s" % e)
     view.loadUrl(url)
     return dialog, view
 
@@ -8333,6 +8390,7 @@ svg{display:block}
 .item .meta{flex:1;min-width:0}
 .item .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item .s{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .err{font-size:12px;color:var(--mute);margin-top:3px;white-space:normal;word-break:break-word;user-select:text;-webkit-user-select:text}
 .item .x{color:var(--faint);font-size:12.5px;flex:none}
 .item.playing .t{color:var(--accent)}
 .item .more{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--mute);flex:none}
@@ -8411,8 +8469,8 @@ svg{display:block}
 #nav .dot.on{display:grid}
 
 /* mini player */
-#mini{position:fixed;left:10px;right:10px;bottom:calc(var(--nav) + var(--safe-b) + 8px);height:var(--mini);border-radius:18px;background:rgba(30,28,40,.86);backdrop-filter:blur(24px) saturate(1.5);display:flex;align-items:center;gap:12px;padding:0 8px 0 9px;z-index:6;box-shadow:0 12px 40px -12px rgba(0,0,0,.8);transform:translateY(140%);transition:transform .35s var(--ease);overflow:hidden}
-#mini.on{transform:none}
+#mini{position:fixed;left:10px;right:10px;bottom:calc(var(--nav) + var(--safe-b) + 8px);height:var(--mini);border-radius:18px;background:rgba(30,28,40,.86);backdrop-filter:blur(24px) saturate(1.5);display:flex;align-items:center;gap:12px;padding:0 8px 0 9px;z-index:6;box-shadow:0 12px 40px -12px rgba(0,0,0,.8);transform:translateY(140%);opacity:0;visibility:hidden;pointer-events:none;transition:transform .35s var(--ease),opacity .25s,visibility 0s .35s;overflow:hidden}
+#mini.on{transform:none;opacity:1;visibility:visible;pointer-events:auto;transition:transform .35s var(--ease),opacity .25s}
 #mini .art{width:50px;height:50px;border-radius:12px;font-size:16px}
 #mini .meta{flex:1;min-width:0}
 #mini .t{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -9188,14 +9246,14 @@ async function drawDownloads() {
     let sub = esc(it.artist);
     if (st === "queued") sub = "В очереди";
     if (st === "running") sub = esc(STAGES[it.stage] || "Скачиваю") + (it.progress > 0 && it.progress < 1 ? " · " + Math.round(it.progress * 100) + "%" : "");
-    if (st === "failed") sub = `<span style="color:var(--danger)">${esc(ERRS[it.error_type] || it.error || "Ошибка")}</span>`;
+    if (st === "failed") sub = `<span style="color:var(--danger)">${esc(ERRS[it.error_type] || "Ошибка")}</span>${it.service ? " · " + esc(it.service) : ""}`;
     if (st === "done") sub = `<span style="color:var(--ok)">Готово</span> · ${esc(it.artist)}`;
     if (st === "cancelled") sub = "Отменено";
     let right = "";
     if (st === "queued" || st === "running") right = `<button class="more" data-a="cancel">${svg("x")}</button>`;
     if (st === "failed" || st === "cancelled") right = `<button class="more" data-a="retry">${svg("retry")}</button>`;
     if (st === "done") right = `<button class="more" data-a="play">${svg("play")}</button>`;
-    el.innerHTML = `${art({cover_url: it.cover, path: it.path}, it.title)}<div class="meta"><div class="t">${esc(it.title)}</div><div class="s">${sub}</div>${st === "running" ? `<div class="bar ${it.progress > 0 && it.progress < 1 ? "" : "ind"}"><i style="width:${it.progress * 100}%"></i></div>` : ""}</div>${right}`;
+    el.innerHTML = `${art({cover_url: it.cover, path: it.path}, it.title)}<div class="meta"><div class="t">${esc(it.title)}</div><div class="s">${sub}</div>${st === "failed" && it.error ? `<div class="err">${esc(it.error)}</div>` : ""}${st === "running" ? `<div class="bar ${it.progress > 0 && it.progress < 1 ? "" : "ind"}"><i style="width:${it.progress * 100}%"></i></div>` : ""}</div>${right}`;
     const b = el.querySelector("[data-a]");
     if (b) b.onclick = () => {
       const a = b.dataset.a;
