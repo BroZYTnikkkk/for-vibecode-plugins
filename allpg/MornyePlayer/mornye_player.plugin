@@ -1552,7 +1552,7 @@ class Library:
             path = os.path.join(str(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).getAbsolutePath()), "Mornye")
         try:
             os.makedirs(path, exist_ok=True)
-            probe = os.path.join(path, ".mornye_probe")
+            probe = os.path.join(path, "mornye-write-check.mp3")
             open(probe, "w").close()
             os.remove(probe)
             return path
@@ -5191,7 +5191,7 @@ class DownloadPlanner:
         failures = []
         for ext, direct in attempts:
             ctx.check()
-            if not ext or (ext, direct) in tried or (not direct and ext in tried and ext == source):
+            if not ext or (ext, direct) in tried or (not direct and (ext, True) in tried and ext == source):
                 continue
             tried.add((ext, direct))
             if not direct and ext == source and source != selected:
@@ -5248,7 +5248,7 @@ class DownloadPlanner:
             failures.append("%s: %s" % (ext, message or "no reason supplied"))
         if last:
             kind = last.get("error_type") or "not_found"
-            return _failure(last.get("service") or "", "All providers failed. %s" % " | ".join(failures),
+            return _failure(selected or last.get("service") or "", "All providers failed. %s" % " | ".join(failures),
                             "not_found" if kind == "unknown" else kind, last.get("retry_after_seconds") or 0)
         return _failure("", "No extension download providers available", "not_found")
 
@@ -5476,18 +5476,29 @@ class DownloadQueue:
             t.start()
             self.workers.append(t)
 
-    def add(self, track, service=None, quality=None):
+    def _request(self, track, service=None, quality=None):
+        m = self.manager
         if service is None:
             source = track.get("provider_id") or ""
-            manifest = self.manager.manifest(source) if source else None
-            if manifest is not None and self.manager.is_enabled(source) and manifest.has_type("download_provider"):
+            manifest = m.manifest(source) if source else None
+            if manifest is not None and m.is_enabled(source) and manifest.has_type("download_provider"):
                 service = source
             else:
-                service = self.manager.default_service()
-        request = request_from_track(track, service,
-                                     quality or self.manager.state.get("quality") or "LOSSLESS",
-                                     self.manager.state.get("auto_fallback", True))
-        item = {"id": secrets.token_hex(6), "request": request, "title": request["track_name"],
+                service = m.default_service()
+        quality = quality or m.state.get("quality") or "LOSSLESS"
+        manifest = m.manifest(service) if service else None
+        if manifest is not None and manifest.quality_options and manifest.find_quality(quality) is None:
+            # Mornye picks quality from the service's own options; a lossy-only service
+            # gets its closest option (or its best one) instead of failing on LOSSLESS.
+            try:
+                quality = manifest.resolve_download_quality(quality, None)
+            except ExtError:
+                quality = str(manifest.quality_options[0].get("id") or quality).strip()
+        return request_from_track(track, service, quality, m.state.get("auto_fallback", True))
+
+    def add(self, track, service=None, quality=None):
+        request = self._request(track, service, quality)
+        item = {"id": secrets.token_hex(6), "request": request, "track": track, "title": request["track_name"],
                 "artist": request["artist_name"], "cover": request["cover_url"], "status": "queued",
                 "progress": 0.0, "stage": "", "error": "", "error_type": "", "path": "", "ctx": None, "added": time.time()}
         with self.lock:
@@ -5510,6 +5521,8 @@ class DownloadQueue:
         with self.lock:
             for item in self.items:
                 if item["id"] == item_id and item["status"] in ("failed", "cancelled"):
+                    if item.get("track"):
+                        item["request"] = self._request(item["track"])
                     item.update({"status": "queued", "progress": 0.0, "error": "", "error_type": ""})
                     self.wake.notify()
         self._changed()
@@ -5934,6 +5947,8 @@ class AppApi:
                    "mix": self.plugin.get_setting("mix_mode", MIX_CROSSFADE),
                    "sleep": max(0, int(self.plugin.engine.sleep_at - time.time())) if self.plugin.engine.sleep_at else 0,
                    "downloads": sum(1 for i in self.plugin.downloads().snapshot() if i["status"] in ("queued", "running"))
+                   if self.plugin._downloads is not None else 0,
+                   "saved": sum(1 for i in self.plugin.downloads().snapshot() if i["status"] == "done")
                    if self.plugin._downloads is not None else 0}
             if msg is None:
                 return out
@@ -8789,9 +8804,14 @@ function actions(head, list) {
 const trackHead = t => `${art(t)}<div style="min-width:0"><div class="t">${esc(t.title || t.name)}</div><div class="mute small">${esc(t.artist || t.artists || "")}</div></div>`;
 
 /* ---------------- player state ---------------- */
-let S = {track: null}, sAt = 0, dragging = false;
+let S = {track: null}, sAt = 0, dragging = false, lastSaved = null;
 async function poll() {
-  try { S = await api("state"); sAt = performance.now(); paint(); } catch (e) {}
+  try {
+    S = await api("state"); sAt = performance.now();
+    // A finished download adds a track: drop the cached library so the next view reloads it.
+    if (S.saved !== lastSaved) { if (lastSaved !== null) LIB = null; lastSaved = S.saved; }
+    paint();
+  } catch (e) {}
   setTimeout(poll, document.hidden ? 2000 : 700);
 }
 function curPos() { return S.playing && !dragging ? Math.min(S.duration || 0, S.position + (performance.now() - sAt) / 1000) : S.position; }
