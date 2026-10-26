@@ -3156,7 +3156,7 @@ def _bridge_handler(rt):
                         stats = rt.host_stats
                         stats[0] += 1
                         stats[1] += time.time() - started
-                        if stats[0] % 50 == 0:
+                        if stats[0] % 10 == 0:
                             log("[Mornye] bridge: %d local host calls, %.1f ms each in Python" % (stats[0], stats[1] * 1000 / stats[0]))
                     return out
             except Exception as e:
@@ -5480,6 +5480,7 @@ class DownloadQueue:
         self.workers = []
         self.path = os.path.join(manager.root, "downloads.json")
         self.saved_sig = None
+        self.save_lock = threading.Lock()
         self._load()
         for _ in range(2):
             t = threading.Thread(target=self._loop, name="mornye-dl", daemon=True)
@@ -5562,19 +5563,21 @@ class DownloadQueue:
             self.items.append(item)
 
     def _save(self):
-        with self.lock:
-            sig = tuple((i["id"], i["status"]) for i in self.items)
-            if sig == self.saved_sig:
-                return
-            self.saved_sig = sig
-            data = [{k: v for k, v in i.items() if k != "ctx"} for i in self.items[-200:]]
-        try:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            os.replace(tmp, self.path)
-        except Exception as e:
-            log("[Mornye] save downloads: %s" % e)
+        # Workers save from their own threads; one writer at a time, newest list wins.
+        with self.save_lock:
+            with self.lock:
+                sig = tuple((i["id"], i["status"]) for i in self.items)
+                if sig == self.saved_sig:
+                    return
+                data = [{k: v for k, v in i.items() if k != "ctx"} for i in self.items[-200:]]
+            try:
+                tmp = "%s.%s.tmp" % (self.path, threading.get_ident())
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False)
+                os.replace(tmp, self.path)
+                self.saved_sig = sig
+            except Exception as e:
+                log("[Mornye] save downloads: %s" % e)
 
     def _changed(self):
         self._save()
