@@ -1565,6 +1565,13 @@ class Library:
         raw = self.plugin.get_setting("folders", "") or ""
         result = [p.strip() for p in re.split(r"[;\n,]", raw) if p.strip()]
         result.append(self.download_dir())
+        try:
+            # Earlier builds saved here when Music/Mornye was not writable.
+            private = os.path.join(str(ApplicationLoader.applicationContext.getExternalFilesDir(None).getAbsolutePath()), "Music")
+            if os.path.isdir(private):
+                result.append(private)
+        except Exception:
+            pass
         return list(dict.fromkeys(result))
 
     # -- permissions ------------------------------------------------------
@@ -3149,7 +3156,7 @@ def _bridge_handler(rt):
                         stats = rt.host_stats
                         stats[0] += 1
                         stats[1] += time.time() - started
-                        if stats[0] % 200 == 0:
+                        if stats[0] % 50 == 0:
                             log("[Mornye] bridge: %d local host calls, %.1f ms each in Python" % (stats[0], stats[1] * 1000 / stats[0]))
                     return out
             except Exception as e:
@@ -5471,6 +5478,9 @@ class DownloadQueue:
         self.wake = threading.Condition(self.lock)
         self.running = 0
         self.workers = []
+        self.path = os.path.join(manager.root, "downloads.json")
+        self.saved_sig = None
+        self._load()
         for _ in range(2):
             t = threading.Thread(target=self._loop, name="mornye-dl", daemon=True)
             t.start()
@@ -5534,9 +5544,40 @@ class DownloadQueue:
 
     def snapshot(self):
         with self.lock:
-            return [{k: v for k, v in i.items() if k not in ("ctx", "request")} for i in self.items]
+            return [{k: v for k, v in i.items() if k not in ("ctx", "request", "track")} for i in self.items]
+
+    def _load(self):
+        """Restore the list after a restart; unfinished items go back in the queue."""
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                items = json.load(f)
+        except Exception:
+            return
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or not isinstance(item.get("request"), dict):
+                continue
+            if item.get("status") in ("queued", "running"):
+                item.update({"status": "queued", "progress": 0.0, "stage": ""})
+            item["ctx"] = None
+            self.items.append(item)
+
+    def _save(self):
+        with self.lock:
+            sig = tuple((i["id"], i["status"]) for i in self.items)
+            if sig == self.saved_sig:
+                return
+            self.saved_sig = sig
+            data = [{k: v for k, v in i.items() if k != "ctx"} for i in self.items[-200:]]
+        try:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except Exception as e:
+            log("[Mornye] save downloads: %s" % e)
 
     def _changed(self):
+        self._save()
         if self.on_change:
             try:
                 self.on_change()
