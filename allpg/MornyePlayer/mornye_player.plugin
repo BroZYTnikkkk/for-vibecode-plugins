@@ -68,7 +68,7 @@ from client_utils import (
     run_on_queue,
 )
 from file_utils import get_files_dir
-from hook_utils import find_class, get_private_field, set_private_field
+from hook_utils import get_private_field, set_private_field
 from ui.alert import AlertDialogBuilder
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider, Header, Input, Selector, Switch, Text
@@ -632,6 +632,12 @@ def replaygain_volume(track_gain, album_gain, preamp_db=0.0, prefer_album=False)
     if gain is None:
         return 1.0
     return min(1.0, max(0.0, 10 ** ((gain + preamp_db) / 20.0)))
+
+
+def java_class(name):
+    """java.lang.Class for reflection; find_class returns a Python wrapper on exteraGram 13."""
+    loader = ApplicationLoader.applicationContext.getClassLoader()
+    return jclass("java.lang.Class").forName(name, False, loader)
 
 
 def message_file_path(msg):
@@ -3072,6 +3078,7 @@ def _bridge_handler(rt):
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        disable_nagle_algorithm = True
 
         def log_message(self, *args):
             pass
@@ -3082,8 +3089,9 @@ def _bridge_handler(rt):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
+            self._headers_buffer.append(b"\r\n")
+            self._headers_buffer.append(data)
+            self.flush_headers()
 
         def _route(self):
             parts = urlsplit(self.path)
@@ -5809,6 +5817,7 @@ class AppServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            disable_nagle_algorithm = True
 
             def log_message(self, *args):
                 pass
@@ -5819,8 +5828,9 @@ class AppServer:
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "max-age=86400" if cache else "no-store")
-                self.end_headers()
-                self.wfile.write(data)
+                self._headers_buffer.append(b"\r\n")
+                self._headers_buffer.append(data)
+                self.flush_headers()
 
             def _route(self):
                 parts = urlsplit(self.path)
@@ -6552,9 +6562,9 @@ class MornyePlayerPlugin(BasePlugin):
     def _show_verification(self, ext, pending):
         if not self._grant_hooked:
             try:
-                client = find_class("android.webkit.WebViewClient")
-                web_view = find_class("android.webkit.WebView")
-                for arg in (find_class("android.webkit.WebResourceRequest"), find_class("java.lang.String")):
+                client = java_class("android.webkit.WebViewClient")
+                web_view = java_class("android.webkit.WebView")
+                for arg in (java_class("android.webkit.WebResourceRequest"), java_class("java.lang.String")):
                     self.hook_method(client.getDeclaredMethod("shouldOverrideUrlLoading", web_view, arg), _GrantUrlHook())
                 self._grant_hooked = True
             except Exception as e:
@@ -6586,9 +6596,9 @@ class MornyePlayerPlugin(BasePlugin):
         handler.postDelayed(R(tick), 400)
 
     def _install_hooks(self):
-        mc_cls = find_class("org.telegram.messenger.MediaController")
-        vp_cls = find_class("org.telegram.ui.Components.VideoPlayer")
-        mo_cls = find_class("org.telegram.messenger.MessageObject")
+        mc_cls = java_class("org.telegram.messenger.MediaController")
+        vp_cls = java_class("org.telegram.ui.Components.VideoPlayer")
+        mo_cls = java_class("org.telegram.messenger.MessageObject")
         try:
             m = vp_cls.getDeclaredMethod("setVolume", JFloat.TYPE)
             self.hook_method(m, VolumeHook(self))
@@ -6598,14 +6608,14 @@ class MornyePlayerPlugin(BasePlugin):
             m = mc_cls.getDeclaredMethod("playMessage", mo_cls, JBoolean.TYPE)
             self.hook_method(m, PlayMessageHook(self))
         except Exception as e:
-            log("[Mornye] playMessage hook: %s" % e)
+            log("[Mornye] playMessage hook: %s; have %s" % (e, [str(x) for x in mc_cls.getDeclaredMethods() if x.getName() == "playMessage"]))
         for name, previous in (("playNextMessage", False), ("playPreviousMessage", True)):
             try:
                 self.hook_method(mc_cls.getDeclaredMethod(name), SkipHook(self, previous))
             except Exception as e:
                 log("[Mornye] %s hook: %s" % (name, e))
         try:
-            alert_cls = find_class("org.telegram.ui.Components.AudioPlayerAlert")
+            alert_cls = java_class("org.telegram.ui.Components.AudioPlayerAlert")
             if alert_cls is not None:
                 self.hook_all_constructors(alert_cls, PlayerAlertHook(self))
         except Exception as e:
