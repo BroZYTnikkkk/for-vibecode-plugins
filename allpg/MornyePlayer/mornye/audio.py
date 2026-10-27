@@ -41,6 +41,7 @@ from .automix import (
     decode_window,
     message_file_path,
     message_meta,
+    java_class,
     mix_envelope,
     read_tags,
     replaygain_volume,
@@ -69,6 +70,63 @@ def eq_effective(gains, bass, treble):
         max(-24.0, min(24.0, gains[i] + bass / (1 + (EQ_CENTERS[i] / 180.0) ** 2) + treble / (1 + (5000.0 / EQ_CENTERS[i]) ** 2)))
         for i in range(len(gains))
     ]
+
+
+_WALK_PREFIXES = ("com.google.android.exoplayer2", "androidx.media3")
+
+
+def _find_audio_track(root, max_nodes=1500):
+    """Breadth-first walk over ExoPlayer's own objects until an android.media.AudioTrack turns up."""
+    try:
+        at_cls = java_class("android.media.AudioTrack")
+        modifier = jclass("java.lang.reflect.Modifier")
+        system = jclass("java.lang.System")
+    except Exception as e:
+        log("[Mornye] AudioTrack walk: %s" % e)
+        return None
+    prefixes = _WALK_PREFIXES
+    try:
+        # Whatever package this build keeps ExoPlayer in.
+        prefixes += (".".join(str(root.getClass().getName()).split(".")[:3]),)
+    except Exception:
+        pass
+    queue, seen = [root], set()
+    while queue and len(seen) < max_nodes:
+        obj = queue.pop(0)
+        try:
+            ident = int(system.identityHashCode(obj))
+            if ident in seen:
+                continue
+            seen.add(ident)
+            cls = obj.getClass()
+            if cls.isArray():
+                if not cls.getComponentType().isPrimitive():
+                    queue.extend(x for x in obj if x is not None and hasattr(x, "getClass"))
+                continue
+        except Exception:
+            continue
+        while cls is not None and str(cls.getName()).startswith(prefixes):
+            for field in cls.getDeclaredFields():
+                try:
+                    if modifier.isStatic(field.getModifiers()) or field.getType().isPrimitive():
+                        continue
+                    field.setAccessible(True)
+                    value = field.get(obj)
+                except Exception:
+                    continue
+                if value is None or not hasattr(value, "getClass"):
+                    continue
+                if at_cls.isInstance(value):
+                    return value
+                try:
+                    vcls = value.getClass()
+                    name = str(vcls.getName())
+                    if name.startswith(prefixes) or (vcls.isArray() and not vcls.getComponentType().isPrimitive()):
+                        queue.append(value)
+                except Exception:
+                    pass
+            cls = cls.getSuperclass()
+    return None
 
 
 class SessionFx:
@@ -377,14 +435,7 @@ class Engine:
         if player is None:
             return None
         session = self._session_of(player, assign=True)
-        exo = self.exo(player)
-        try:
-            raw = int(exo.getAudioSessionId()) if exo is not None else -1
-        except Exception:
-            raw = -2
-        self._log_once("fx check: player=%x exo=%s raw=%d session=%d wanted=%s bass=%r" % (
-            _identity(player), exo is not None, raw, session, self._fx_wanted(),
-            self.plugin.get_setting("bass_boost", 0)))
+        self._log_once("fx check: player=%x session=%d wanted=%s" % (_identity(player), session, self._fx_wanted()))
         if not session:
             if self._fx_wanted():
                 self._log_once("audio session: none (exo=%s)" % (self.exo(player) is not None))
@@ -736,40 +787,38 @@ class Engine:
         fade.done = True
 
     def _session_of(self, player, assign=False):
+        """The audio session the player's AudioTrack plays on (0 when there is none yet).
+
+        Telegram's ExoPlayer has its methods renamed by R8, so getAudioSessionId() is not
+        callable; the framework AudioTrack it owns still is. Found by walking its fields."""
         exo = self.exo(player)
         if exo is None:
             return 0
-        try:
-            sid = int(exo.getAudioSessionId())
-        except Exception as e:
-            self._log_once("getAudioSessionId: %s" % e)
-            sid = 0
+        key = _identity(exo)
+        known = getattr(self, "_sessions", None)
+        if known is None:
+            known = self._sessions = {}
+        sid = known.get(key)
         if sid:
             return sid
-        # ExoPlayer leaves the session unset and the AudioTrack makes its own id that effects cannot
-        # see. Give the player a session of ours (only when an effect is on: it reopens the track).
-        key = _identity(exo)
-        assigned = getattr(self, "_assigned_sessions", None)
-        if assigned is None:
-            assigned = self._assigned_sessions = {}
-        if key in assigned:
-            return assigned[key]
-        if not assign or not self._fx_wanted():
+        if not assign:
+            return 0
+        now = time.time()
+        if now - getattr(self, "_last_walk", 0) < 1.0:
+            return 0
+        self._last_walk = now
+        track = _find_audio_track(exo)
+        if track is None:
             return 0
         try:
-            from org.telegram.messenger import ApplicationLoader
-            am = ApplicationLoader.applicationContext.getSystemService("audio")
-            sid = int(am.generateAudioSessionId())
-            exo.setAudioSessionId(sid)
-            # remember only the newest few players
-            for old in list(assigned)[:-3]:
-                assigned.pop(old, None)
-            assigned[key] = sid
-            log("[Mornye] audio session %d assigned to the player" % sid)
-            return sid
+            sid = int(track.getAudioSessionId())
         except Exception as e:
-            self._log_once("setAudioSessionId: %s" % e)
+            self._log_once("AudioTrack session: %s" % e)
             return 0
+        for old in list(known)[:-3]:
+            known.pop(old, None)
+        known[key] = sid
+        return sid
 
     def _fx_wanted(self):
         cfg = self.cfg()
