@@ -10,7 +10,8 @@ from client_utils import run_on_queue
 from ui.bulletin import BulletinHelper
 from urllib.parse import parse_qs, urlsplit
 from android.os import Build
-from android_utils import log, run_on_ui_thread
+from android_utils import run_on_ui_thread
+from .logs import log
 from java import dynamic_proxy, jclass
 from java.lang import Boolean as JBoolean
 

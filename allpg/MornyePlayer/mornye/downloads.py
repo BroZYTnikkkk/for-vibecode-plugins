@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import unicodedata
-from android_utils import log
+from .logs import log
 from .common import mutagen
 from .platform_android import PLATFORM
 from .ext_runtime import (

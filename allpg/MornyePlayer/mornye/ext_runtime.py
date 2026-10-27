@@ -23,7 +23,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, unquote_plus, urljoin, urlsplit, urlunsplit
-from android_utils import log
+from .logs import log
 from .platform_android import PLATFORM
 from .library import fetch_lyrics_raw
 from .resources import BRIDGE_PAGE_HTML, MORNYE_PRELUDE_JS, MORNYE_PROVIDER_JS, WORKER_JS

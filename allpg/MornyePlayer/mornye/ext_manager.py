@@ -15,7 +15,7 @@ import shutil
 import threading
 import time
 from urllib.parse import urlsplit
-from android_utils import log
+from .logs import log
 from .ext_runtime import (
     ExtError,
     ExtTimeout,

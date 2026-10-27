@@ -14,7 +14,8 @@ from android.os import Handler, Looper
 from android.text import TextWatcher
 from android.util import TypedValue
 from android.widget import EditText, LinearLayout, ScrollView, SeekBar, TextView
-from android_utils import OnClickListener, OnLongClickListener, R, log, run_on_ui_thread
+from android_utils import OnClickListener, OnLongClickListener, R, run_on_ui_thread
+from .logs import log
 from java import dynamic_proxy
 from org.telegram.messenger import AndroidUtilities, UserConfig
 from org.telegram.ui.ActionBar import Theme

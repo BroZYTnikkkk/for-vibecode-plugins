@@ -5,7 +5,8 @@
 """Android services for the extension host: WebView, javax.crypto, media."""
 
 import os
-from android_utils import log, run_on_ui_thread
+from android_utils import run_on_ui_thread
+from .logs import log
 from java import jclass
 from org.telegram.messenger import ApplicationLoader
 from .common import mutagen

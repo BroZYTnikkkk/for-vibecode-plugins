@@ -11,7 +11,8 @@ from client_utils import get_media_controller, run_on_queue
 from hook_utils import get_private_field, set_private_field
 from ui.bulletin import BulletinHelper
 from android.os import Handler, Looper
-from android_utils import OnLongClickListener, R, log, run_on_ui_thread
+from android_utils import OnLongClickListener, R, run_on_ui_thread
+from .logs import log
 from java import jclass, jfloat
 from org.telegram.messenger import SharedConfig
 from org.telegram.ui.ActionBar import Theme
@@ -370,7 +371,37 @@ class Engine:
         except Exception:
             pass
 
+    def ensure_fx(self, player=None):
+        """Attach the effects to the music player's audio session once per session."""
+        player = player if player is not None else self.main_player()
+        if player is None:
+            return None
+        session = self._session_of(player)
+        if not session:
+            if not getattr(self, "_fx_warned", False):
+                self._fx_warned = True
+                log("[Mornye] audio session: none (exo=%s)" % (self.exo(player) is not None))
+            return None
+        fx = self.session_fx.get(session)
+        if fx is None:
+            fx = SessionFx(session)
+            fx.apply(self.cfg())
+            self.session_fx[session] = fx
+
+            def ctl(e):
+                try:
+                    return "on" if e.getEnabled() else ("off" if e.hasControl() else "no-control")
+                except Exception:
+                    return "none"
+            log("[Mornye] audio session %d: eq=%s bass=%s virt=%s loud=%s" % (
+                session, ctl(fx.eq), ctl(fx.bass), ctl(fx.virt), ctl(fx.loud)))
+        return fx
+
     def reapply_fx(self):
+        try:
+            self.ensure_fx()
+        except Exception as e:
+            log("[Mornye] fx: %s" % e)
         cfg = self.cfg()
         for fx in self.session_fx.values():
             fx.apply(cfg)
@@ -786,18 +817,7 @@ class Engine:
         msg = mc.getPlayingMessageObject()
         if player is None or msg is None or not msg.isMusic():
             return 40 if self.fades else (1000 if self.sleep_at else 0)
-        session = self._session_of(player)
-        if session and session not in self.session_fx:
-            fx = SessionFx(session)
-            fx.apply(self.cfg())
-            self.session_fx[session] = fx
-            def ctl(e):
-                try:
-                    return "on" if e.getEnabled() else ("off" if e.hasControl() else "no-control")
-                except Exception:
-                    return "none"
-            log("[Mornye] audio session %d: eq=%s bass=%s virt=%s loud=%s" % (
-                session, ctl(fx.eq), ctl(fx.bass), ctl(fx.virt), ctl(fx.loud)))
+        self.ensure_fx(player)
         paused = self.user_paused()
         now = time.time()
         if self.listen_started is not None:

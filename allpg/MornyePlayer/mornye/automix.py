@@ -9,7 +9,7 @@ import os
 import re
 import time
 from array import array
-from android_utils import log
+from .logs import log
 from java import jarray, jbyte, jclass
 from org.telegram.messenger import ApplicationLoader, FileLoader
 from .common import (

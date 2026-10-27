@@ -56,7 +56,7 @@ def _plugin_dirs():
 
 def _note(text):
     try:
-        from android_utils import log
+        from .logs import log
         log("[Mornye] assets: " + text)
     except Exception:
         pass

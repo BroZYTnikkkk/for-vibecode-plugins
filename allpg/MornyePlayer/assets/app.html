@@ -1126,7 +1126,7 @@ async function drawDownloads() {
       if (a === "remove") { el.style.transition = "opacity .2s,transform .2s"; el.style.opacity = 0; el.style.transform = "translateX(40px)"; api("dl_remove", it.id).then(() => setTimeout(drawDownloads, 200)); }
       if (a === "cancel") api("dl_cancel", it.id).then(drawDownloads);
       if (a === "retry") api("dl_retry", it.id).then(drawDownloads);
-      if (a === "play") api("play_paths", [it.path], 0, false).then(() => api("state").then(s => { S = s; sAt = performance.now(); paint(); }));
+      if (a === "play") api("play_paths", [it.path], 0, false).then(() => api("state").then(s => { S = s; sAt = performance.now(); paint(); })).catch(e => toast(e.message, 1));
     });
     if (st === "failed" && it.error_type === "verification_required") {
       el.querySelector(".meta").insertAdjacentHTML("beforeend", `<button class="btn sm acc" style="margin-top:8px">${svg("shield")}Пройти проверку</button>`);

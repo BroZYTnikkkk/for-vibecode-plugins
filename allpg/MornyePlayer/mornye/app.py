@@ -20,7 +20,8 @@ from hook_utils import get_private_field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 from android.os import Looper
-from android_utils import log, run_on_ui_thread
+from android_utils import run_on_ui_thread
+from .logs import log
 from java import jclass
 from org.telegram.messenger import SharedConfig, UserConfig
 from .common import (
@@ -415,7 +416,7 @@ class AppApi:
         tracks = [by_path.get(p) or self.lib.track_for_file(p) for p in paths]
         tracks = [t for t in tracks if t]
         if not tracks:
-            raise ExtError("нет треков")
+            raise ExtError("файл не найден" if len(paths) == 1 else "нет треков")
         start = tracks[min(max(int(index), 0), len(tracks) - 1)]
         if shuffle:
             random.shuffle(tracks)

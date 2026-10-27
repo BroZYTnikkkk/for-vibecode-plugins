@@ -6,7 +6,7 @@
 
 import os
 import re
-from android_utils import log
+from .logs import log
 from java import jclass
 from org.telegram.messenger import ApplicationLoader
 from .common import mutagen

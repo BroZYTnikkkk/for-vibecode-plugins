@@ -12,7 +12,8 @@ from client_utils import run_on_queue
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider, Header, Input, Selector, Switch, Text
 from android.os import Handler, Looper
-from android_utils import R, log, run_on_ui_thread
+from android_utils import R, run_on_ui_thread
+from .logs import log
 from java.lang import Boolean as JBoolean, Float as JFloat
 from .common import (
     EFFECT_AUTO,

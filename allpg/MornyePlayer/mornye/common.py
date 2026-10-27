@@ -35,7 +35,8 @@ from urllib.parse import parse_qs, quote, unquote, unquote_plus, urljoin, urlspl
 
 import requests
 
-from android_utils import R, OnClickListener, OnLongClickListener, log, run_on_ui_thread
+from android_utils import R, OnClickListener, OnLongClickListener, run_on_ui_thread
+from .logs import log
 from base_plugin import BasePlugin, MenuItemData, MenuItemType, MethodHook
 from client_utils import (
     get_last_fragment,

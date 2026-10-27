@@ -18,7 +18,8 @@ from file_utils import get_files_dir
 from hook_utils import get_private_field, set_private_field
 from ui.bulletin import BulletinHelper
 from android.os import Build, Environment
-from android_utils import log, run_on_ui_thread
+from android_utils import run_on_ui_thread
+from .logs import log
 from java import jarray, jbyte, jclass
 from java.lang import Boolean as JBoolean, String as JString
 from org.telegram.messenger import ApplicationLoader, FileLoader, MessageObject, SharedConfig, UserConfig
