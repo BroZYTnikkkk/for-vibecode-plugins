@@ -377,6 +377,14 @@ class Engine:
         if player is None:
             return None
         session = self._session_of(player, assign=True)
+        exo = self.exo(player)
+        try:
+            raw = int(exo.getAudioSessionId()) if exo is not None else -1
+        except Exception:
+            raw = -2
+        self._log_once("fx check: player=%x exo=%s raw=%d session=%d wanted=%s bass=%r" % (
+            _identity(player), exo is not None, raw, session, self._fx_wanted(),
+            self.plugin.get_setting("bass_boost", 0)))
         if not session:
             if self._fx_wanted():
                 self._log_once("audio session: none (exo=%s)" % (self.exo(player) is not None))
@@ -420,6 +428,8 @@ class Engine:
         player = self.main_player()
         mc = self.mc()
         msg = mc.getPlayingMessageObject()
+        self._log_once("track started: player=%x msg=%s music=%s" % (
+            _identity(player), msg is not None, msg is not None and msg.isMusic()))
         if player is None or msg is None or not msg.isMusic():
             return
         key = _identity(player)
