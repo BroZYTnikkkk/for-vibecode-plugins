@@ -10,7 +10,10 @@ with zipfile.ZipFile(os.path.join(HERE, "mornye_player.elyx"), "w", zipfile.ZIP_
     for name in FILES:
         zf.write(os.path.join(HERE, name), name)
     for top in DIRS:
-        for root, _, files in os.walk(os.path.join(HERE, top)):
+        for root, dirs, files in os.walk(os.path.join(HERE, top)):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            # ElyxBuilder writes directory entries too
+            zf.writestr(zipfile.ZipInfo(os.path.relpath(root, HERE).replace(os.sep, "/") + "/"), "")
             for name in sorted(files):
                 if name.endswith(".pyc") or "__pycache__" in root:
                     continue
