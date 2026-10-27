@@ -579,6 +579,14 @@ class DownloadQueue:
                     self.wake.notify()
         self._changed()
 
+    def remove(self, item_id):
+        with self.lock:
+            for item in self.items:
+                if item["id"] == item_id and item["status"] == "running" and item["ctx"] is not None:
+                    item["ctx"].cancel()
+            self.items = [i for i in self.items if i["id"] != item_id or i["status"] == "running"]
+        self._changed()
+
     def clear_finished(self):
         with self.lock:
             self.items = [i for i in self.items if i["status"] in ("queued", "running")]

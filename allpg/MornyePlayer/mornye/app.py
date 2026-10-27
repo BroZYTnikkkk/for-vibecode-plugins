@@ -30,6 +30,7 @@ from .common import (
     EQ_PRESETS,
     MIX_CROSSFADE,
     MIX_DURATION_LABELS,
+    SKIP_FADE_LABELS,
     STRENGTH_LABELS,
     USER_AGENT,
     _selected_account,
@@ -42,6 +43,7 @@ from .automix import (
     track_key,
 )
 from .library import fetch_lyrics
+from .tags import embedded_lyrics, read_editable, request_write_access, write_tags
 from .ext_runtime import ExtError, OFFICIAL_REGISTRY, _ci
 from .resources import APP_HTML
 
@@ -232,9 +234,23 @@ class AppServer:
         return Handler
 
 
-def _track_out(t, favorites=()):
-    return {"path": t["path"], "title": t.get("title") or "", "artist": t.get("artist") or "",
-            "album": t.get("album") or "", "duration": int(t.get("duration") or 0), "fav": t["path"] in favorites}
+def _int_prefix(v):
+    m = re.match(r"\s*(\d+)", str(v or ""))
+    return int(m.group(1)) if m else 0
+
+
+def _track_out(t, favorites=(), plays=None, played=None):
+    out = {"path": t["path"], "title": t.get("title") or "", "artist": t.get("artist") or "",
+           "album": t.get("album") or "", "duration": int(t.get("duration") or 0), "fav": t["path"] in favorites}
+    if plays is not None:
+        # MediaStore keeps disc*1000+track in "track"
+        out.update({"album_artist": t.get("album_artist") or "", "composer": t.get("composer") or "",
+                    "genre": t.get("genre") or "", "track": _int_prefix(t.get("track")) % 1000,
+                    "year": _int_prefix(t.get("year")), "mtime": int(t.get("mtime") or 0),
+                    "added": int(t.get("date_added") or t.get("mtime") or 0),
+                    "plays": plays.get(track_key(out["title"], out["artist"]), 0),
+                    "played": played.get(t["path"], 0)})
+    return out
 
 
 class AppApi:
@@ -376,7 +392,12 @@ class AppApi:
         with self.lib.lock:
             tracks = list(self.lib.tracks)
         fav = self.lib.favorites
-        return {"tracks": [_track_out(t, fav) for t in tracks], "scanning": self.lib.scanning,
+        plays = {k: v.get("plays", 0) for k, v in self.lib.stats.get("tracks", {}).items()}
+        played = {}
+        for h in self.lib.history:
+            if h.get("path") and h["path"] not in played:
+                played[h["path"]] = h.get("at", 0)
+        return {"tracks": [_track_out(t, fav, plays, played) for t in tracks], "scanning": self.lib.scanning,
                 "permission": self.lib.has_permission()[0]}
 
     def a_rescan(self):
@@ -402,13 +423,33 @@ class AppApi:
         ui_call(lambda: self.lib.play(tracks, tracks.index(start)), 15)
         return True
 
-    def a_play_next(self, path):
-        track = self.lib.tracks_by_path().get(path) or self.lib.track_for_file(path)
-        ui_call(lambda: self.lib.play_next(track))
-        return True
+    def _tracks(self, paths):
+        if isinstance(paths, str):
+            paths = [paths]
+        by_path = self.lib.tracks_by_path()
+        return [t for t in (by_path.get(p) or self.lib.track_for_file(p) for p in paths) if t]
+
+    def a_play_next(self, paths):
+        tracks = self._tracks(paths)
+
+        def run():
+            # Each insert lands right after the current song, so go backwards to keep the order.
+            for t in reversed(tracks):
+                self.lib.play_next(t)
+        ui_call(run, 15)
+        return len(tracks)
+
+    def a_queue_add(self, paths):
+        tracks = self._tracks(paths)
+        ui_call(lambda: self.lib.append(tracks), 15)
+        return len(tracks)
 
     def a_toggle_fav(self, path):
         return self.lib.toggle_favorite(path)
+
+    def a_set_fav(self, paths, value):
+        self.lib.set_favorite(paths, value)
+        return True
 
     def a_home(self):
         by_path = self.lib.tracks_by_path()
@@ -513,6 +554,32 @@ class AppApi:
         self.plugin.downloads().retry(item_id)
         return True
 
+    def a_dl_remove(self, item_id):
+        self.plugin.downloads().remove(item_id)
+        return True
+
+    def a_close(self):
+        dialog = self.plugin._app_dialog
+        if dialog is not None:
+            run_on_ui_thread(lambda: dialog.dismiss())
+        return True
+
+    def a_tags(self, path):
+        if not path or not os.path.isfile(path):
+            raise ExtError("file not found")
+        return read_editable(path)
+
+    def a_set_tags(self, path, values):
+        if not path or not os.path.isfile(path):
+            raise ExtError("file not found")
+        try:
+            write_tags(path, values or {})
+        except PermissionError:
+            asked = ui_call(lambda: request_write_access(self.plugin.ui.activity(), path))
+            return {"ok": False, "permission": bool(asked)}
+        self.lib.add_file(path)
+        return {"ok": True}
+
     def a_dl_clear(self):
         self.plugin.downloads().clear_finished()
         return True
@@ -614,12 +681,18 @@ class AppApi:
 
     # -- lyrics, sound, timers
 
-    def a_lyrics(self):
+    def a_lyrics(self, search=False):
         state = self.a_state()
         track = state.get("track")
         if not track:
             return None
         title, artist, duration = track["title"], track["artist"], track["duration"]
+        own = embedded_lyrics(track.get("path") or "")
+        if own:
+            return {"synced": own["synced"], "lines": [[ms, text] for ms, text in own["lines"]], "source": "file"}
+        if not search:
+            # Like Mornye: no network lookup until the user asks for it.
+            return {"synced": False, "lines": [], "source": "", "can_search": True}
         try:
             value = self.mgr.lyrics(title, artist, track.get("album") or "", duration)
         except Exception:
@@ -635,7 +708,7 @@ class AppApi:
 
     def a_settings(self):
         p = self.plugin
-        keys = {"mix_mode": MIX_CROSSFADE, "mix_duration": 0, "automix_effect": EFFECT_AUTO, "skip_fade": 2,
+        keys = {"mix_mode": MIX_CROSSFADE, "mix_duration": 0, "automix_effect": EFFECT_AUTO, "skip_fade": 0,
                 "normalize": True, "eq_enabled": False, "eq_preset": 0, "bass_boost": 0, "virtualizer": 0,
                 "loudness_boost": 0, "skip_silence": False, "autoplay": True}
         out = {k: p.get_setting(k, d) for k, d in keys.items()}
@@ -645,6 +718,7 @@ class AppApi:
         out["mix_labels"] = MIX_DURATION_LABELS
         out["effect_labels"] = EFFECT_LABELS
         out["strength_labels"] = STRENGTH_LABELS
+        out["skip_fade_labels"] = SKIP_FADE_LABELS
         return out
 
     def a_set_setting(self, key, value):

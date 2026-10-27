@@ -76,15 +76,15 @@ class SessionFx:
         self.eq = self.bass = self.virt = self.loud = self.reverb = None
         self.base_levels = None
         try:
-            self.eq = jclass("android.media.audiofx.Equalizer")(0, session)
+            self.eq = jclass("android.media.audiofx.Equalizer")(1000, session)
         except Exception as e:
             log("[Mornye] Equalizer unavailable: %s" % e)
         try:
-            self.bass = jclass("android.media.audiofx.BassBoost")(0, session)
+            self.bass = jclass("android.media.audiofx.BassBoost")(1000, session)
         except Exception:
             pass
         try:
-            self.virt = jclass("android.media.audiofx.Virtualizer")(0, session)
+            self.virt = jclass("android.media.audiofx.Virtualizer")(1000, session)
         except Exception:
             pass
         try:
@@ -626,7 +626,7 @@ class Engine:
     def on_manual_skip(self, previous=False):
         if self.transition_running:
             return
-        seconds = SKIP_FADES[self.plugin.get_setting("skip_fade", 2)]
+        seconds = SKIP_FADES[self.plugin.get_setting("skip_fade", 0)]
         mc = self.mc()
         player = self.main_player()
         msg = mc.getPlayingMessageObject()
@@ -791,6 +791,13 @@ class Engine:
             fx = SessionFx(session)
             fx.apply(self.cfg())
             self.session_fx[session] = fx
+            def ctl(e):
+                try:
+                    return "on" if e.getEnabled() else ("off" if e.hasControl() else "no-control")
+                except Exception:
+                    return "none"
+            log("[Mornye] audio session %d: eq=%s bass=%s virt=%s loud=%s" % (
+                session, ctl(fx.eq), ctl(fx.bass), ctl(fx.virt), ctl(fx.loud)))
         paused = self.user_paused()
         now = time.time()
         if self.listen_started is not None:
@@ -807,6 +814,14 @@ class Engine:
         pos = player.getCurrentPosition() / 1000.0
         dur = player.getDuration() / 1000.0
         key = _identity(player)
+        if self.gains.get(key) == 0.0 and not self.pending_incoming and \
+                not any(f.new_key == key and not f.done for f in self.fades):
+            # A deck left muted by an interrupted fade (skip during a fade, queue change).
+            self.gains[key] = self.base_gain(key)
+            try:
+                self.mc().setPlayerVolume()
+            except Exception:
+                pass
         if dur <= 0:
             return 40 if self.fades else 300
         mode = self.mix_mode()

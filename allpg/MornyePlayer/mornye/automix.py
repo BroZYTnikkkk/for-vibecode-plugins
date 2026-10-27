@@ -429,7 +429,8 @@ def audio_quality_label(path):
 
 
 def read_tags(path):
-    tags = {"title": None, "artist": None, "album": None, "duration": 0, "track_gain": None, "album_gain": None}
+    tags = {"title": None, "artist": None, "album": None, "duration": 0, "track_gain": None, "album_gain": None,
+            "albumartist": None, "composer": None, "genre": None, "tracknumber": None, "date": None}
     if mutagen is not None:
         try:
             f = mutagen.File(path, easy=True)
@@ -440,6 +441,8 @@ def read_tags(path):
                 tags["title"] = first("title")
                 tags["artist"] = first("artist")
                 tags["album"] = first("album")
+                for key in ("albumartist", "composer", "genre", "tracknumber", "date"):
+                    tags[key] = first(key)
                 if getattr(f, "info", None) is not None:
                     tags["duration"] = int(getattr(f.info, "length", 0) or 0)
             raw = mutagen.File(path)

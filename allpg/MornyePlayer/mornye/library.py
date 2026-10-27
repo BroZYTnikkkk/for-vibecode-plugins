@@ -156,8 +156,18 @@ class Library:
     def _scan_mediastore(self, found):
         ctx = ApplicationLoader.applicationContext
         MediaStore = jclass("android.provider.MediaStore$Audio$Media")
-        projection = jarray(JString)(["_data", "title", "artist", "album", "duration", "date_modified"])
-        cursor = ctx.getContentResolver().query(MediaStore.EXTERNAL_CONTENT_URI, projection, "is_music != 0", None, "title")
+        extra = ["album_artist", "composer", "track", "year", "date_added", "genre"]
+        base = ["_data", "title", "artist", "album", "duration", "date_modified"]
+        cursor = None
+        # genre and album_artist are only columns on newer Android; drop them one by one when refused
+        for n in range(len(extra), -1, -1):
+            try:
+                cursor = ctx.getContentResolver().query(MediaStore.EXTERNAL_CONTENT_URI, jarray(JString)(base + extra[:n]),
+                                                        "is_music != 0", None, "title")
+                extra = extra[:n]
+                break
+            except Exception:
+                continue
         if cursor is None:
             return
         try:
@@ -178,6 +188,11 @@ class Library:
                     "duration": int(cursor.getLong(4) // 1000),
                     "mtime": int(cursor.getLong(5)),
                 }
+                row = found[path]
+                for i, col in enumerate(extra):
+                    v = cursor.getString(6 + i)
+                    if v and str(v) != "<unknown>":
+                        row[col] = str(v)
         finally:
             cursor.close()
 
@@ -197,7 +212,7 @@ class Library:
                 except Exception:
                     continue
                 cached = old.get(path)
-                if cached and cached.get("mtime") == mtime:
+                if cached and cached.get("mtime") == mtime and "tags_v" in cached:
                     found[path] = cached
                     continue
                 tags = read_tags(path)
@@ -208,7 +223,13 @@ class Library:
                     "album": tags["album"] or "",
                     "duration": tags["duration"],
                     "mtime": mtime,
+                    "tags_v": 2,
                 }
+                row = found[path]
+                for src, col in (("albumartist", "album_artist"), ("composer", "composer"), ("genre", "genre"),
+                                 ("tracknumber", "track"), ("date", "year")):
+                    if tags.get(src):
+                        row[col] = str(tags[src])
 
     # -- playback ---------------------------------------------------------
 
@@ -285,6 +306,25 @@ class Library:
             self.play([track], 0, account)
             return
         insert_after_current(mo)
+
+    def append(self, tracks, account=None):
+        """Put tracks at the end of the current queue (or start playing them)."""
+        mc = get_media_controller()
+        if account is None:
+            account = _selected_account()
+        if mc.getPlayingMessageObject() is None:
+            self.play(tracks, 0, account)
+            return
+        for t in tracks:
+            append_to_queue(self.build_message(t, account))
+
+    def set_favorite(self, paths, value):
+        changed = False
+        for path in paths:
+            if (path in self.favorites) != bool(value):
+                self.toggle_favorite(path)
+                changed = True
+        return changed
 
     def autoplay_extend(self, current_msg):
         """Personalized autoplay from the local library (simplified Mornye idea)."""
@@ -510,6 +550,30 @@ def insert_after_current(mo):
             pmap.put(jclass("java.lang.Integer").valueOf(mo.getId()), mo)
     except Exception as e:
         log("[Mornye] queue insert: %s" % e)
+
+
+def append_to_queue(mo):
+    """Queue mo after the last song in the list MediaController walks."""
+    mc = get_media_controller()
+    try:
+        playlist = mc.getPlaylist()
+        active = get_private_field(mc, "shuffledPlaylist") if SharedConfig.shuffleMusic else playlist
+        num = mc.getPlayingMessageObjectNum()
+        if active is None or num < 0:
+            return
+        if SharedConfig.playOrderReversed:
+            active.add(mo)
+        else:
+            # The list plays from the end towards index 0.
+            active.add(0, mo)
+            set_private_field(mc, "currentPlaylistNum", num + 1)
+        if SharedConfig.shuffleMusic:
+            playlist.add(mo)
+        pmap = get_private_field(mc, "playlistMap")
+        if pmap is not None:
+            pmap.put(jclass("java.lang.Integer").valueOf(mo.getId()), mo)
+    except Exception as e:
+        log("[Mornye] queue append: %s" % e)
 
 
 # ---------------------------------------------------------------------------

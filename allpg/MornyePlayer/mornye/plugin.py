@@ -256,7 +256,7 @@ class MornyePlayerPlugin(BasePlugin):
             Selector(key="automix_effect", text="Эффект AutoMix", default=EFFECT_AUTO, items=EFFECT_LABELS, icon="msg_photo_settings"),
             Selector(key="automix_pitch", text="Сдвиг тона для эффекта", default=2,
                      items=["-6", "-5", "-4", "-3", "-2", "-1", "0", "+1", "+2", "+3", "+4", "+5", "+6"]),
-            Selector(key="skip_fade", text="Плавное переключение вручную", default=2, items=SKIP_FADE_LABELS, icon="msg_forward"),
+            Selector(key="skip_fade", text="Плавное переключение вручную", default=0, items=SKIP_FADE_LABELS, icon="msg_forward"),
             Divider(text="AutoMix ищет биты в концовке и начале треков, подгоняет темп и сводит их на сильную долю. Работает для скачанных и локальных треков; иначе обычный кроссфейд."),
             Header(text="Звук"),
             Switch(key="normalize", text="Нормализация громкости (ReplayGain)", default=True, icon="msg_volume"),
