@@ -72,11 +72,14 @@ def eq_effective(gains, bass, treble):
     ]
 
 
-_WALK_PREFIXES = ("com.google.android.exoplayer2", "androidx.media3")
+_WALK_SKIP = ("java.", "javax.", "android.", "androidx.core", "androidx.lifecycle", "kotlin.", "dalvik.", "libcore.",
+              "sun.", "org.telegram.messenger", "org.telegram.tgnet", "org.telegram.ui.ActionBar", "com.chaquo.")
 
 
-def _find_audio_track(root, max_nodes=1500):
-    """Breadth-first walk over ExoPlayer's own objects until an android.media.AudioTrack turns up."""
+def _find_audio_track(root, max_nodes=4000, max_depth=7, verbose=False):
+    """Breadth-first walk over the player's objects until an android.media.AudioTrack turns up.
+
+    R8 may rename ExoPlayer's packages, so walk everything except framework and Telegram core classes."""
     try:
         at_cls = java_class("android.media.AudioTrack")
         modifier = jclass("java.lang.reflect.Modifier")
@@ -84,15 +87,9 @@ def _find_audio_track(root, max_nodes=1500):
     except Exception as e:
         log("[Mornye] AudioTrack walk: %s" % e)
         return None
-    prefixes = _WALK_PREFIXES
-    try:
-        # Whatever package this build keeps ExoPlayer in.
-        prefixes += (".".join(str(root.getClass().getName()).split(".")[:3]),)
-    except Exception:
-        pass
-    queue, seen = [root], set()
+    queue, seen, classes = [(root, 0)], set(), []
     while queue and len(seen) < max_nodes:
-        obj = queue.pop(0)
+        obj, depth = queue.pop(0)
         try:
             ident = int(system.identityHashCode(obj))
             if ident in seen:
@@ -100,12 +97,14 @@ def _find_audio_track(root, max_nodes=1500):
             seen.add(ident)
             cls = obj.getClass()
             if cls.isArray():
-                if not cls.getComponentType().isPrimitive():
-                    queue.extend(x for x in obj if x is not None and hasattr(x, "getClass"))
+                if not cls.getComponentType().isPrimitive() and depth < max_depth:
+                    queue.extend((x, depth + 1) for x in list(obj)[:64] if x is not None and hasattr(x, "getClass"))
                 continue
         except Exception:
             continue
-        while cls is not None and str(cls.getName()).startswith(prefixes):
+        if len(classes) < 25:
+            classes.append(str(cls.getName()))
+        while cls is not None and not str(cls.getName()).startswith(_WALK_SKIP):
             for field in cls.getDeclaredFields():
                 try:
                     if modifier.isStatic(field.getModifiers()) or field.getType().isPrimitive():
@@ -117,15 +116,19 @@ def _find_audio_track(root, max_nodes=1500):
                 if value is None or not hasattr(value, "getClass"):
                     continue
                 if at_cls.isInstance(value):
+                    log("[Mornye] AudioTrack at depth %d in %s.%s" % (depth, cls.getName(), field.getName()))
                     return value
+                if depth >= max_depth:
+                    continue
                 try:
                     vcls = value.getClass()
-                    name = str(vcls.getName())
-                    if name.startswith(prefixes) or (vcls.isArray() and not vcls.getComponentType().isPrimitive()):
-                        queue.append(value)
+                    if vcls.isArray() or not str(vcls.getName()).startswith(_WALK_SKIP):
+                        queue.append((value, depth + 1))
                 except Exception:
                     pass
             cls = cls.getSuperclass()
+    if verbose:
+        log("[Mornye] AudioTrack walk: not found in %d objects; first classes: %s" % (len(seen), ", ".join(classes)))
     return None
 
 
@@ -804,10 +807,14 @@ class Engine:
         if not assign:
             return 0
         now = time.time()
-        if now - getattr(self, "_last_walk", 0) < 1.0:
+        tries = getattr(self, "_walk_tries", None)
+        if tries is None:
+            tries = self._walk_tries = {}
+        if now - getattr(self, "_last_walk", 0) < 2.0 or tries.get(key, 0) >= 5:
             return 0
         self._last_walk = now
-        track = _find_audio_track(exo)
+        tries[key] = tries.get(key, 0) + 1
+        track = _find_audio_track(exo, verbose=tries[key] == 1)
         if track is None:
             return 0
         try:
