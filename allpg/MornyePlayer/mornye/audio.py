@@ -456,7 +456,22 @@ class Engine:
                     return "none"
             log("[Mornye] audio session %d: eq=%s bass=%s virt=%s loud=%s" % (
                 session, ctl(fx.eq), ctl(fx.bass), ctl(fx.virt), ctl(fx.loud)))
+            self._release_stale_fx(session)
         return fx
+
+    def _release_stale_fx(self, current):
+        """Free the effects of players that are gone (each track gets a new session)."""
+        keep = {current}
+        for fade in self.fades:
+            if not fade.done:
+                for p in (fade.old, fade.new):
+                    if p is not None:
+                        keep.add(self._session_of(p))
+        for session in [s for s in self.session_fx if s not in keep]:
+            try:
+                self.session_fx.pop(session).release()
+            except Exception:
+                pass
 
     def reapply_fx(self):
         try:
