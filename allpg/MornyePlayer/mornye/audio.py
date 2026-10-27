@@ -376,11 +376,10 @@ class Engine:
         player = player if player is not None else self.main_player()
         if player is None:
             return None
-        session = self._session_of(player)
+        session = self._session_of(player, assign=True)
         if not session:
-            if not getattr(self, "_fx_warned", False):
-                self._fx_warned = True
-                log("[Mornye] audio session: none (exo=%s)" % (self.exo(player) is not None))
+            if self._fx_wanted():
+                self._log_once("audio session: none (exo=%s)" % (self.exo(player) is not None))
             return None
         fx = self.session_fx.get(session)
         if fx is None:
@@ -726,14 +725,54 @@ class Engine:
                 fx.release()
         fade.done = True
 
-    def _session_of(self, player):
+    def _session_of(self, player, assign=False):
         exo = self.exo(player)
         if exo is None:
             return 0
         try:
-            return int(exo.getAudioSessionId())
-        except Exception:
+            sid = int(exo.getAudioSessionId())
+        except Exception as e:
+            self._log_once("getAudioSessionId: %s" % e)
+            sid = 0
+        if sid:
+            return sid
+        # ExoPlayer leaves the session unset and the AudioTrack makes its own id that effects cannot
+        # see. Give the player a session of ours (only when an effect is on: it reopens the track).
+        key = _identity(exo)
+        assigned = getattr(self, "_assigned_sessions", None)
+        if assigned is None:
+            assigned = self._assigned_sessions = {}
+        if key in assigned:
+            return assigned[key]
+        if not assign or not self._fx_wanted():
             return 0
+        try:
+            from org.telegram.messenger import ApplicationLoader
+            am = ApplicationLoader.applicationContext.getSystemService("audio")
+            sid = int(am.generateAudioSessionId())
+            exo.setAudioSessionId(sid)
+            # remember only the newest few players
+            for old in list(assigned)[:-3]:
+                assigned.pop(old, None)
+            assigned[key] = sid
+            log("[Mornye] audio session %d assigned to the player" % sid)
+            return sid
+        except Exception as e:
+            self._log_once("setAudioSessionId: %s" % e)
+            return 0
+
+    def _fx_wanted(self):
+        cfg = self.cfg()
+        return bool(cfg["eq_enabled"] or cfg["bass_strength"] or cfg["virt_strength"]
+                    or self.plugin.get_setting("loudness_boost", 0))
+
+    def _log_once(self, text):
+        seen = getattr(self, "_logged", None)
+        if seen is None:
+            seen = self._logged = set()
+        if text not in seen:
+            seen.add(text)
+            log("[Mornye] " + text)
 
     def _update_fade(self, fade):
         mc = self.mc()
