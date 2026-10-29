@@ -983,10 +983,15 @@ class Engine:
                 self._finish_fade(fade)
         if fade.new is not None:
             self.gains[fade.new_key] = self.base_gain(fade.new_key) * (in_level if elapsed < plan.duration else 1.0)
+            # Straight to the deck: MediaController.setPlayerVolume() stops reaching the incoming
+            # player after the first step, which left crossfaded songs ~30 dB too quiet.
             try:
-                mc.setPlayerVolume()
+                fade.new.setVolume(1.0)
             except Exception:
-                pass
+                try:
+                    mc.setPlayerVolume()
+                except Exception:
+                    pass
             if plan.beat_matched and not fade.aligned and elapsed >= 0.35 and not fade.old_released:
                 fade.aligned = True
                 try:
@@ -1052,7 +1057,7 @@ class Engine:
             # Without this every transition could leave the next song quieter.
             self.gains[key] = self.base_gain(key)
             try:
-                self.mc().setPlayerVolume()
+                player.setVolume(1.0)
             except Exception:
                 pass
         if dur <= 0:
