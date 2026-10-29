@@ -14,6 +14,7 @@ from android.os import Handler, Looper
 from android_utils import OnLongClickListener, R, run_on_ui_thread
 from .logs import log
 from java import jclass, jfloat
+from java.lang import Boolean as JBoolean
 from org.telegram.messenger import SharedConfig
 from org.telegram.ui.ActionBar import Theme
 from .common import (
@@ -29,6 +30,7 @@ from .common import (
     MIX_DURATIONS,
     MIX_OFF,
     PREAMP_VALUES,
+    PAUSE_FADES,
     SKIP_FADES,
     STRENGTH_VALUES,
     _identity,
@@ -290,6 +292,23 @@ class SkipHook(MethodHook):
             engine.ensure_ticking()
 
 
+class PauseHook(MethodHook):
+    """Fade out before pausing (the original pause runs when the fade ends)."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        engine = self.plugin.engine
+        if engine.pause_bypass:
+            return
+        try:
+            if engine.fade_pause(param.args[0]):
+                param.setResult(JBoolean.TRUE)
+        except Exception as e:
+            log("[Mornye] pause fade: %s" % e)
+
+
 class PlayerAlertHook(MethodHook):
     def __init__(self, plugin):
         self.plugin = plugin
@@ -339,6 +358,10 @@ class Engine:
         self.gains = plugin.gains
         self.norm = {}
         self.handler = Handler(Looper.getMainLooper())
+        self._ramp_key = None
+        self._ramp_token = None
+        self._ramp_running = False
+        self.pause_bypass = False
         self.tick_runnable = R(self._tick)
         self.ticking = False
         self.in_tick = False
@@ -497,6 +520,55 @@ class Engine:
 
     # -- track lifecycle --------------------------------------------------
 
+    def ramp(self, player, key, start, end, seconds, done=None):
+        """Slide one player's gain between two levels (pause and resume fades)."""
+        began = time.time()
+        token = self._ramp_token = object()
+        self._ramp_key = key
+
+        def step():
+            if self._ramp_token is not token:
+                return
+            t = min(1.0, (time.time() - began) / max(0.05, seconds))
+            eased = t * t * (3 - 2 * t)
+            self.gains[key] = self.base_gain(key) * (start + (end - start) * eased)
+            try:
+                self.mc().setPlayerVolume()
+            except Exception:
+                pass
+            if t < 1.0:
+                self._ramp_running = True
+                self.handler.postDelayed(R(step), 16)
+                return
+            self._ramp_running = False
+            self._ramp_key = None
+            if done is not None:
+                done()
+
+        step()
+
+    def fade_pause(self, msg):
+        """True when the pause was taken over: fade out first, then really pause."""
+        seconds = PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)]
+        player = self.main_player()
+        mc = self.mc()
+        if not seconds or player is None or self.fades or mc.isMessagePaused() or self._ramp_key is not None:
+            return False
+        key = _identity(player)
+
+        def finish():
+            self.pause_bypass = True
+            try:
+                mc.pauseMessage(msg)
+            finally:
+                self.pause_bypass = False
+            # Stays silent until resume slides it back in.
+            self._ramp_key = key
+
+        self.ramp(player, key, self.gains.get(key, self.base_gain(key)) / max(0.01, self.base_gain(key)), 0.0,
+                  seconds, finish)
+        return True
+
     def on_track_started(self):
         player = self.main_player()
         mc = self.mc()
@@ -507,7 +579,11 @@ class Engine:
             return
         key = _identity(player)
         if key == self.current_key:
-            self.ensure_ticking()  # resume of the same song
+            # Resume of the same song: slide back in.
+            seconds = PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)]
+            if seconds and not self.fades:
+                self.ramp(player, key, 0.0, 1.0, seconds)
+            self.ensure_ticking()
             return
         self._commit_listen()
         self.current_key = key
@@ -958,9 +1034,15 @@ class Engine:
         pos = player.getCurrentPosition() / 1000.0
         dur = player.getDuration() / 1000.0
         key = _identity(player)
-        if self.gains.get(key) == 0.0 and not self.pending_incoming and \
-                not any(f.new_key == key and not f.done for f in self.fades):
-            # A deck left muted by an interrupted fade (skip during a fade, queue change).
+        if key == self._ramp_key and not self._ramp_running:
+            # Playing again after a faded pause that did not come back through playMessage().
+            self.ramp(player, key, 0.0, 1.0, PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)] or 0.2)
+        busy = self.pending_incoming or key == self._ramp_key or \
+            any(not f.done and key in (f.new_key, f.old_key) for f in self.fades) or \
+            (self.sleep_at and self.sleep_at - time.time() <= 8)
+        if not busy and abs(self.gains.get(key, 1.0) - self.base_gain(key)) > 0.01:
+            # A deck left part-way down by a fade that ended early (skip, the old track ran out).
+            # Without this every transition could leave the next song quieter.
             self.gains[key] = self.base_gain(key)
             try:
                 self.mc().setPlayerVolume()
