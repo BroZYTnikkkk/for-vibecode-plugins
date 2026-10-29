@@ -454,7 +454,7 @@ class Engine:
         self.session_fx.clear()
         self.gains.clear()
         try:
-            self.mc().setPlayerVolume()
+            self._push_volume()
         except Exception:
             pass
 
@@ -513,11 +513,26 @@ class Engine:
             if not any(f.new_key == key and not f.done for f in self.fades):
                 self.gains[key] = self.base_gain(key)
             try:
-                self.mc().setPlayerVolume()
+                self._push_volume()
             except Exception:
                 pass
 
     # -- track lifecycle --------------------------------------------------
+
+    def _push_volume(self, player=None):
+        """Re-apply our gain on a deck. setVolume(1.0) goes through VolumeHook, which multiplies by the
+        gain; MediaController.setPlayerVolume() can stop reaching the live AudioTrack."""
+        player = player if player is not None else self.main_player()
+        try:
+            if player is not None:
+                player.setVolume(1.0)
+                return
+        except Exception:
+            pass
+        try:
+            self.mc().setPlayerVolume()
+        except Exception:
+            pass
 
     def pause_seconds(self):
         """Pause/resume fade length in seconds, typed by the user (0 turns it off)."""
@@ -540,7 +555,7 @@ class Engine:
             eased = t * t * (3 - 2 * t)
             self.gains[key] = self.base_gain(key) * (start + (end - start) * eased)
             try:
-                self.mc().setPlayerVolume()
+                self._push_volume(player)
             except Exception:
                 pass
             if t < 1.0:
@@ -636,7 +651,7 @@ class Engine:
             if key in self.gains and not any(f.new_key == key and not f.done for f in self.fades):
                 self.gains[key] = self.base_gain(key)
                 try:
-                    self.mc().setPlayerVolume()
+                    self._push_volume()
                 except Exception:
                     pass
 
@@ -1117,7 +1132,7 @@ class Engine:
             return True
         self.gains[key] = self.base_gain(key) * max(0.0, left / 8.0)
         try:
-            self.mc().setPlayerVolume()
+            self._push_volume()
         except Exception:
             pass
         return True
