@@ -411,12 +411,14 @@ class AppApi:
         act = self.plugin.ui.activity()
         return ui_call(lambda: self.lib.request_permission(act))
 
-    def a_play_paths(self, paths, index=0, shuffle=False):
+    def a_play_paths(self, paths, index=0, shuffle=False, theme=None):
         by_path = self.lib.tracks_by_path()
         tracks = [by_path.get(p) or self.lib.track_for_file(p) for p in paths]
         tracks = [t for t in tracks if t]
         if not tracks:
             raise ExtError("файл не найден" if len(paths) == 1 else "нет треков")
+        if isinstance(theme, dict) and theme.get("key"):
+            self.lib.queues.save_auto("theme", str(theme["key"]), str(theme.get("name") or theme["key"]), tracks)
         start = tracks[min(max(int(index), 0), len(tracks) - 1)]
         if shuffle:
             random.shuffle(tracks)
@@ -444,6 +446,76 @@ class AppApi:
         tracks = self._tracks(paths)
         ui_call(lambda: self.lib.append(tracks), 15)
         return len(tracks)
+
+    # -- saved queues and playlists
+
+    def a_lists(self):
+        return self.lib.queues.summaries()
+
+    def a_list_get(self, qid):
+        q = self.lib.queues.get(qid)
+        fav = self.lib.favorites
+        for t in q["tracks"]:
+            t["fav"] = t["path"] in fav
+            t["missing"] = not (t["path"] and os.path.isfile(t["path"]))
+        return q
+
+    def a_list_create(self, name, paths=None):
+        return self.lib.queues.create(name, self._tracks(paths or []))
+
+    def a_list_from_current(self, name):
+        items = self.a_queue()["items"]
+        tracks = [t for t in items if t.get("path")]
+        if not tracks:
+            raise ExtError("в текущей очереди нет скачанных треков")
+        return self.lib.queues.create(name, tracks)
+
+    def a_list_rename(self, qid, name):
+        self.lib.queues.rename(qid, name)
+        return True
+
+    def a_list_delete(self, qid):
+        self.lib.queues.delete(qid)
+        return True
+
+    def a_list_add(self, qid, paths):
+        return self.lib.queues.add(qid, self._tracks(paths))
+
+    def a_list_remove(self, qid, indexes):
+        self.lib.queues.remove(qid, indexes)
+        return True
+
+    def a_list_move(self, qid, src, dst):
+        self.lib.queues.move(qid, int(src), int(dst))
+        return True
+
+    def a_list_play(self, qid, index=0, shuffle=False):
+        q = self.lib.queues.get(qid)
+        paths = [t["path"] for t in q["tracks"]]
+        playable = [p for p in paths if p and os.path.isfile(p)]
+        if not playable:
+            raise ExtError("в очереди нет скачанных треков")
+        start = paths[int(index)] if 0 <= int(index) < len(paths) else ""
+        return self.a_play_paths(playable, playable.index(start) if start in playable else 0, shuffle)
+
+    def _mark_local(self, items):
+        """Tag search results the library already has (same artist and title)."""
+        if not items:
+            return items
+        split = re.compile(r",|&|;| feat\.| ft\.", re.I)
+        local = {}
+        with self.lib.lock:
+            for t in self.lib.tracks:
+                local.setdefault(track_key(t["title"], split.split(t["artist"])[0].strip()), t["path"])
+                local[track_key(t["title"], t["artist"])] = t["path"]
+        for it in items:
+            if isinstance(it, dict) and (it.get("item_type") or "track").lower() in ("track", "song"):
+                first_artist = split.split(it.get("artists") or "")[0].strip()
+                path = local.get(track_key(it.get("name") or "", it.get("artists") or "")) or \
+                    local.get(track_key(it.get("name") or "", first_artist))
+                if path:
+                    it["local_path"] = path
+        return items
 
     def a_toggle_fav(self, path):
         return self.lib.toggle_favorite(path)
@@ -517,7 +589,7 @@ class AppApi:
             self.mgr.state["search_provider"] = provider
             self.mgr.save_state()
         used, items = self.mgr.search(query, filter_id or None, provider or None)
-        return {"items": items[:120], "provider": used}
+        return {"items": self._mark_local(items[:120]), "provider": used}
 
     def a_url(self, url):
         m = self.mgr
@@ -531,7 +603,12 @@ class AppApi:
         method = {"album": "getAlbum", "playlist": "getPlaylist", "artist": "getArtist"}.get(kind)
         if not method:
             raise ExtError("unknown item type %s" % kind)
-        return self.mgr.provider_call(ext, method, [item_id], 45000)
+        value = self.mgr.provider_call(ext, method, [item_id], 45000)
+        if isinstance(value, dict):
+            for key in ("tracks", "top_tracks"):
+                if isinstance(value.get(key), list):
+                    self._mark_local(value[key])
+        return value
 
     # -- downloads
 

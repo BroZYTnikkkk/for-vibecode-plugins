@@ -266,6 +266,10 @@ class PlayMessageHook(MethodHook):
             self.plugin.engine.on_track_started()
         except Exception as e:
             log("[Mornye] track start: %s" % e)
+        try:
+            self.plugin.library.capture_chat_queue()
+        except Exception as e:
+            log("[Mornye] chat queue: %s" % e)
 
 
 class SkipHook(MethodHook):

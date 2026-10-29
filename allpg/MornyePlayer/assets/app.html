@@ -245,6 +245,19 @@ svg{display:block}
 #toast.err{background:var(--danger);color:#fff}
 .spin{width:28px;height:28px;border-radius:50%;border:3px solid var(--card2);border-top-color:var(--accent);animation:sp .8s linear infinite;margin:40px auto}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* morph player, quality chip, lists */
+#player.morph{transform:none;opacity:0;visibility:hidden;transition:opacity .32s var(--ease),visibility 0s .32s}
+#player.morph.on{opacity:1;visibility:visible;transition:opacity .32s var(--ease)}
+#player.morph .pin{transition:transform .45s var(--ease)}
+#player.morph:not(.on) .pin{transform:translateY(40px)}
+.qual{display:inline-block;margin-top:6px;font-size:11.5px;font-weight:700;letter-spacing:.02em;padding:3px 8px;border-radius:7px;background:rgba(255,255,255,.14);color:rgba(255,255,255,.85)}
+.qual:empty{display:none}
+.item.missing{opacity:.45}
+.badge.local{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.qcard{margin:6px 16px;border-radius:var(--r);padding:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 35%,transparent),var(--card));display:flex;gap:14px;align-items:center}
+.qcard .art{width:64px;height:64px;border-radius:14px;font-size:22px}
+.qcard .meta{flex:1;min-width:0}
+.qcard .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* popup menu, selection bar, tag editor */
 #pop{position:fixed;z-index:40;min-width:180px;max-width:80vw;max-height:60vh;overflow-y:auto;background:#24222f;border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.6);padding:6px 0;opacity:0;transform:scale(.92);transform-origin:top right;pointer-events:none;transition:opacity .18s,transform .18s var(--ease)}
 #pop.on{opacity:1;transform:none;pointer-events:auto}
@@ -278,6 +291,7 @@ svg{display:block}
     <section class="page on" id="p-home"></section>
     <section class="page" id="p-search"></section>
     <section class="page" id="p-library"></section>
+    <section class="page" id="p-queues"></section>
     <section class="page" id="p-downloads"></section>
     <section class="page" id="p-more"></section>
     <section class="page" id="p-detail"></section>
@@ -294,11 +308,12 @@ svg{display:block}
   <button data-tab="home" class="on"><span data-i="home"></span>Главная</button>
   <button data-tab="search"><span data-i="search"></span>Поиск</button>
   <button data-tab="library"><span data-i="lib"></span>Медиатека</button>
+  <button data-tab="queues"><span data-i="queue"></span>Очереди</button>
   <button data-tab="downloads"><span data-i="dl"></span>Загрузки<span class="dot" id="dlDot"></span></button>
   <button data-tab="more"><span data-i="more"></span>Ещё</button>
 </nav>
 
-<div id="player">
+<div id="player" class="morph">
   <div class="pbg" id="pBg"></div><div class="pshade"></div>
   <div class="pin">
     <div class="ptop">
@@ -311,7 +326,7 @@ svg{display:block}
       <div class="plyr" id="pLyr"></div>
     </div>
     <div class="pinfo">
-      <div class="meta"><div class="t" id="pT"></div><div class="s" id="pS"></div></div>
+      <div class="meta"><div class="t" id="pT"></div><div class="s" id="pS"></div><span class="qual" id="pQual"></span></div>
       <button class="iconbtn" id="pFav"></button>
     </div>
     <div class="seek" id="pSeek"><div class="tr"><div class="fl" id="pFill"></div></div></div>
@@ -385,6 +400,9 @@ const I = {
   plus:'<path d="M12 5v14M5 12h14"/>',
   up:'<path d="m6 15 6-6 6 6"/>',
   close:'<path d="M18 6 6 18M6 6l12 12"/>',
+  edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  playlist:'<path d="M3 6h12M3 12h12M3 18h7"/><circle cx="17" cy="17" r="3"/><path d="M20 17V6l2-1"/>',
+  save:'<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
   sort:'<path d="M3 6h12M3 12h8M3 18h4"/><path d="M18 4v16m0 0-3-3m3 3 3-3"/>',
   tag:'<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   addq:'<path d="M3 6h13M3 12h13M3 18h8"/><path d="M18 15v6M15 18h6"/>',
@@ -549,6 +567,8 @@ function paint() {
     $("#pSub").textContent = t.album || "";
     setAccent(artSrc(t));
     lyr.key = ""; if ($("#player").classList.contains("lyr")) loadLyrics();
+    $("#pQual").textContent = "";
+    if (t.path) api("track_info", t.path).then(i => { if (lastKey === key) $("#pQual").textContent = (i.quality || "").split(" · ").slice(0, 3).join(" · "); }).catch(() => {});
     if (tab === "library" || stack.length) markPlaying();
   }
   $("#pFav").innerHTML = svg(t.fav ? "heartf" : "heart"); $("#pFav").classList.toggle("heart", t.fav);
@@ -591,8 +611,23 @@ $("#bQueue").onclick = openQueue;
 $("#bEq").onclick = openSound;
 $("#bSleep").onclick = openSleep;
 function syncPBot() { $("#bLyr").classList.toggle("on", $("#player").classList.contains("lyr")); }
-function openPlayer() { $("#player").classList.add("on"); }
-function closePlayer() { $("#player").classList.remove("on"); }
+/* the mini player's cover grows into the big one, and shrinks back on close */
+function morphCover(toMini) {
+  const mini = $("#mArt"), big = $("#pArt");
+  const a = mini.getBoundingClientRect(), b = big.getBoundingClientRect();
+  if (!a.width || !b.width || !$("#mini").classList.contains("on")) return false;
+  const t = `translate(${a.left - b.left}px,${a.top - b.top}px) scale(${a.width / b.width})`;
+  big.style.transformOrigin = "0 0";
+  if (toMini) { big.style.transition = "transform .34s var(--ease)"; big.style.transform = t; }
+  else {
+    big.style.transition = "none"; big.style.transform = t; big.getBoundingClientRect();
+    requestAnimationFrame(() => { big.style.transition = "transform .5s var(--ease)"; big.style.transform = ""; });
+  }
+  clearTimeout(big._mt); big._mt = setTimeout(() => { big.style.transition = big.style.transformOrigin = ""; if (toMini) big.style.transform = ""; }, toMini ? 380 : 560);
+  return true;
+}
+function openPlayer() { const p = $("#player"); p.classList.add("on"); morphCover(false); }
+function closePlayer() { const p = $("#player"); if (!p.classList.contains("on")) return; morphCover(true); p.classList.remove("on"); }
 (function seekbar() {
   const el = $("#pSeek");
   const at = e => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(1, ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width)); };
@@ -606,8 +641,8 @@ function closePlayer() { $("#player").classList.remove("on"); }
 (function swipe() {
   const p = $("#player"); let y0 = null, dy = 0;
   p.addEventListener("touchstart", e => { if (e.target.closest(".plyr,.seek")) return; y0 = e.touches[0].clientY; dy = 0; }, {passive: true});
-  p.addEventListener("touchmove", e => { if (y0 === null) return; dy = Math.max(0, e.touches[0].clientY - y0); p.style.transition = "none"; p.style.transform = `translateY(${dy}px)`; }, {passive: true});
-  p.addEventListener("touchend", () => { if (y0 === null) return; p.style.transition = ""; p.style.transform = ""; if (dy > 120) closePlayer(); y0 = null; });
+  p.addEventListener("touchmove", e => { if (y0 === null) return; dy = Math.max(0, e.touches[0].clientY - y0); p.style.transition = "none"; p.style.transform = `translateY(${dy}px)`; p.style.opacity = Math.max(.5, 1 - dy / 700); }, {passive: true});
+  p.addEventListener("touchend", () => { if (y0 === null) return; p.style.transition = ""; p.style.transform = ""; p.style.opacity = ""; if (dy > 120) closePlayer(); y0 = null; });
 })();
 
 /* swipe down from the top of a page closes the whole window */
@@ -787,6 +822,7 @@ function trackActions(t, fromPlayer) {
     list.push(["user", "К исполнителю", () => { closePlayer(); openGroup("artist", t.artist); }]);
     if (t.album) list.push(["disc", "К альбому", () => { closePlayer(); openGroup("album", t.album); }]);
     list.push(["send", "Отправить в «Избранное» Telegram", () => api("send_saved", t.path).then(() => toast("Отправлено"))]);
+    list.push(["playlist", "В плейлист или очередь…", () => pickList([t.path])]);
     list.push(["tag", "Изменить теги и текст", () => editTags(t.path)]);
     list.push(["info", "Информация", () => api("track_info", t.path).then(i => toast([i.quality, (i.size / 1048576).toFixed(1) + " МБ"].filter(Boolean).join(" · ")))]);
   } else {
@@ -850,6 +886,7 @@ $("#selMore").onclick = () => {
   popMenu($("#selMore"), [
     ["Перемешать и слушать", () => { selEnd(); playPaths(tr, 0, true); }, false, "shuffle"],
     ["В конец очереди", () => { selEnd(); api("queue_add", p).then(n => toast("В очереди: +" + n)); }, false, "addq"],
+    ["В плейлист или очередь…", () => { selEnd(); pickList(p); }, false, "playlist"],
     SEL.all ? ["Выбрать все", () => { SEL.all().forEach(t => SEL.paths.set(t.path, t)); document.querySelectorAll(".item[data-path]").forEach(e => { if (SEL.paths.has(e.dataset.path)) e.classList.add("sel"); }); $("#selN").textContent = SEL.paths.size; }, false, "selall"] : null,
     tr.length === 1 ? ["Изменить теги", () => { selEnd(); editTags(p[0]); }, false, "tag"] : null,
   ]);
@@ -880,7 +917,7 @@ render.library = async function () {
   const p = $("#p-library");
   p.innerHTML = `<div class="top"><h1>Медиатека</h1><button class="iconbtn" id="lSort">${svg("sort")}</button><button class="iconbtn" id="lRescan">${svg("retry")}</button></div>
     <div class="searchbox">${svg("search")}<input id="lQ" placeholder="Поиск в медиатеке" value="${esc(libQuery)}"></div>
-    <div class="chips" id="lTabs">${[["songs", "Треки"], ["artists", "Исполнители"], ["albums", "Альбомы"], ["fav", "Избранное"], ["folders", "Папки"]].map(([k, l]) => `<button class="chip ${k === libMode ? "on" : ""}" data-m="${k}">${l}</button>`).join("")}</div>
+    <div class="chips" id="lTabs">${[["songs", "Треки"], ["artists", "Исполнители"], ["albums", "Альбомы"], ["fav", "Избранное"], ["playlists", "Плейлисты"], ["folders", "Папки"]].map(([k, l]) => `<button class="chip ${k === libMode ? "on" : ""}" data-m="${k}">${l}</button>`).join("")}</div>
     <div id="lBody"><div class="spin"></div></div>`;
   $("#lTabs").querySelectorAll(".chip").forEach(c => c.onclick = () => { libMode = c.dataset.m; selEnd(); render.library(); });
   $("#lSort").onclick = openSort;
@@ -904,6 +941,7 @@ function drawLib() {
     const b = $("#lPerm"); if (b) b.onclick = () => api("permission").then(() => setTimeout(() => $("#lRescan").click(), 1500));
     return;
   }
+  if (libMode === "playlists") return drawLists(body, "user");
   const tr = libTracks();
   if (libMode === "artists" || libMode === "albums" || libMode === "folders") {
     const f = libMode === "artists" ? "artist" : libMode === "albums" ? "album" : "folder";
@@ -920,20 +958,21 @@ function drawLib() {
     body.appendChild(list); return;
   }
   body.insertAdjacentHTML("beforeend", `<div class="btnrow"><button class="btn acc" id="lPlay">${svg("play")}Слушать</button><button class="btn" id="lShuf">${svg("shuffle")}Перемешать</button><span class="mute small" style="align-self:center;margin-left:auto">${plural(tr.length, "трек", "трека", "треков")}</span></div>`);
-  $("#lPlay").onclick = () => playPaths(tr, 0); $("#lShuf").onclick = () => playPaths(tr, 0, true);
+  const libTheme = libMode === "fav" ? {key: "fav", name: "Избранное"} : {key: "all", name: "Все песни"};
+  $("#lPlay").onclick = () => playPaths(tr, 0, false, libTheme); $("#lShuf").onclick = () => playPaths(tr, 0, true, libTheme);
   const list = document.createElement("div"); list.className = "list"; body.appendChild(list);
   let shown = 0;
   const sortName = (SORTS.find(x => x[0] === libSort.key) || [, ""])[1];
   const subOf = t => { const k = libSort.key; const v = k === "plays" ? plural(t.plays || 0, "прослушивание", "прослушивания", "прослушиваний") : ["mtime", "added", "played"].includes(k) ? (t[k] ? new Date(t[k] * 1000).toLocaleDateString("ru") : "—") : ["genre", "year", "composer", "album_artist", "folder", "file", "track"].includes(k) ? String(sortVal(t, k) || "—") : ""; return v ? [v, t.artist].filter(Boolean).join(" · ") : undefined; };
   body.querySelector(".btnrow span").textContent = plural(tr.length, "трек", "трека", "треков") + " · " + sortName.toLowerCase() + (libSort.desc ? " ↓" : " ↑");
-  const more = () => { tr.slice(shown, shown + 80).forEach((t, k) => { const i = shown + k; const el = trackRow(t, () => playPaths(tr, i), {selectable: () => tr, sub: subOf(t)}); if (SEL.paths.has(t.path)) el.classList.add("sel"); list.appendChild(el); }); shown += 80; markPlaying(); };
+  const more = () => { tr.slice(shown, shown + 80).forEach((t, k) => { const i = shown + k; const el = trackRow(t, () => playPaths(tr, i, false, libTheme), {selectable: () => tr, sub: subOf(t)}); if (SEL.paths.has(t.path)) el.classList.add("sel"); list.appendChild(el); }); shown += 80; markPlaying(); };
   more();
   const page = $("#p-library");
   page.onscroll = () => { if (shown < tr.length && page.scrollTop + page.clientHeight > page.scrollHeight - 600) more(); };
 }
-function playPaths(tracks, index, shuffle) {
+function playPaths(tracks, index, shuffle, theme) {
   const lo = Math.max(0, index - 200), sl = tracks.slice(lo, lo + 500);
-  api("play_paths", sl.map(t => t.path), index - lo, !!shuffle).then(() => setTimeout(() => api("state").then(s => { S = s; sAt = performance.now(); paint(); }), 300)).catch(e => toast(e.message, 1));
+  api("play_paths", sl.map(t => t.path), index - lo, !!shuffle, theme || null).then(() => setTimeout(() => api("state").then(s => { S = s; sAt = performance.now(); paint(); }), 300)).catch(e => toast(e.message, 1));
 }
 async function openGroup(f, name, items) {
   await loadLib();
@@ -945,8 +984,9 @@ async function openGroup(f, name, items) {
     p.innerHTML = `<div class="top">${backBtn()}</div><div class="dhead ${f === "artist" ? "round" : ""}">${art(items[0], name)}<h2>${esc(name)}</h2><p>${sub}</p></div>
       <div class="btnrow" style="justify-content:center"><button class="btn acc" id="gPlay">${svg("play")}Слушать</button><button class="btn" id="gShuf">${svg("shuffle")}Перемешать</button></div>`;
     const list = document.createElement("div"); list.className = "list"; p.appendChild(list);
-    items.forEach((t, i) => list.appendChild(trackRow(t, () => playPaths(items, i), {selectable: () => items})));
-    $("#gPlay").onclick = () => playPaths(items, 0); $("#gShuf").onclick = () => playPaths(items, 0, true);
+    const th = {key: f + ":" + name, name: (f === "artist" ? "Исполнитель: " : f === "album" ? "Альбом: " : "Папка: ") + name};
+    items.forEach((t, i) => list.appendChild(trackRow(t, () => playPaths(items, i, false, th), {selectable: () => items})));
+    $("#gPlay").onclick = () => playPaths(items, 0, false, th); $("#gShuf").onclick = () => playPaths(items, 0, true, th);
     markPlaying();
   });
 }
@@ -963,25 +1003,25 @@ render.home = async function () {
     <div class="row">${d.count ? `<button class="pill solid" id="hMix">${svg("shuffle")}Перемешать</button><button class="pill" id="hFav">${svg("heartf")}Любимое</button>` : `<button class="pill solid" onclick="go('search')">${svg("search")}Найти музыку</button>`}</div></div>`);
   parts.push(`<div class="stats"><div class="stat"><b>${d.hours.toFixed(1)}</b><span>часов всего</span></div><div class="stat"><b>${d.week_hours.toFixed(1)}</b><span>за неделю</span></div><div class="stat"><b>${d.plays}</b><span>прослушиваний</span></div></div>`);
   p.innerHTML = `<div class="top"><h1>${hello}</h1><button class="iconbtn" onclick="go('more')">${svg("gear")}</button><button class="iconbtn" onclick="closeApp()">${svg("close")}</button></div>` + parts.join("");
-  const rail = (title, items, kind) => {
+  const rail = (title, items, kind, theme) => {
     if (!items.length) return;
     p.insertAdjacentHTML("beforeend", `<div class="sec"><h3>${title}</h3></div>`);
     const r = document.createElement("div"); r.className = "rail"; p.appendChild(r);
     items.forEach((t, i) => {
       const el = document.createElement("div"); el.className = "tile" + (kind === "artist" ? " round" : "");
       if (kind === "artist") { el.innerHTML = `${art(LIB.tracks.find(x => x.artist === t.name), t.name)}<div class="t">${esc(t.name)}</div><div class="s">${plural(t.plays, "прослушивание", "прослушивания", "прослушиваний")}</div>`; el.onclick = () => openGroup("artist", t.name); }
-      else { el.innerHTML = `${art(t)}<div class="t">${esc(t.title)}</div><div class="s">${esc(t.artist)}</div>`; el.onclick = () => playPaths(items, i); }
+      else { el.innerHTML = `${art(t)}<div class="t">${esc(t.title)}</div><div class="s">${esc(t.artist)}</div>`; el.onclick = () => playPaths(items, i, false, theme); }
       r.appendChild(el);
     });
   };
   rail("Недавно играло", d.recent);
-  rail("Чаще всего", d.top);
+  rail("Чаще всего", d.top, null, {key: "top", name: "Популярные"});
   rail("Любимые исполнители", d.artists, "artist");
   const fresh = LIB.tracks.slice().sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 15);
   if (!d.recent.length && LIB.tracks.length) rail("Из медиатеки", LIB.tracks.slice(0, 15));
   p.insertAdjacentHTML("beforeend", `<div class="credit">Mornye Player · основано на <b>Mornye</b> от zarzet (LGPL-3.0)</div>`);
-  const mx = $("#hMix"); if (mx) mx.onclick = () => playPaths(LIB.tracks, 0, true);
-  const fv = $("#hFav"); if (fv) fv.onclick = () => { const f = LIB.tracks.filter(t => t.fav); f.length ? playPaths(f, 0, true) : toast("В избранном пока пусто"); };
+  const mx = $("#hMix"); if (mx) mx.onclick = () => playPaths(LIB.tracks, 0, true, {key: "all", name: "Все песни"});
+  const fv = $("#hFav"); if (fv) fv.onclick = () => { const f = LIB.tracks.filter(t => t.fav); f.length ? playPaths(f, 0, true, {key: "fav", name: "Избранное"}) : toast("В избранном пока пусто"); };
   void fresh;
 };
 
@@ -1040,11 +1080,14 @@ function remoteRow(it, all) {
     el.onclick = () => openRemote(kind, it.provider_id, it.id, it);
     return el;
   }
-  return trackRow(it, () => downloadSheet(it), {menu: () => downloadSheet(it), right: it.explicit ? '<span class="badge">E</span>' : undefined});
+  const right = (it.local_path ? '<span class="badge local">✓ есть</span>' : "") + (it.explicit ? '<span class="badge">E</span>' : "");
+  const play = it.local_path ? () => playPaths([{path: it.local_path}], 0) : () => downloadSheet(it);
+  return trackRow(it, play, {menu: () => downloadSheet(it), right: right || undefined});
 }
 function downloadSheet(t) {
   actions(trackHead(t), [
-    ["dl", "Скачать и слушать", () => startDownload([t], true)],
+    t.local_path ? ["play", "Слушать с устройства", () => playPaths([{path: t.local_path}], 0)] : null,
+    ["dl", t.local_path ? "Скачать ещё раз и слушать" : "Скачать и слушать", () => startDownload([t], true)],
     ["dl", "Скачать", () => startDownload([t], false)],
     t.album_id ? ["disc", "Открыть альбом", () => openRemote("album", t.provider_id, t.album_id, {name: t.album_name, cover_url: t.cover_url})] : null,
     t.artist_id ? ["user", "Открыть исполнителя", () => openRemote("artist", t.provider_id, t.artist_id, {name: t.artists})] : null,
@@ -1088,6 +1131,93 @@ function drawUrlResult(body, u, ext) {
   if (u.artist) { openRemote("artist", u.artist.provider_id || ext, u.artist.id, u.artist); return; }
   if (u.tracks) { const list = document.createElement("div"); list.className = "list"; u.tracks.forEach(t => list.appendChild(remoteRow(t))); body.appendChild(list); return; }
   body.innerHTML = '<div class="empty">Ссылка распознана, но в ней нет треков</div>';
+}
+
+/* ---------------- queues and playlists ---------------- */
+const KIND = {user: "Мои очереди и плейлисты", chat: "Из чатов", theme: "Темы"};
+function askName(title, value) {
+  return new Promise(res => {
+    const box = document.createElement("div");
+    box.innerHTML = `<div class="field"><input id="nmIn" value="${esc(value || "")}" placeholder="Название" maxlength="80"></div><div class="btnrow"><button class="btn acc" id="nmOk">${svg("check")}Готово</button><button class="btn ghost" id="nmNo">Отмена</button></div>`;
+    openSheet(`<div class="t">${esc(title)}</div>`, box);
+    const inp = box.querySelector("#nmIn"); setTimeout(() => inp.focus(), 350);
+    const done = v => { closeSheet(); res(v); };
+    box.querySelector("#nmOk").onclick = () => done(inp.value.trim() || null);
+    box.querySelector("#nmNo").onclick = () => done(null);
+    inp.onkeydown = e => { if (e.key === "Enter") done(inp.value.trim() || null); };
+  });
+}
+async function pickList(paths) {
+  let ls = []; try { ls = (await api("lists")).filter(q => q.kind === "user" || q.pinned); } catch (e) {}
+  actions(`<div class="t">Добавить ${plural(paths.length, "трек", "трека", "треков")}</div>`, [
+    ["plus", "Новый плейлист…", async () => { const n = await askName("Новый плейлист"); if (n) api("list_create", n, paths).then(() => toast("Плейлист «" + n + "» создан")); }],
+    ...ls.map(q => ["playlist", q.name, () => api("list_add", q.id, paths).then(c => toast("В «" + q.name + "»: " + plural(c, "трек", "трека", "треков")))])
+  ]);
+}
+function listRow(q) {
+  const el = document.createElement("div"); el.className = "item";
+  const sub = [plural(q.count, "трек", "трека", "треков"), q.kind !== "user" && q.pinned ? "закреплена" : q.kind !== "user" ? "обновляется" : ""].filter(Boolean).join(" · ");
+  el.innerHTML = `${art(q.cover ? {path: q.cover} : null, q.name)}<div class="meta"><div class="t">${esc(q.name)}</div><div class="s">${esc(sub)}</div></div><button class="more">${svg("play")}</button>`;
+  el.onclick = e => { if (e.target.closest(".more")) return api("list_play", q.id, 0, false).catch(er => toast(er.message, 1)); openList(q.id); };
+  return el;
+}
+async function drawLists(body, only) {
+  let ls = []; try { ls = await api("lists"); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  body.innerHTML = "";
+  if (only) ls = ls.filter(q => q.kind === only);
+  const add = document.createElement("div"); add.className = "btnrow";
+  add.innerHTML = `<button class="btn acc">${svg("plus")}Новый плейлист</button>`;
+  add.querySelector("button").onclick = async () => { const n = await askName("Новый плейлист"); if (n) { await api("list_create", n, []); drawLists(body, only); } };
+  body.appendChild(add);
+  if (!ls.length) { body.insertAdjacentHTML("beforeend", `<div class="empty">${svg("playlist")}<b>Пока пусто</b>Добавляйте треки через меню «⋮» или долгим нажатием. Очереди из чатов и тем появятся сами, когда вы включите музыку.</div>`); return; }
+  (only ? [only] : ["user", "chat", "theme"]).forEach(k => {
+    const part = ls.filter(q => q.kind === k); if (!part.length) return;
+    if (!only) body.insertAdjacentHTML("beforeend", `<div class="sec"><h3>${KIND[k]}</h3></div>`);
+    const list = document.createElement("div"); list.className = "list"; body.appendChild(list);
+    part.forEach(q => list.appendChild(listRow(q)));
+  });
+}
+render.queues = function () {
+  const p = $("#p-queues");
+  p.innerHTML = `<div class="top"><h1>Очереди</h1></div><div id="qNow"></div><div id="qBody"><div class="spin"></div></div>`;
+  if (S.track) {
+    $("#qNow").innerHTML = `<div class="qcard">${art(S.track)}<div class="meta"><div class="mute small">Сейчас играет</div><div class="t">${esc(S.track.title)}</div><div class="btnrow" style="padding:8px 0 0"><button class="btn sm acc" id="qOpen">${svg("queue")}Очередь</button><button class="btn sm" id="qSave">${svg("save")}Сохранить</button></div></div></div>`;
+    $("#qOpen").onclick = openQueue;
+    $("#qSave").onclick = async () => { const n = await askName("Сохранить очередь", S.track.album || "Моя очередь"); if (n) api("list_from_current", n).then(() => { toast("Сохранено"); render.queues(); }).catch(e => toast(e.message, 1)); };
+  }
+  drawLists($("#qBody"));
+};
+function openList(id) {
+  let q = null;
+  const draw = () => {
+    const p = $("#p-detail");
+    p.innerHTML = `<div class="top">${backBtn()}<h2></h2><button class="iconbtn" id="lRen">${svg("edit")}</button><button class="iconbtn" id="lDel">${svg("trash")}</button></div>`;
+    if (!q) { p.insertAdjacentHTML("beforeend", '<div class="spin"></div>'); return; }
+    const first = q.tracks.find(t => !t.missing);
+    const note = q.kind === "user" ? "" : q.pinned ? " · закреплена" : q.kind === "chat" ? " · обновится при следующем запуске из чата" : " · обновится при следующем запуске темы";
+    p.insertAdjacentHTML("beforeend", `<div class="dhead">${art(first, q.name)}<h2>${esc(q.name)}</h2><p>${plural(q.tracks.length, "трек", "трека", "треков")}${note}</p></div>
+      <div class="btnrow" style="justify-content:center"><button class="btn acc" id="lqPlay">${svg("play")}Слушать</button><button class="btn" id="lqShuf">${svg("shuffle")}Перемешать</button></div>`);
+    $("#lqPlay").onclick = () => api("list_play", id, 0, false).catch(e => toast(e.message, 1));
+    $("#lqShuf").onclick = () => api("list_play", id, 0, true).catch(e => toast(e.message, 1));
+    $("#lRen").onclick = async () => { const n = await askName("Переименовать", q.name); if (n) { await api("list_rename", id, n); toast(q.kind === "user" ? "Переименовано" : "Переименовано и закреплено"); load(); } };
+    $("#lDel").onclick = () => actions(`<div class="t">Удалить «${esc(q.name)}»?</div>`, [["trash", "Удалить", () => api("list_delete", id).then(() => { toast("Удалено"); popDetail(); if (tab === "queues") render.queues(); }), "danger"]]);
+    const list = document.createElement("div"); list.className = "list"; p.appendChild(list);
+    q.tracks.forEach((t, i) => {
+      const el = trackRow(t, () => t.missing ? toast("Трек не скачан") : api("list_play", id, i, false).catch(e => toast(e.message, 1)), {
+        menu: () => actions(trackHead(t), [
+          !t.missing ? ["next1", "Играть следующим", () => api("play_next", t.path).then(() => toast("Будет играть следующим"))] : null,
+          i ? ["up", "Выше", () => api("list_move", id, i, i - 1).then(load)] : null,
+          i < q.tracks.length - 1 ? ["down", "Ниже", () => api("list_move", id, i, i + 1).then(load)] : null,
+          ["x", "Убрать из списка", () => api("list_remove", id, [i]).then(load)],
+        ]),
+        sub: t.missing ? "не скачан · " + (t.artist || "") : undefined});
+      if (t.missing) el.classList.add("missing");
+      list.appendChild(el);
+    });
+    markPlaying();
+  };
+  const load = () => api("list_get", id).then(v => { q = v; draw(); }).catch(e => toast(e.message, 1));
+  pushDetail(draw); load();
 }
 
 /* ---------------- downloads ---------------- */

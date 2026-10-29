@@ -20,6 +20,7 @@ from ui.bulletin import BulletinHelper
 from android.os import Build, Environment
 from android_utils import run_on_ui_thread
 from .logs import log
+from .queues import Queues
 from java import jarray, jbyte, jclass
 from java.lang import Boolean as JBoolean, String as JString
 from org.telegram.messenger import ApplicationLoader, FileLoader, MessageObject, SharedConfig, UserConfig
@@ -55,6 +56,8 @@ class Library:
         self.stats = self._load("stats.json", {"tracks": {}, "artists": {}, "seconds": 0.0, "plays": 0, "days": {}})
         self.favorites = set(self._load("favorites.json", []))
         self.history = self._load("history.json", [])
+        self.queues = Queues(self)
+        self._chat_sig = None
         cache = self._load("library.json", {})
         self.tracks = cache.get("tracks", [])
         # Local MessageObjects get fresh negative ids. MediaController sorts a
@@ -308,6 +311,31 @@ class Library:
             return
         insert_after_current(mo)
 
+    def capture_chat_queue(self):
+        """Remember a playlist started from a Telegram chat as an automatic queue named after the chat."""
+        mc = get_media_controller()
+        msg = mc.getPlayingMessageObject()
+        playlist = mc.getPlaylist()
+        if msg is None or playlist is None or msg.getId() < 0 or not msg.isMusic():
+            return
+        did = int(msg.getDialogId())
+        size = playlist.size()
+        sig = (did, size, int(playlist.get(0).getId()) if size else 0)
+        if sig == self._chat_sig:
+            return
+        self._chat_sig = sig
+        tracks = []
+        for i in range(min(size, 2000)):
+            mo = playlist.get(i)
+            if mo.getId() < 0:
+                return  # our own local queue, not a chat
+            title, artist = message_meta(mo)
+            tracks.append({"path": message_file_path(mo) or "", "title": title, "artist": artist,
+                           "duration": int(mo.getDuration() or 0), "mid": int(mo.getId())})
+        if not SharedConfig.playOrderReversed:
+            tracks.reverse()  # MediaController walks the list from the end
+        self.queues.save_auto("chat", str(did), _dialog_name(msg.currentAccount, did), tracks)
+
     def append(self, tracks, account=None):
         """Put tracks at the end of the current queue (or start playing them)."""
         mc = get_media_controller()
@@ -551,6 +579,24 @@ def insert_after_current(mo):
             pmap.put(jclass("java.lang.Integer").valueOf(mo.getId()), mo)
     except Exception as e:
         log("[Mornye] queue insert: %s" % e)
+
+
+def _dialog_name(account, did):
+    try:
+        mc = jclass("org.telegram.messenger.MessagesController").getInstance(account)
+        if did < 0:
+            chat = mc.getChat(jclass("java.lang.Long").valueOf(-did))
+            if chat is not None and chat.title:
+                return str(chat.title)
+        else:
+            if did == UserConfig.getInstance(account).getClientUserId():
+                return "Избранное"
+            user = mc.getUser(jclass("java.lang.Long").valueOf(did))
+            if user is not None:
+                return " ".join(x for x in (str(user.first_name or ""), str(user.last_name or "")) if x).strip() or "Чат"
+    except Exception as e:
+        log("[Mornye] dialog name: %s" % e)
+    return "Чат"
 
 
 def append_to_queue(mo):
