@@ -30,7 +30,6 @@ from .common import (
     MIX_DURATIONS,
     MIX_OFF,
     PREAMP_VALUES,
-    PAUSE_FADES,
     SKIP_FADES,
     STRENGTH_VALUES,
     _identity,
@@ -520,6 +519,14 @@ class Engine:
 
     # -- track lifecycle --------------------------------------------------
 
+    def pause_seconds(self):
+        """Pause/resume fade length in seconds, typed by the user (0 turns it off)."""
+        raw = self.plugin.get_setting("pause_fade_s", "0.4")
+        try:
+            return max(0.0, min(5.0, float(str(raw).replace(",", ".").strip() or 0)))
+        except ValueError:
+            return 0.4
+
     def ramp(self, player, key, start, end, seconds, done=None):
         """Slide one player's gain between two levels (pause and resume fades)."""
         began = time.time()
@@ -549,7 +556,7 @@ class Engine:
 
     def fade_pause(self, msg):
         """True when the pause was taken over: fade out first, then really pause."""
-        seconds = PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)]
+        seconds = self.pause_seconds()
         player = self.main_player()
         mc = self.mc()
         if not seconds or player is None or self.fades or mc.isMessagePaused() or self._ramp_key is not None:
@@ -580,7 +587,7 @@ class Engine:
         key = _identity(player)
         if key == self.current_key:
             # Resume of the same song: slide back in.
-            seconds = PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)]
+            seconds = self.pause_seconds()
             if seconds and not self.fades:
                 self.ramp(player, key, 0.0, 1.0, seconds)
             self.ensure_ticking()
@@ -1036,7 +1043,7 @@ class Engine:
         key = _identity(player)
         if key == self._ramp_key and not self._ramp_running:
             # Playing again after a faded pause that did not come back through playMessage().
-            self.ramp(player, key, 0.0, 1.0, PAUSE_FADES[self.plugin.get_setting("pause_fade", 2)] or 0.2)
+            self.ramp(player, key, 0.0, 1.0, self.pause_seconds() or 0.2)
         busy = self.pending_incoming or key == self._ramp_key or \
             any(not f.done and key in (f.new_key, f.old_key) for f in self.fades) or \
             (self.sleep_at and self.sleep_at - time.time() <= 8)

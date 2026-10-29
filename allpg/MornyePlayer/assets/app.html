@@ -738,10 +738,19 @@ async function openSound() {
       ${selRow("Длительность перехода", "mix_duration", st.mix_labels, st.mix_duration)}
       ${selRow("Эффект AutoMix", "automix_effect", st.effect_labels, st.automix_effect)}
       ${selRow("Плавное переключение вручную", "skip_fade", st.skip_fade_labels, st.skip_fade)}
-      ${selRow("Затухание при паузе и старте", "pause_fade", st.pause_fade_labels, st.pause_fade)}
+      <div class="row" id="pfRow"><div class="meta"><div class="t">Затухание при паузе и старте</div><div class="s">0 выключает, до 5 секунд</div></div><div class="v" id="pfV">${esc(String(st.pause_fade_s).replace(".", ","))} с</div></div>
       <div class="row" data-k="autoplay"><div class="meta"><div class="t">Автоплей</div><div class="s">Подбирает похожее, когда очередь кончилась</div></div><div class="switch ${st.autoplay ? "on" : ""}"></div></div>
     </div>`;
   bindSettingRows(box, st);
+  box.querySelector("#pfRow").onclick = () => {
+    const v = box.querySelector("#pfV"), r = box.querySelector("#pfRow");
+    if (r.querySelector("input")) return;
+    v.innerHTML = `<input type="number" inputmode="decimal" step="0.1" min="0" max="5" value="${esc(st.pause_fade_s)}" style="width:72px;height:34px;border-radius:8px;border:1px solid var(--line);background:rgba(0,0,0,.3);padding:0 8px;text-align:right">`;
+    const inp = v.querySelector("input"); inp.focus(); inp.select();
+    const save = () => { const n = Math.max(0, Math.min(5, parseFloat(String(inp.value).replace(",", ".")) || 0)); st.pause_fade_s = n; v.textContent = String(n).replace(".", ",") + " с"; api("set_setting", "pause_fade_s", n).catch(e => toast(e.message, 1)); };
+    inp.onblur = save; inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
+    inp.onclick = e => e.stopPropagation();
+  };
   const paintBands = () => box.querySelectorAll(".band").forEach((b, i) => {
     const f = (gains[i] + 12) / 24; const rail = b.querySelector(".brail");
     rail.querySelector("i").style.top = (1 - f) * 100 + "%";

@@ -88,8 +88,6 @@ EFFECT_AUTO, EFFECT_CROSSFADE, EFFECT_MUFFLED, EFFECT_ECHO, EFFECT_PITCH = range
 EFFECT_LABELS = ["Авто", "Кроссфейд", "Приглушение", "Эхо", "Сдвиг тона"]
 SKIP_FADES = [0, 0.8, 1.5, 3.0]
 SKIP_FADE_LABELS = ["Выкл", "0,8 с", "1,5 с", "3 с"]
-PAUSE_FADES = [0, 0.2, 0.4, 0.8]
-PAUSE_FADE_LABELS = ["Выкл", "Быстро", "Плавно", "Медленно"]
 
 EQ_CENTERS = [31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 EQ_PRESETS = [
