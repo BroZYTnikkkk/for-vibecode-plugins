@@ -286,6 +286,7 @@ class AppApi:
             out = {"track": None, "playing": False, "position": 0.0, "duration": 0.0,
                    "shuffle": bool(SharedConfig.shuffleMusic), "repeat": int(SharedConfig.repeatMode),
                    "mix": self.plugin.get_setting("mix_mode", MIX_CROSSFADE),
+                   "native": bool(self.plugin.get_setting("native_player", True)),
                    "sleep": max(0, int(self.plugin.engine.sleep_at - time.time())) if self.plugin.engine.sleep_at else 0,
                    "downloads": sum(1 for i in self.plugin.downloads().snapshot() if i["status"] in ("queued", "running"))
                    if self.plugin._downloads is not None else 0,
@@ -635,6 +636,10 @@ class AppApi:
 
     def a_dl_remove(self, item_id):
         self.plugin.downloads().remove(item_id)
+        return True
+
+    def a_native_player(self):
+        run_on_ui_thread(self.plugin.open_native_player)
         return True
 
     def a_close(self):

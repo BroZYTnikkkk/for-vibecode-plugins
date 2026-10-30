@@ -5,6 +5,7 @@
 """Audio effects, player hooks and the playback engine (crossfade, AutoMix, sleep timer)."""
 
 import math
+import threading
 import time
 from base_plugin import MethodHook
 from client_utils import get_media_controller, run_on_queue
@@ -13,8 +14,8 @@ from ui.bulletin import BulletinHelper
 from android.os import Handler, Looper
 from android_utils import OnLongClickListener, R, run_on_ui_thread
 from .logs import log
-from java import jclass, jfloat
-from java.lang import Boolean as JBoolean
+from java import dynamic_proxy, jclass, jfloat
+from java.lang import Boolean as JBoolean, Runnable
 from org.telegram.messenger import SharedConfig
 from org.telegram.ui.ActionBar import Theme
 from .common import (
@@ -350,6 +351,57 @@ class PlayerAlertHook(MethodHook):
             button.setOnLongClickListener(OnLongClickListener(on_long))
         except Exception as e:
             log("[Mornye] player alert: %s" % e)
+
+
+_MENU = threading.local()
+NATIVE_MENU = (
+    ("msg_list", "Библиотека Mornye", ""),
+    ("msg_message", "Текст песни", "lyrics"),
+    ("msg_settings", "Звук и эквалайзер", "sound"),
+    ("msg_autodelete", "Таймер сна", "sleep"),
+    ("msg_addfolder", "В плейлист", "list"),
+    ("msg_edit", "Изменить теги и текст", "tags"),
+    ("msg_played", "Очереди", "queues"),
+)
+
+
+class _OpenRoute(dynamic_proxy(Runnable)):
+    def __init__(self, plugin, route):
+        super().__init__()
+        self.plugin = plugin
+        self.route = route
+
+    def run(self):
+        self.plugin.open_app(self.route)
+
+
+class PlayerMenuHook(MethodHook):
+    """AudioPlayerAlert.showMenuOptions: mark the menu that is being built for ItemsShowHook."""
+
+    def before_hooked_method(self, param):
+        _MENU.on = True
+
+    def after_hooked_method(self, param):
+        _MENU.on = False
+
+
+class ItemsShowHook(MethodHook):
+    """ItemOptions.show while the player menu is built: add Mornye's items at the end."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        if not getattr(_MENU, "on", False):
+            return
+        _MENU.on = False
+        try:
+            opts = param.thisObject
+            opts.addGap()
+            for icon, text, route in NATIVE_MENU:
+                opts.add(getattr(R.drawable, icon, 0) or 0, text, _OpenRoute(self.plugin, route))
+        except Exception as e:
+            log("[Mornye] player menu: %s" % e)
 
 
 # ---------------------------------------------------------------------------

@@ -596,7 +596,7 @@ const ctl = (op, v) => api("control", op, v).then(() => api("state")).then(s => 
 $("#mPlay").onclick = e => { e.stopPropagation(); S.playing = !S.playing; paint(); ctl("toggle"); };
 $("#mNext").onclick = e => { e.stopPropagation(); ctl("next"); };
 $("#mNext").innerHTML = svg("next");
-$("#mini").onclick = openPlayer;
+$("#mini").onclick = () => S.native ? api("native_player").catch(openPlayer) : openPlayer();
 $("#pPlay").onclick = () => { S.playing = !S.playing; paint(); ctl("toggle"); };
 $("#pNext").onclick = () => ctl("next");
 $("#pPrev").onclick = () => ctl("prev");
@@ -1443,6 +1443,22 @@ async function openDlSettings() {
 /* ---------------- boot ---------------- */
 fillIcons();
 go("home");
+/* Routes from the Telegram player menu: #sound, #sleep, #lyrics, #tags, #list, #queues */
+window.mornyeRoute = async function (route) {
+  route = String(route || "").replace(/^#/, "");
+  if (!route) return;
+  if (route === "queues") return go("queues");
+  if (route === "sound") return openSound();
+  if (route === "sleep") return openSleep();
+  try { S = await api("state"); sAt = performance.now(); paint(); } catch (e) {}
+  const path = S.track && S.track.path;
+  if (route === "lyrics") { openPlayer(); if (!$("#player").classList.contains("lyr")) $("#bLyr").onclick(); return; }
+  if (!path) return toast("Трек не в библиотеке", 1);
+  if (route === "tags") return editTags(path);
+  if (route === "list") return pickList([path]);
+};
+if (location.hash) setTimeout(() => window.mornyeRoute(location.hash), 300);
+
 poll();
 requestAnimationFrame(frame);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && tab === "downloads") drawDownloads(); });

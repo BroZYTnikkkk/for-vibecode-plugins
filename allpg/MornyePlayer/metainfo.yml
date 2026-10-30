@@ -2,7 +2,7 @@ id: mornye_player
 name: Mornye Player
 description: "Улучшает встроенный музыкальный плеер: кроссфейд, AutoMix с подстройкой по битам, эквалайзер, нормализация громкости, локальная библиотека, поиск и скачивание музыки через расширения Mornye, тексты песен, таймер сна и статистика. Свой полноэкранный плеер.\n\nОсновано на [Mornye](https://github.com/mornyeapp/Mornye) от zarzet (LGPL-3.0)."
 author: "@BroZYTnikkkk, Mornye by zarzet"
-version: "2.2.1"
+version: "2.3.0"
 app_version: ">=12.5.1"
 sdk_version: ">=1.4.5.3"
 requirements: mutagen

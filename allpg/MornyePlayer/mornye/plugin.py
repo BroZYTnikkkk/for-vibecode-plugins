@@ -31,6 +31,8 @@ from .automix import java_class
 from .audio import (
     Engine,
     FocusHook,
+    ItemsShowHook,
+    PlayerMenuHook,
     PauseHook,
     PlayMessageHook,
     PlayerAlertHook,
@@ -106,6 +108,7 @@ SETTING_KEYS = (
     "ct_strength",
     "ct_reset_on_pause",
     "audio_focus",
+    "native_player",
     "backup_dest",
     "backup_chat",
     "backup_interval",
@@ -128,6 +131,7 @@ class MornyePlayerPlugin(BasePlugin):
         self._downloads = None
         self._app = None
         self._app_dialog = None
+        self._app_view = None
         self._grant_hooked = False
         self._install_hooks()
         self.add_menu_item(MenuItemData(
@@ -197,12 +201,15 @@ class MornyePlayerPlugin(BasePlugin):
             title = item.get("title") or os.path.basename(path)
             run_on_ui_thread(lambda: BulletinHelper.show_success("Mornye: скачано «%s»" % title))
 
-    def open_app(self):
+    def open_app(self, route=""):
         act = self.ui.activity()
         if act is None:
             BulletinHelper.show_error("Mornye: нет активного экрана")
             return
         if self._app_dialog is not None:
+            view = self._app_view
+            if route and view is not None:
+                view.evaluateJavascript("window.mornyeRoute && window.mornyeRoute(%s)" % json.dumps(route), None)
             return
         if self._app is None:
             self._app = AppServer(self)
@@ -215,12 +222,30 @@ class MornyePlayerPlugin(BasePlugin):
 
         def closed():
             self._app_dialog = None
+            self._app_view = None
 
         try:
-            self._app_dialog, _ = fullscreen_webview(act, self._app.url(), on_back, closed)
+            url = self._app.url() + ("#" + route if route else "")
+            self._app_dialog, self._app_view = fullscreen_webview(act, url, on_back, closed)
         except Exception as e:
             log("[Mornye] app window: %s" % e)
             BulletinHelper.show_error("Mornye: не удалось открыть плеер: %s" % e)
+
+    def open_native_player(self):
+        """Telegram's own player (styled by Material Player) is the main player screen."""
+        dialog = self._app_dialog
+        if dialog is not None:
+            dialog.dismiss()
+        try:
+            from org.telegram.ui import LaunchActivity
+            from org.telegram.ui.Components import AudioPlayerAlert
+            fragment = LaunchActivity.getLastFragment()
+            if fragment is None:
+                return
+            fragment.showDialog(AudioPlayerAlert(fragment.getParentActivity(), fragment.getResourceProvider()))
+        except Exception as e:
+            log("[Mornye] native player: %s" % e)
+            BulletinHelper.show_error("Mornye: не удалось открыть плеер Telegram")
 
     def verify_extension(self, ext):
         def work():
@@ -307,6 +332,12 @@ class MornyePlayerPlugin(BasePlugin):
             alert_cls = java_class("org.telegram.ui.Components.AudioPlayerAlert")
             if alert_cls is not None:
                 self.hook_all_constructors(alert_cls, PlayerAlertHook(self))
+                try:
+                    self.hook_method(alert_cls.getDeclaredMethod("showMenuOptions", java_class("android.view.View")), PlayerMenuHook())
+                    opts_cls = java_class("org.telegram.ui.Components.ItemOptions")
+                    self.hook_method(opts_cls.getDeclaredMethod("show"), ItemsShowHook(self))
+                except Exception as e:
+                    log("[Mornye] player menu hook: %s" % e)
         except Exception as e:
             log("[Mornye] player alert hook: %s" % e)
 
@@ -414,6 +445,8 @@ class MornyePlayerPlugin(BasePlugin):
                          "На устройстве копии лежат в Download/Mornye/backups (хранятся последние 5). Чтобы восстановить копию из чата, "
                          "скачайте файл и выберите «Mornye: в библиотеку» в его меню."),
             Header(text="Mornye"),
+            Switch(key="native_player", text="Плеер Telegram как основной", default=True, icon="player",
+                   subtext="Мини-плеер в Mornye открывает плеер Telegram; в его меню «⋮» есть пункты Mornye"),
             Text(text="Открыть плеер Mornye", icon="msg_played", accent=True, on_click=lambda v: self.open_app()),
             Text(text="Меню Mornye (классическое)", icon="msg_list", on_click=lambda v: self.ui.open_main()),
             Text(text="Пересканировать библиотеку", icon="msg_retry", on_click=lambda v: self.library.scan(
