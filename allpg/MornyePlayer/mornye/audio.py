@@ -409,10 +409,12 @@ class ItemsShowHook(MethodHook):
             return
         _MENU.on = False
         try:
+            from org.telegram.messenger import R as TgR
+            items = [(getattr(TgR.drawable, icon, 0) or 0, text, _OpenRoute(self.plugin, route)) for icon, text, route in NATIVE_MENU]
             opts = param.thisObject
             opts.addGap()
-            for icon, text, route in NATIVE_MENU:
-                opts.add(getattr(R.drawable, icon, 0) or 0, text, _OpenRoute(self.plugin, route))
+            for res, text, action in items:
+                opts.add(res, text, action)
         except Exception as e:
             log("[Mornye] player menu: %s" % e)
 
