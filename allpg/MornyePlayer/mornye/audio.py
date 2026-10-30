@@ -308,6 +308,30 @@ class PauseHook(MethodHook):
             log("[Mornye] pause fade: %s" % e)
 
 
+class FocusHook(MethodHook):
+    """MediaController.onAudioFocusChange: soften what another app's sound does to the music.
+    1: a short loss ducks instead of pausing. 2: any loss only ducks. 3: losses are ignored.
+    Phone calls are handled by Telegram separately and still pause."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            mode = int(self.plugin.get_setting("audio_focus", 0) or 0)
+            change = int(param.args[0])
+            if mode == 0 or change >= 0:
+                return
+            if mode == 3:
+                param.setResult(None)
+            elif change == -2 or (mode == 2 and change == -1):
+                from java.lang import Integer
+                param.args[0] = Integer(-3)
+            log("[Mornye] audio focus %d, mode %d" % (change, mode))
+        except Exception as e:
+            log("[Mornye] focus hook: %s" % e)
+
+
 class PlayerAlertHook(MethodHook):
     def __init__(self, plugin):
         self.plugin = plugin
@@ -525,7 +549,7 @@ class Engine:
         player = player if player is not None else self.main_player()
         try:
             if player is not None:
-                player.setVolume(1.0)
+                player.setVolume(self.focus_level())
                 return
         except Exception:
             pass
@@ -533,6 +557,19 @@ class Engine:
             self.mc().setPlayerVolume()
         except Exception:
             pass
+
+    def focus_level(self):
+        """Telegram's own level: silent, ducked by audio focus, or full."""
+        try:
+            mc = self.mc()
+            if get_private_field(mc, "isSilent"):
+                return 0.0
+            if int(get_private_field(mc, "audioFocus") or 0) == 1:
+                duck = get_private_field(mc, "VOLUME_DUCK")
+                return float(duck) if duck is not None else 0.2
+        except Exception:
+            pass
+        return 1.0
 
     def pause_seconds(self):
         """Pause/resume fade length in seconds, typed by the user (0 turns it off)."""

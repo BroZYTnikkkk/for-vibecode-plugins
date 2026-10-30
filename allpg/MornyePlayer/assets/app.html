@@ -738,6 +738,7 @@ async function openSound() {
       ${selRow("Длительность перехода", "mix_duration", st.mix_labels, st.mix_duration)}
       ${selRow("Эффект AutoMix", "automix_effect", st.effect_labels, st.automix_effect)}
       ${selRow("Плавное переключение вручную", "skip_fade", st.skip_fade_labels, st.skip_fade)}
+      ${st.audio_focus_labels ? selRow("Фокус звука", "audio_focus", st.audio_focus_labels, st.audio_focus) : ""}
       <div class="row" id="pfRow"><div class="meta"><div class="t">Затухание при паузе и старте</div><div class="s">0 выключает, до 5 секунд</div></div><div class="v" id="pfV">${esc(String(st.pause_fade_s).replace(".", ","))} с</div></div>
       <div class="row" data-k="autoplay"><div class="meta"><div class="t">Автоплей</div><div class="s">Подбирает похожее, когда очередь кончилась</div></div><div class="switch ${st.autoplay ? "on" : ""}"></div></div>
     </div>`;

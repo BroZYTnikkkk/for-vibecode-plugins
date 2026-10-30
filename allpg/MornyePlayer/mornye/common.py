@@ -135,3 +135,5 @@ def _fmt_time(seconds):
 
 def _norm_key(text):
     return re.sub(r"[^\w]+", " ", (text or "").lower()).strip()
+
+FOCUS_LABELS = ["Как в Telegram", "Приглушать вместо паузы", "Музыка в приоритете", "Не уступать звук"]

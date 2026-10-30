@@ -14,12 +14,13 @@ from ui.settings import Divider, Header, Input, Selector, Switch, Text
 from android.os import Handler, Looper
 from android_utils import R, run_on_ui_thread
 from .logs import log
-from java.lang import Boolean as JBoolean, Float as JFloat
+from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 from .common import (
     EFFECT_AUTO,
     EFFECT_LABELS,
     EQ_CENTERS,
     EQ_PRESET_LABELS,
+    FOCUS_LABELS,
     MIX_CROSSFADE,
     MIX_DURATION_LABELS,
     PREAMP_LABELS,
@@ -29,6 +30,7 @@ from .common import (
 from .automix import java_class
 from .audio import (
     Engine,
+    FocusHook,
     PauseHook,
     PlayMessageHook,
     PlayerAlertHook,
@@ -41,6 +43,7 @@ from .ext_runtime import CallContext
 from .ext_manager import ExtensionManager
 from .downloads import DownloadQueue
 from .app import AppServer
+from .backup import DEST_LABELS, INTERVAL_LABELS, Backups, is_backup
 from .modules import (
     AUTHOR_URL,
     COVER_TINTS,
@@ -58,6 +61,54 @@ from .glue import (
     _ValueCallback,
     _Verification,
     fullscreen_webview,
+)
+
+
+SETTING_KEYS = (
+    "mix_mode",
+    "mix_duration",
+    "automix_effect",
+    "automix_pitch",
+    "pause_fade_s",
+    "skip_fade",
+    "normalize",
+    "rg_preamp",
+    "rg_album",
+    "eq_enabled",
+    "eq_preset",
+    "eq_bass",
+    "eq_treble",
+    "eq_custom",
+    "bass_boost",
+    "virtualizer",
+    "loudness_boost",
+    "skip_silence",
+    "use_mediastore",
+    "folders",
+    "download_dir",
+    "scan_on_start",
+    "autoplay",
+    "mod_md3",
+    "md3_dialogs",
+    "md3_context_bar",
+    "md3_color",
+    "md3_wavy",
+    "md3_dot",
+    "md3_anim",
+    "mod_resume",
+    "pr_minimize",
+    "pr_position",
+    "pr_shape",
+    "pr_restore_paused",
+    "pr_startup",
+    "pr_protect",
+    "mod_cover",
+    "ct_strength",
+    "ct_reset_on_pause",
+    "audio_focus",
+    "backup_dest",
+    "backup_chat",
+    "backup_interval",
 )
 
 
@@ -99,16 +150,19 @@ class MornyePlayerPlugin(BasePlugin):
             self.modules.start()
         except Exception as e:
             log("[Mornye] modules: %s" % e)
+        self.backups = Backups(self, SETTING_KEYS)
+        self.backups.start()
 
     def on_plugin_unload(self):
         try:
             self.engine.stop()
         except Exception:
             pass
-        try:
-            self.modules.stop()
-        except Exception:
-            pass
+        for part in ("modules", "backups"):
+            try:
+                getattr(self, part).stop()
+            except Exception:
+                pass
         dialog = self._app_dialog
         if dialog is not None:
             run_on_ui_thread(lambda: dialog.dismiss())
@@ -240,6 +294,10 @@ class MornyePlayerPlugin(BasePlugin):
             self.hook_method(mc_cls.getDeclaredMethod("pauseMessage", mo_cls), PauseHook(self))
         except Exception as e:
             log("[Mornye] pauseMessage hook: %s" % e)
+        try:
+            self.hook_method(mc_cls.getDeclaredMethod("onAudioFocusChange", JInteger.TYPE), FocusHook(self))
+        except Exception as e:
+            log("[Mornye] audio focus hook: %s" % e)
         for name, previous in (("playNextMessage", False), ("playPreviousMessage", True)):
             try:
                 self.hook_method(mc_cls.getDeclaredMethod(name), SkipHook(self, previous))
@@ -264,12 +322,51 @@ class MornyePlayerPlugin(BasePlugin):
     def _on_message_save(self, context):
         msg = context.get("message")
         doc = msg.getDocument() if msg is not None else None
+        if doc is not None and is_backup(msg.getDocumentName()):
+            self._restore_message(msg)
+            return
         is_audio = doc is not None and not msg.isVoice() and (
             msg.isMusic() or str(doc.mime_type or "").startswith("audio/"))
         if not is_audio:
             BulletinHelper.show_info("Mornye: это не аудиофайл")
             return
         self.library.save_message(msg)
+
+    def _restore_message(self, msg):
+        from org.telegram.messenger import FileLoader
+        f = FileLoader.getInstance(msg.currentAccount).getPathToMessage(msg.messageOwner)
+        if f is None or not f.exists():
+            BulletinHelper.show_info("Mornye: сначала скачайте файл копии")
+            return
+        self._restore(str(f.getAbsolutePath()))
+
+    def _restore(self, path):
+        def work():
+            try:
+                self.backups.restore(path)
+                run_on_ui_thread(lambda: BulletinHelper.show_success("Копия восстановлена. Перезапустите Telegram"))
+            except Exception as e:
+                err = str(e)
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Mornye: " + err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def backup_now(self):
+        def work():
+            try:
+                text = self.backups.make()
+                run_on_ui_thread(lambda: BulletinHelper.show_success(text))
+            except Exception as e:
+                err = str(e)
+                log("[Mornye] backup failed: %s" % err)
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Mornye: копия не сохранена: " + err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def restore_latest(self):
+        path = self.backups.latest_on_device()
+        if path is None:
+            BulletinHelper.show_info("Mornye: на устройстве копий нет")
+            return
+        self._restore(path)
 
     def _fx_changed(self, *_):
         run_on_ui_thread(lambda: self.engine.reapply_fx())
@@ -283,6 +380,7 @@ class MornyePlayerPlugin(BasePlugin):
             Selector(key="automix_pitch", text="Сдвиг тона для эффекта", default=2,
                      items=["-6", "-5", "-4", "-3", "-2", "-1", "0", "+1", "+2", "+3", "+4", "+5", "+6"]),
             Input(key="pause_fade_s", text="Затухание при паузе и старте, сек", default="0.4", subtext="0 выключает, до 5 с", icon="msg_round_pause"),
+            Selector(key="audio_focus", text="Фокус звука", default=0, items=FOCUS_LABELS, icon="msg_volume"),
             Selector(key="skip_fade", text="Плавное переключение вручную", default=0, items=SKIP_FADE_LABELS, icon="msg_forward"),
             Divider(text="AutoMix ищет биты в концовке и начале треков, подгоняет темп и сводит их на сильную долю. Работает для скачанных и локальных треков; иначе обычный кроссфейд."),
             Header(text="Звук"),
@@ -305,6 +403,16 @@ class MornyePlayerPlugin(BasePlugin):
             Switch(key="scan_on_start", text="Сканировать при запуске", default=True),
             Switch(key="autoplay", text="Автоплей из библиотеки", default=True, subtext="Когда очередь закончилась, подбирает похожие треки"),
             *self._module_settings(),
+            Header(text="Резервные копии"),
+            Selector(key="backup_dest", text="Куда сохранять", default=0, items=DEST_LABELS, icon="msg_download"),
+            Input(key="backup_chat", text="Чат или канал", default="", icon="msg_channel",
+                  subtext="@username или ID; пусто: Избранное"),
+            Selector(key="backup_interval", text="Автоматически", default=2, items=INTERVAL_LABELS, icon="msg_autodelete"),
+            Text(text="Сделать копию сейчас", icon="msg_saved", on_click=lambda v: self.backup_now()),
+            Text(text="Восстановить последнюю с устройства", icon="msg_retry", on_click=lambda v: self.restore_latest()),
+            Divider(text="В копию входят настройки, очереди и плейлисты, избранное, история, статистика и расширения. Музыка в копию не входит. "
+                         "На устройстве копии лежат в Download/Mornye/backups (хранятся последние 5). Чтобы восстановить копию из чата, "
+                         "скачайте файл и выберите «Mornye: в библиотеку» в его меню."),
             Header(text="Mornye"),
             Text(text="Открыть плеер Mornye", icon="msg_played", accent=True, on_click=lambda v: self.open_app()),
             Text(text="Меню Mornye (классическое)", icon="msg_list", on_click=lambda v: self.ui.open_main()),

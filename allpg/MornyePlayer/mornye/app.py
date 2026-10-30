@@ -32,6 +32,7 @@ from .common import (
     MIX_CROSSFADE,
     MIX_DURATION_LABELS,
     SKIP_FADE_LABELS,
+    FOCUS_LABELS,
     STRENGTH_LABELS,
     USER_AGENT,
     _selected_account,
@@ -786,7 +787,7 @@ class AppApi:
 
     def a_settings(self):
         p = self.plugin
-        keys = {"mix_mode": MIX_CROSSFADE, "mix_duration": 0, "automix_effect": EFFECT_AUTO, "skip_fade": 0, "pause_fade_s": "0.4",
+        keys = {"mix_mode": MIX_CROSSFADE, "mix_duration": 0, "automix_effect": EFFECT_AUTO, "skip_fade": 0, "audio_focus": 0, "pause_fade_s": "0.4",
                 "normalize": True, "eq_enabled": False, "eq_preset": 0, "bass_boost": 0, "virtualizer": 0,
                 "loudness_boost": 0, "skip_silence": False, "autoplay": True}
         out = {k: p.get_setting(k, d) for k, d in keys.items()}
@@ -797,10 +798,11 @@ class AppApi:
         out["effect_labels"] = EFFECT_LABELS
         out["strength_labels"] = STRENGTH_LABELS
         out["skip_fade_labels"] = SKIP_FADE_LABELS
+        out["audio_focus_labels"] = FOCUS_LABELS
         return out
 
     def a_set_setting(self, key, value):
-        allowed = {"mix_mode", "mix_duration", "automix_effect", "skip_fade", "pause_fade_s", "normalize", "eq_enabled", "eq_preset",
+        allowed = {"mix_mode", "mix_duration", "automix_effect", "skip_fade", "audio_focus", "pause_fade_s", "normalize", "eq_enabled", "eq_preset",
                    "bass_boost", "virtualizer", "loudness_boost", "skip_silence", "autoplay", "eq_custom"}
         if key not in allowed:
             raise ExtError("setting not allowed")
