@@ -41,6 +41,17 @@ from .ext_runtime import CallContext
 from .ext_manager import ExtensionManager
 from .downloads import DownloadQueue
 from .app import AppServer
+from .modules import (
+    AUTHOR_URL,
+    COVER_TINTS,
+    MD3_ANIMS,
+    MD3_COLORS,
+    RESUME_POSITIONS,
+    RESUME_SHAPES,
+    RESUME_STARTUP,
+    SOURCE_URL,
+    Modules,
+)
 from .glue import (
     _GrantUrlHook,
     _VERIFY,
@@ -83,10 +94,19 @@ class MornyePlayerPlugin(BasePlugin):
         if self.get_setting("scan_on_start", True):
             self.library.scan()
         self.engine.on_track_started()
+        self.modules = Modules(self)
+        try:
+            self.modules.start()
+        except Exception as e:
+            log("[Mornye] modules: %s" % e)
 
     def on_plugin_unload(self):
         try:
             self.engine.stop()
+        except Exception:
+            pass
+        try:
+            self.modules.stop()
         except Exception:
             pass
         dialog = self._app_dialog
@@ -284,6 +304,8 @@ class MornyePlayerPlugin(BasePlugin):
             Input(key="download_dir", text="Папка для скачивания", default="", subtext="По умолчанию Music/Mornye", icon="msg_download"),
             Switch(key="scan_on_start", text="Сканировать при запуске", default=True),
             Switch(key="autoplay", text="Автоплей из библиотеки", default=True, subtext="Когда очередь закончилась, подбирает похожие треки"),
+            *self._module_settings(),
+            Header(text="Mornye"),
             Text(text="Открыть плеер Mornye", icon="msg_played", accent=True, on_click=lambda v: self.open_app()),
             Text(text="Меню Mornye (классическое)", icon="msg_list", on_click=lambda v: self.ui.open_main()),
             Text(text="Пересканировать библиотеку", icon="msg_retry", on_click=lambda v: self.library.scan(
@@ -294,6 +316,72 @@ class MornyePlayerPlugin(BasePlugin):
                  on_click=lambda v: self._open_url("https://github.com/mornyeapp/Mornye")),
             Divider(text="Плагин переносит идеи и алгоритмы Mornye (AutoMix, эквалайзер, нормализация, расширения и планировщик загрузок) в exteraGram и распространяется под LGPL-3.0. Расширения написаны их авторами, лицензии лежат в их пакетах."),
         ]
+
+    def _module_settings(self):
+        mods = self.modules
+        push = {key: (lambda key: lambda *_: mods.push(key))(key) for key in ("md3", "resume", "cover")}
+        on = {key: mods[key].wanted() for key in ("md3", "resume", "cover")}
+
+        def toggle(key):
+            return lambda value: mods.toggle(key, value)
+
+        def note(key):
+            return "Включён отдельный плагин, встроенный не запускается" if mods[key].blocked else None
+
+        items = [
+            Header(text="Плеер Telegram"),
+            Switch(key="mod_md3", text="Material Player", default=True, icon="player", on_change=toggle("md3"),
+                   subtext=note("md3") or "Плеер и мини-плеер в стиле Material Expressive"),
+        ]
+        if on["md3"]:
+            items += [
+                Switch(key="md3_dialogs", text="Мини-плеер на главной", default=True, on_change=push["md3"],
+                       subtext="Перетаскиваемый плеер в списке чатов"),
+                Switch(key="md3_context_bar", text="Панель в чате", default=True, on_change=push["md3"],
+                       subtext="Компактный плеер сверху в переписке"),
+                Selector(key="md3_color", text="Цвета", default=0, items=MD3_COLORS, on_change=push["md3"], icon="msg_palette"),
+                Switch(key="md3_wavy", text="Волнистый прогресс", default=True, on_change=push["md3"]),
+                Switch(key="md3_dot", text="Точка на конце прогресса", default=True, on_change=push["md3"]),
+                Selector(key="md3_anim", text="Анимация", default=0, items=MD3_ANIMS, on_change=push["md3"], icon="msg_customize"),
+            ]
+        items.append(Switch(key="mod_resume", text="Player Resume", default=True, icon="msg_calls_minimize",
+                            on_change=toggle("resume"),
+                            subtext=note("resume") or "Сворачивает плеер в кнопку и возвращает его после перезапуска"))
+        if on["resume"]:
+            items += [
+                Switch(key="pr_minimize", text="Сворачивать в кнопку", default=True, on_change=push["resume"],
+                       subtext="Прятать плеер у FAB при закрытии"),
+                Selector(key="pr_position", text="Положение кнопки", default=0, items=RESUME_POSITIONS, on_change=push["resume"]),
+                Selector(key="pr_shape", text="Форма кнопки", default=0, items=RESUME_SHAPES, on_change=push["resume"]),
+                Switch(key="pr_restore_paused", text="Возвращать на паузе", default=True, on_change=push["resume"],
+                       subtext="Не запускать звук автоматически"),
+                Selector(key="pr_startup", text="При запуске", default=0, items=RESUME_STARTUP, on_change=push["resume"]),
+                Switch(key="pr_protect", text="Защита плейлиста", default=False, on_change=push["resume"],
+                       subtext="Возвращать прошлый плейлист после короткого прослушивания"),
+            ]
+        items.append(Switch(key="mod_cover", text="Cover Theme", default=False, icon="msg_palette",
+                            on_change=toggle("cover"),
+                            subtext=note("cover") or "Красит тему в цвета обложки играющего трека"))
+        if on["cover"]:
+            items += [
+                Selector(key="ct_strength", text="Оттенок", default=0, items=COVER_TINTS, on_change=push["cover"]),
+                Switch(key="ct_reset_on_pause", text="Сброс на паузе", default=False, on_change=push["cover"],
+                       subtext="Обычные цвета, пока трек на паузе"),
+            ]
+        items += [
+            Text(text="Модули от @RnPlugins", icon="msg_openprofile", on_click=lambda v: self._rooni_author()),
+            Text(text="Исходный код модулей", icon="msg_link", on_click=lambda v: self._open_url(SOURCE_URL)),
+            Divider(text="Material Player, Player Resume и Cover Theme написаны @RnPlugins (YouRooni) и встроены без изменений. "
+                         "Если у вас стоят их отдельные плагины, встроенные копии не запускаются, чтобы не было двойных хуков. "
+                         "Изменения применяются сразу, переключение модуля может потребовать перезапуска."),
+        ]
+        return items
+
+    def _rooni_author(self):
+        for key in ("md3", "resume", "cover"):
+            if self.modules[key].show_author():
+                return
+        self._open_url(AUTHOR_URL)
 
     def _open_url(self, url):
         try:
