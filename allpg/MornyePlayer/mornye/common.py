@@ -136,4 +136,6 @@ def _fmt_time(seconds):
 def _norm_key(text):
     return re.sub(r"[^\w]+", " ", (text or "").lower()).strip()
 
-FOCUS_LABELS = ["Как в Telegram", "Приглушать вместо паузы", "Музыка в приоритете", "Не уступать звук"]
+# Levels like Musicolet's, strongest first; index 0 keeps Telegram's own behaviour.
+FOCUS_LABELS = ["Уровень 4: как в Telegram", "Уровень 3: приглушать на коротких звуках",
+                "Уровень 2: пауза только на долгих", "Уровень 1: только звонки"]

@@ -310,9 +310,11 @@ class PauseHook(MethodHook):
 
 
 class FocusHook(MethodHook):
-    """MediaController.onAudioFocusChange: soften what another app's sound does to the music.
-    1: a short loss ducks instead of pausing. 2: any loss only ducks. 3: losses are ignored.
-    Phone calls are handled by Telegram separately and still pause."""
+    """MediaController.onAudioFocusChange, by level (setting index):
+    0 (level 4): Telegram as is: long and short losses pause, "may duck" ducks.
+    1 (level 3): a short loss ducks instead of pausing.
+    2 (level 2): only a long loss (another player started) pauses; short sounds are ignored.
+    3 (level 1): every loss is ignored. Phone calls are handled by Telegram separately and still pause."""
 
     def __init__(self, plugin):
         self.plugin = plugin
@@ -323,12 +325,12 @@ class FocusHook(MethodHook):
             change = int(param.args[0])
             if mode == 0 or change >= 0:
                 return
-            if mode == 3:
+            if mode == 3 or (mode == 2 and change in (-2, -3)):
                 param.setResult(None)
-            elif change == -2 or (mode == 2 and change == -1):
+            elif mode == 1 and change == -2:
                 from java.lang import Integer
                 param.args[0] = Integer(-3)
-            log("[Mornye] audio focus %d, mode %d" % (change, mode))
+            log("[Mornye] audio focus %d, level %d" % (change, 4 - mode))
         except Exception as e:
             log("[Mornye] focus hook: %s" % e)
 
