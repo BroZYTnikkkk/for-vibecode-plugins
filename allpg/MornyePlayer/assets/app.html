@@ -981,7 +981,8 @@ function drawLib() {
   page.onscroll = () => { if (shown < tr.length && page.scrollTop + page.clientHeight > page.scrollHeight - 600) more(); };
 }
 function playPaths(tracks, index, shuffle, theme) {
-  const lo = Math.max(0, index - 200), sl = tracks.slice(lo, lo + 500);
+  // A theme queue keeps the whole list; the player itself only loads a window around the track.
+  const lo = theme ? 0 : Math.max(0, index - 200), sl = theme ? tracks.slice(0, 2000) : tracks.slice(lo, lo + 500);
   api("play_paths", sl.map(t => t.path), index - lo, !!shuffle, theme || null).then(() => setTimeout(() => api("state").then(s => { S = s; sAt = performance.now(); paint(); }), 300)).catch(e => toast(e.message, 1));
 }
 async function openGroup(f, name, items) {
