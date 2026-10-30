@@ -385,6 +385,19 @@ class PlayerMenuHook(MethodHook):
         _MENU.on = False
 
 
+def _from_player_menu():
+    """Material Player builds its own ⋮ menu: recognize it by who is calling ItemOptions.show."""
+    try:
+        from java.lang import Thread
+        for frame in Thread.currentThread().getStackTrace()[:14]:
+            name = str(frame.getClassName())
+            if name.startswith("dev.rooni.player.") or name.startswith("org.telegram.ui.Components.AudioPlayerAlert"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 class ItemsShowHook(MethodHook):
     """ItemOptions.show while the player menu is built: add Mornye's items at the end."""
 
@@ -392,7 +405,7 @@ class ItemsShowHook(MethodHook):
         self.plugin = plugin
 
     def before_hooked_method(self, param):
-        if not getattr(_MENU, "on", False):
+        if not getattr(_MENU, "on", False) and not _from_player_menu():
             return
         _MENU.on = False
         try:
