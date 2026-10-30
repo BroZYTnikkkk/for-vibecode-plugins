@@ -389,7 +389,7 @@ def _from_player_menu():
     """Material Player builds its own ⋮ menu: recognize it by who is calling ItemOptions.show."""
     try:
         from java.lang import Thread
-        for frame in Thread.currentThread().getStackTrace()[:14]:
+        for frame in Thread.currentThread().getStackTrace()[:40]:
             name = str(frame.getClassName())
             if name.startswith("dev.rooni.player.") or name.startswith("org.telegram.ui.Components.AudioPlayerAlert"):
                 return True
