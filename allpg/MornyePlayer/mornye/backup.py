@@ -127,9 +127,9 @@ class Backups:
         from org.telegram.messenger import AccountInstance
         account, dialog_id = chat
         acc = AccountInstance.getInstance(account)
-        from java.lang import Class
+        from .automix import java_class
         method = None
-        for m in Class.forName("org.telegram.messenger.SendMessagesHelper").getMethods():
+        for m in java_class("org.telegram.messenger.SendMessagesHelper").getMethods():
             if m.getName() == "prepareSendingDocument" and (method is None or len(m.getParameterTypes()) > len(method.getParameterTypes())):
                 method = m
         strings = [path, path, caption, "application/zip"]

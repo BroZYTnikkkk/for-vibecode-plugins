@@ -275,6 +275,13 @@ class AppApi:
         title, artist = message_meta(msg)
         path = message_file_path(msg)
         known = self.lib.tracks_by_path().get(path) if path else None
+        if known is None:
+            # streamed from a chat or a profile list: match the library by title and artist
+            key = (title.strip().lower(), artist.strip().lower())
+            known = next((t for t in self.lib.tracks if ((t.get("title") or "").strip().lower(),
+                                                         (t.get("artist") or "").strip().lower()) == key), None)
+            if known is not None and not path:
+                path = known.get("path") or ""
         album = known.get("album") or "" if known else ""
         return {"title": title, "artist": artist, "album": album, "path": path or "", "id": msg.getId(),
                 "duration": int(msg.getDuration() or 0), "fav": bool(path) and path in self.lib.favorites}
