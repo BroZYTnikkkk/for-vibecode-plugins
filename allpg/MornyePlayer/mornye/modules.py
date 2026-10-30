@@ -98,6 +98,10 @@ class Module:
         return None
 
     def start(self):
+        from android_utils import run_on_ui_thread
+        run_on_ui_thread(self._start)
+
+    def _start(self):
         if self.cls is not None or not self.wanted():
             return
         self.blocked = standalone_active(self.plugin_id)
@@ -123,6 +127,10 @@ class Module:
             self.loader = None
 
     def stop(self):
+        from android_utils import run_on_ui_thread
+        run_on_ui_thread(self._stop)
+
+    def _stop(self):
         if self.cls is None:
             return
         try:
@@ -178,8 +186,9 @@ class Module:
                     .putString("color_source", color).putBoolean("online_lyrics", True).putBoolean("wavy_seekbar", wavy) \
                     .putBoolean("seekbar_dot", dot).putInt("anim_style", anim).apply()
                 if self.cls is not None:
-                    setters = {"setAnimStyle": anim, "setSeekBarDot": dot, "setWavySeekBar": wavy, "setColorSource": color,
-                               "setMiniPlayerDialogs": mini, "setContextBar": bar}
+                    from java.lang import Boolean, Integer, String
+                    setters = {"setAnimStyle": Integer(anim), "setSeekBarDot": Boolean(dot), "setWavySeekBar": Boolean(wavy),
+                               "setColorSource": String(color), "setMiniPlayerDialogs": Boolean(mini), "setContextBar": Boolean(bar)}
                     for m in self.cls.getMethods():
                         if m.getName() in setters and len(m.getParameterTypes()) == 1:
                             try:
