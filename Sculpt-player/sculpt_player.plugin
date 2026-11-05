@@ -1,0 +1,3277 @@
+__id__ = "sculpt_player"
+__name__ = "Sculpt Player"
+__description__ = "Перекраивает родной M3E-плеер exteraGram: большая обложка, визуализатор под цвет обложки, текст по центру, ряд кнопок под ним, прогресс в одну строку. Вкладка «Медиатека» читает песни с телефона: все песни, любимые, недавние, авторы, альбомы и жанры."
+__author__ = "@BroZYTnikkkk"
+__version__ = "0.9.0"
+__icon__ = "MeruTheSuccubus7/44"
+__app_version__ = ">=13.1.1"
+__sdk_version__ = ">=1.4.3.3"
+
+import array
+import collections
+import colorsys
+import hashlib
+import json
+import math
+import os
+import re
+import threading
+import time
+import traceback
+
+from base_plugin import BasePlugin, MethodHook
+from android_utils import OnClickListener, copy_to_clipboard, run_on_ui_thread
+from client_utils import run_on_queue
+from file_utils import get_files_dir
+from ui.bulletin import BulletinHelper
+from ui.settings import Divider
+from java import dynamic_proxy, jarray, jbyte, jclass, jfloat, jint
+from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
+
+SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
+LAYOUT = SHEET + "$PlayerLayout"
+COVER = "com.exteragram.messenger.player.ui.PlayerCoverView"
+CONTROLS = "com.exteragram.messenger.player.ui.PlayerControlsView"
+SEGMENT_DRAWABLE = "com.exteragram.messenger.player.ui.ExpressiveStateDrawable"
+COLORS = "com.exteragram.messenger.player.PlayerColors"
+CONFIG = "com.exteragram.messenger.ExteraConfig"
+SETTINGS_SHEET = "com.exteragram.messenger.player.ui.PlayerSettingsSheet"
+RHYTHM_TAP = "com.exteragram.messenger.player.rhythm.RhythmTap"
+RHYTHM_ANALYZER = "com.exteragram.messenger.player.rhythm.RhythmAnalyzer"
+
+RADIUS_LABELS = ["Нет", "8 dp", "16 dp", "28 dp"]
+RADIUS_VALUES = [0.0, 8.0, 16.0, 28.0]
+
+MARGIN = 24.0  # side gutters of the whole player
+BUTTON = 40.0  # every button in the icon row and beside the transport
+STEP = 48.0  # distance between buttons of the icon row, narrower when 7 of them do not fit
+TIME_WIDTH = 48.0  # time labels beside the seek bar
+TITLE_H = 28.0
+ARTIST_OFFSET = 28.0
+ALBUM_OFFSET = 54.0
+ALBUM_H = 22.0
+TEXT_BLOCK = ALBUM_OFFSET + ALBUM_H
+TRANSPORT_H = 72.0  # PlayerControlsView.getHeightDp()
+SEEK_H = 68.0  # WavySeekBar draws its line 52 dp from the top, the rest is room for the drag bubble
+SEEK_LINE = 52.0
+PANEL_H = 56.0
+# the bottom panel, left to right; ⋮ is the player's own button and takes the last slot
+PANEL_TABS = (
+    ("Очередь", ("player_new_queue",)),
+    ("Плеер", ("tab_music", "msg_filled_data_music", "msg_played")),
+    ("Медиатека", ("msg_folders", "msg2_folder")),
+    ("Плейлисты", ("files_music", "filled_widget_music")),
+    ("Поиск", ("outline_search_1_24", "msg_search")),
+)
+PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
+PANEL_LIBRARY = 2
+HEADER_H = 56.0  # the player's own header, same as PlayerLayout's
+
+ID_VIS_TOP, ID_VIS_BOTTOM, ID_FLAT_SEEK = 9101, 9102, 9103
+ID_VIS_STYLE, ID_VIS_HEIGHT, ID_VIS_DENSITY, ID_VIS_COLORS, ID_COVER_RADIUS = 9104, 9105, 9106, 9107, 9108
+CHECKS = {ID_VIS_TOP: "vis_top", ID_VIS_BOTTOM: "vis_bottom", ID_FLAT_SEEK: "flat_seek"}
+VIS_HEIGHTS = ["Низкий", "Средний", "Высокий"]
+VIS_HEIGHT_DP = [40.0, 64.0, 88.0]
+VIS_DENSITIES = ["Редкие", "Обычные", "Частые"]
+VIS_BARS = [32, 48, 64]
+VIS_COLORS = ["Три слоя", "Плавный", "Один цвет"]
+VIS_MIN_CHROMA = 0.09  # below this a color reads as gray
+VIS_MIN_HUE = 0.07  # hues closer than this (25 degrees) read as one color
+VIS_DARKER = 0.22  # the back layer of a cover with a single color
+VIS_HUE_BINS = 36  # 10 degrees each
+VIS_FAR_BINS = 4  # the second color is at least this far in hue from the first
+VIS_MIN_SHARE = 0.03  # of the whole cover: less than this is a detail, not a color of the cover
+VIS_SAMPLE = 48  # the cover is read at this size
+VIS_GRAY = -8355712  # 0xFF808080, what Score returns for a cover with no color
+VIS_COVER_CHECK = 0.25  # seconds between checks that the cover on screen changed
+VIS_PALE_LIGHT = 0.88  # the front layer goes halfway to this lightness
+# Three bars laid over each other, front first. Each has its own length, so the colors keep walking inside a bar:
+# bands shifted sideways, rise and fall per second, share of the height, wobble depth, its speed and phase per bar.
+VIS_LAYERS = (
+    (0.0, 28.0, 12.0, 0.8, 0.0, 0.0, 0.0),
+    (2.0, 18.0, 6.0, 1.0, 0.35, 2.6, 0.55),
+    (-2.0, 11.0, 4.0, 1.0, 0.35, 3.7, -0.8),
+)
+VIS_CORNER = 0.3  # corner radius as a share of the bar width: more than this turns narrow bars into capsules
+VIS_BUILD_SECONDS = 0.024
+BAR_RADIUS = 3.0  # corners of the square style
+VIS_STYLES = ["Квадратные", "Скруглённые"]
+VIS_WIDTHS = [0.62, 0.55]  # share of a bar's slot
+BANDS = 24  # RhythmAnalyzer.bandLevel
+
+MEDIA_CONTROLLER = "org.telegram.messenger.MediaController"
+MESSAGE_OBJECT = "org.telegram.messenger.MessageObject"
+PLAYER_COVERS = "com.exteragram.messenger.player.PlayerCovers"
+UNKNOWN_ARTIST = "Неизвестный исполнитель"
+# Android names a file with no album tag after its folder: these names say nothing about an album
+GENERIC_FOLDERS = {"music", "download", "downloads", "audio", "telegram", "telegram audio", "0", "bluetooth", "recordings", "mornye"}
+ARTIST_SEP = re.compile(r"\s*(?:,|;|&|\s/\s|\s\+\s|\s(?:feat\.?|ft\.?|featuring|vs\.?|x)\s)\s*", re.I)
+SORT_MODES = (("title", "По названию"), ("artist", "По автору"), ("album", "По альбому"),
+              ("added", "По дате добавления"), ("duration", "По длительности"))
+NO_TRACK_NUMBER = 1 << 30
+COVER_SIZE = 640  # px of a cached cover
+TILE_SIZE = 112  # dp of a cover in a row that scrolls sideways
+TILE_RADIUS = 12
+PREVIEW_MAX = 20  # covers in such a row
+THUMB_AREA = 28  # dp the slider at the list's edge catches a finger in
+THUMB_H = 48
+THUMB_MIN_ROWS = 30  # a shorter list has no need for a slider
+GROUP_COVER_TRIES = 8  # songs of a group looked at for its picture
+HISTORY_MAX = 100
+QUEUE_MAX = 5000
+LISTEN_SECONDS = 30.0
+LISTEN_TICK_MS = 5000
+COLORS_SECONDS = 0.15
+COVERS_DELIVERY_MS = 120
+PERMISSION_REQUEST = 4731
+PERMISSION_POLLS = 240  # half-second looks at whether the answer came
+
+
+def _log(text):
+    try:
+        jclass("android.util.Log").i("SculptPlayer", str(text))
+    except Exception:
+        pass
+
+
+def _show_error(msg, exc):
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    _log(msg + "\n" + trace)
+    try:
+        BulletinHelper.show_with_button(
+            msg,
+            jclass("org.telegram.messenger.R").raw.error,
+            "Copy",
+            on_click=lambda: copy_to_clipboard(trace),
+        )
+    except Exception:
+        pass
+
+
+def _ctx():
+    return jclass("org.telegram.messenger.ApplicationLoader").applicationContext
+
+
+def _java_class(name):
+    return jclass("java.lang.Class").forName(name, True, _ctx().getClassLoader())
+
+
+def _dp(value):
+    return int(jclass("org.telegram.messenger.AndroidUtilities").dp(float(value)))
+
+
+class Fields:
+    """Cached java.lang.reflect.Field access: these hooks run on every layout pass."""
+
+    def __init__(self, name):
+        self.cls = _java_class(name)
+        self.cache = {}
+
+    def field(self, name):
+        f = self.cache.get(name)
+        if f is None:
+            f = self.cls.getDeclaredField(name)
+            f.setAccessible(True)
+            self.cache[name] = f
+        return f
+
+    def get(self, obj, name):
+        return self.field(name).get(obj)
+
+    def int(self, obj, name):
+        return self.field(name).getInt(obj)
+
+    def float(self, obj, name):
+        return self.field(name).getFloat(obj)
+
+    def bool(self, obj, name):
+        return self.field(name).getBoolean(obj)
+
+    def set_int(self, obj, name, value):
+        self.field(name).setInt(obj, int(value))
+
+    def set_float(self, obj, name, value):
+        self.field(name).setFloat(obj, float(value))
+
+
+def _hls(color):
+    return colorsys.rgb_to_hls(((color >> 16) & 255) / 255.0, ((color >> 8) & 255) / 255.0, (color & 255) / 255.0)
+
+
+def _argb(h, l, s):
+    r, g, b = colorsys.hls_to_rgb(h % 1.0, l, s)
+    value = 0xFF000000 | (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)
+    return value - (1 << 32)
+
+
+def _chroma(l, s):
+    return s * (1.0 - abs(2.0 * l - 1.0))
+
+
+def vivid_parts(found):
+    """The layers, front first: the main color of the cover half faded, then that color, then its next color.
+
+    Everything comes from the pixels of the cover. A cover with a single color gets a darker shade of that color
+    for the back layer, and a cover with no color stays gray in three tones.
+    """
+    colors = [_hls(c) for c in found]
+    lively = [c for c in colors if _chroma(c[1], c[2]) >= VIS_MIN_CHROMA]
+    if not lively:
+        return [_argb(0.0, 0.72, 0.0), _argb(0.0, 0.55, 0.0), _argb(0.0, 0.38, 0.0)]
+
+    def rich(color):
+        return color[0], max(0.5, min(0.66, color[1])), min(1.0, color[2] * 1.1)
+
+    hue, light, sat = rich(lively[0])
+    back = (hue, max(0.3, light - VIS_DARKER), sat)
+    for color in lively[1:]:
+        if abs((color[0] - hue + 0.5) % 1.0 - 0.5) > VIS_MIN_HUE:
+            back = rich(color)
+            break
+    return [_argb(hue, (light + VIS_PALE_LIGHT) / 2.0, sat * 0.5), _argb(hue, light, sat), _argb(*back)]
+
+
+def palette_from_pixels(pixels):
+    """Real colors of the cover by how many pixels have them: the largest hue, then the next one far enough away.
+
+    Counting pixels instead of clustering them: a cluster averages red and blue-gray into a violet nobody painted.
+    """
+    bins = [[0, 0.0, 0.0, 0.0, 0.0] for _ in range(VIS_HUE_BINS)]
+    for color in pixels:
+        r, g, b = ((color >> 16) & 255) / 255.0, ((color >> 8) & 255) / 255.0, (color & 255) / 255.0
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        chroma = _chroma(l, s)
+        if chroma < VIS_MIN_CHROMA:
+            continue
+        cell = bins[int(h * VIS_HUE_BINS) % VIS_HUE_BINS]
+        cell[0] += 1
+        # vivid pixels weigh more, so the average stays a color and not its muddy mix
+        cell[1] += r * chroma
+        cell[2] += g * chroma
+        cell[3] += b * chroma
+        cell[4] += chroma
+    total = len(pixels)
+
+    def weight(index):
+        return sum(bins[(index + d) % VIS_HUE_BINS][0] for d in (-1, 0, 1))
+
+    def far(a, b):
+        d = abs(a - b) % VIS_HUE_BINS
+        return min(d, VIS_HUE_BINS - d) >= VIS_FAR_BINS
+
+    order = sorted(range(VIS_HUE_BINS), key=weight, reverse=True)
+    peaks = []
+    for index in order:
+        need = VIS_MIN_SHARE * total
+        if weight(index) >= need and all(far(index, p) for p in peaks):
+            peaks.append(index)
+        if len(peaks) == 2:
+            break
+    found = []
+    for index in peaks:
+        cells = [bins[(index + d) % VIS_HUE_BINS] for d in (-1, 0, 1)]
+        mass = sum(c[4] for c in cells) or 1.0
+        r, g, b = (sum(c[i] for c in cells) / mass for i in (1, 2, 3))
+        found.append(-16777216 | (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255))
+    return found or [VIS_GRAY]
+
+
+def cover_palette(bitmap):
+    small = jclass("android.graphics.Bitmap").createScaledBitmap(bitmap, VIS_SAMPLE, VIS_SAMPLE, True)
+    pixels = jarray(jint)(VIS_SAMPLE * VIS_SAMPLE)
+    small.getPixels(pixels, 0, VIS_SAMPLE, 0, 0, VIS_SAMPLE, VIS_SAMPLE)
+    if small is not bitmap:
+        small.recycle()
+    return palette_from_pixels(list(pixels))
+
+
+# ---------------------------------------------------------------------------
+# Media library: the phone's music, favorites, history
+# ---------------------------------------------------------------------------
+
+
+def local_path(message):
+    """The file of a track started from the media library (negative id, attachPath set), else None."""
+    try:
+        if message is None or message.getId() >= 0:
+            return None
+        path = message.messageOwner.attachPath
+        return str(path) if path else None
+    except Exception:
+        return None
+
+
+def split_artists(text):
+    out = []
+    for part in ARTIST_SEP.split(text or ""):
+        part = part.strip()
+        if part and part.lower() not in (p.lower() for p in out):
+            out.append(part)
+    return out or [(text or "").strip()]
+
+
+def sort_text(text):
+    """Letters first and ё next to е, so a list reads in the order people expect."""
+    return re.sub(r"^\W+", "", (text or "").casefold()).replace("ё", "е")
+
+
+def first_letter(text):
+    key = sort_text(text)
+    return key[0].upper() if key and key[0].isalnum() else "#"
+
+
+def songs_label(count):
+    tail = count % 100
+    if 11 <= tail <= 14:
+        word = "песен"
+    elif count % 10 == 1:
+        word = "песня"
+    elif 2 <= count % 10 <= 4:
+        word = "песни"
+    else:
+        word = "песен"
+    return "%d %s" % (count, word)
+
+
+def format_time(seconds):
+    seconds = max(0, int(seconds))
+    if seconds >= 3600:
+        return "%d:%02d:%02d" % (seconds // 3600, seconds // 60 % 60, seconds % 60)
+    return "%d:%02d" % (seconds // 60, seconds % 60)
+
+
+def track_number(track):
+    try:
+        return int(str(track.get("track", "")).split("/")[0])
+    except ValueError:
+        return NO_TRACK_NUMBER
+
+
+class CoverCache:
+    """Covers read from the files once and kept as small JPEGs, so a list never decodes a whole picture."""
+
+    def __init__(self, directory):
+        self.dir = os.path.join(directory, "covers")
+        os.makedirs(self.dir, exist_ok=True)
+        self.lock = threading.Lock()
+        self.wanted = collections.deque()
+        self.queued = set()
+        self.working = False
+        self.on_ready = None
+
+    def _name(self, path):
+        try:
+            mtime = int(os.path.getmtime(path))
+        except OSError:
+            return None
+        return os.path.join(self.dir, hashlib.sha1(("%s|%d" % (path, mtime)).encode("utf-8")).hexdigest())
+
+    def cached(self, path):
+        """(known, jpeg path or None): known is False while the file has not been read yet."""
+        base = self._name(path)
+        if base is None:
+            return True, None
+        if os.path.exists(base + ".jpg"):
+            return True, base + ".jpg"
+        if os.path.exists(base + ".none"):
+            return True, None
+        return False, None
+
+    def get(self, path):
+        known, jpg = self.cached(path)
+        if not known:
+            self.warm([path], first=True)
+        return jpg
+
+    def warm(self, paths, first=False):
+        with self.lock:
+            if first:
+                # what is on screen now goes ahead of everything, even if it already waits in the queue
+                for path in paths:
+                    if path in self.queued:
+                        try:
+                            self.wanted.remove(path)
+                        except ValueError:
+                            pass
+                    self.queued.add(path)
+                    self.wanted.appendleft(path)
+            else:
+                for path in paths:
+                    if path not in self.queued:
+                        self.queued.add(path)
+                        self.wanted.append(path)
+            if self.working or not self.wanted:
+                return
+            self.working = True
+        run_on_queue(self._step)
+
+    def _step(self):
+        # One file at a time: other plugins share this queue.
+        with self.lock:
+            if not self.wanted:
+                self.working = False
+                return
+            path = self.wanted.popleft()
+        try:
+            if not self.cached(path)[0]:
+                self._extract(path)
+            callback = self.on_ready
+            if callback is not None:
+                callback(path)
+        except Exception as e:
+            _log("cover %s: %s" % (os.path.basename(path), e))
+        run_on_queue(self._step)
+
+    def _extract(self, path):
+        base = self._name(path)
+        if base is None:
+            return
+        retriever = jclass("android.media.MediaMetadataRetriever")()
+        data = None
+        try:
+            retriever.setDataSource(path)
+            data = retriever.getEmbeddedPicture()
+        except Exception:
+            data = None
+        finally:
+            retriever.release()
+        if data is None or not self._save_scaled(data, base + ".jpg"):
+            open(base + ".none", "w").close()
+
+    @staticmethod
+    def _save_scaled(data, out):
+        Factory = jclass("android.graphics.BitmapFactory")
+        Options = jclass("android.graphics.BitmapFactory$Options")
+        Bitmap = jclass("android.graphics.Bitmap")
+        options = Options()
+        options.inJustDecodeBounds = True
+        Factory.decodeByteArray(data, 0, len(data), options)
+        if options.outWidth <= 0 or options.outHeight <= 0:
+            return False
+        sample = 1
+        while min(options.outWidth, options.outHeight) // (sample * 2) >= COVER_SIZE:
+            sample *= 2
+        options = Options()
+        options.inSampleSize = sample
+        bitmap = Factory.decodeByteArray(data, 0, len(data), options)
+        if bitmap is None:
+            return False
+        width, height = bitmap.getWidth(), bitmap.getHeight()
+        scale = float(COVER_SIZE) / max(1, min(width, height))
+        if scale < 1.0:
+            small = Bitmap.createScaledBitmap(bitmap, max(1, int(width * scale)), max(1, int(height * scale)), True)
+            if small is not bitmap:
+                bitmap.recycle()
+            bitmap = small
+        temp = "%s.%d.tmp" % (out, threading.get_ident())
+        stream = jclass("java.io.FileOutputStream")(temp)
+        try:
+            bitmap.compress(jclass("android.graphics.Bitmap$CompressFormat").JPEG, 88, stream)
+        finally:
+            stream.close()
+            bitmap.recycle()
+        os.replace(temp, out)
+        return True
+
+
+class MusicData:
+    """Everything the media library knows, independent of any open player."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.dir = os.path.join(get_files_dir(), "sculpt_player")
+        os.makedirs(self.dir, exist_ok=True)
+        self.covers = CoverCache(self.dir)
+        self.tracks = []
+        self.by_path = {}
+        self.loaded = False
+        self.scanning = False
+        self.grouped = None
+        self.favorites = self._load("favorites.json", {})
+        self.history = self._load("history.json", [])
+        # MediaController sorts negative ids from the largest down and plays towards larger ids: ids grow in listening order.
+        self.id_seq = -2000000000 + int(time.time() * 10) % 500000000
+        self._import_mornye()
+
+    def _load(self, name, default, directory=None):
+        try:
+            with open(os.path.join(directory or self.dir, name), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default
+
+    def _save(self, name, data):
+        try:
+            temp = os.path.join(self.dir, name + ".tmp")
+            with open(temp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(temp, os.path.join(self.dir, name))
+        except Exception as e:
+            _log("save %s: %s" % (name, e))
+
+    def _import_mornye(self):
+        """Once: what was already marked and heard in Mornye Player moves here. After that the two lists live apart."""
+        if self.plugin.get_setting("mornye_imported", False):
+            return
+        self.plugin.set_setting("mornye_imported", True)
+        folder = os.path.join(get_files_dir(), "mornye_player")
+        now = int(time.time())
+        changed = False
+        for path in self._load("favorites.json", [], folder):
+            if path and path not in self.favorites:
+                self.favorites[path] = now
+                changed = True
+        if changed:
+            self._save("favorites.json", self.favorites)
+        known = {h["path"] for h in self.history}
+        history = list(self.history)
+        for entry in self._load("history.json", [], folder):
+            path = entry.get("path") if isinstance(entry, dict) else None
+            if path and path not in known:
+                known.add(path)
+                history.append({"path": path, "at": int(entry.get("at", 0))})
+        if len(history) != len(self.history):
+            self.history = history[:HISTORY_MAX]
+            self._save("history.json", self.history)
+
+    # -- permission ---------------------------------------------------------
+
+    @staticmethod
+    def permission():
+        version = jclass("android.os.Build$VERSION").SDK_INT
+        return "android.permission.READ_MEDIA_AUDIO" if version >= 33 else "android.permission.READ_EXTERNAL_STORAGE"
+
+    def has_permission(self):
+        return _ctx().checkSelfPermission(self.permission()) == 0
+
+    # -- scanning -----------------------------------------------------------
+
+    def scan(self):
+        """The saved list first, so the screen fills at once, then a fresh look at the phone in the background."""
+        if self.scanning:
+            return
+        self.scanning = True
+
+        def work():
+            try:
+                if not self.loaded:
+                    saved = self._load("library.json", [])
+                    if saved:
+                        run_on_ui_thread(lambda: self._publish(saved))
+                if not self.has_permission():
+                    return
+                tracks = self._query()
+                self._save("library.json", tracks)
+                run_on_ui_thread(lambda: self._publish(tracks))
+                self.covers.warm([t["path"] for t in tracks])
+            except Exception as e:
+                failure = e
+                run_on_ui_thread(lambda: self.plugin.report("scan", failure))
+            finally:
+                self.scanning = False
+                run_on_ui_thread(self._finished)
+
+        run_on_queue(work)
+
+    def _finished(self):
+        self.loaded = True
+        self._notify()
+
+    def _publish(self, tracks):
+        same = tracks == self.tracks
+        self.loaded = True
+        if same:
+            return
+        self.tracks = tracks
+        self.by_path = {t["path"]: t for t in tracks}
+        self.grouped = None
+        self._notify()
+
+    def _notify(self):
+        player = self.plugin.player
+        if player is not None and player.library is not None:
+            player.library.data_changed()
+
+    def _query(self):
+        old = self.by_path
+        Media = jclass("android.provider.MediaStore$Audio$Media")
+        strings = jclass("java.lang.String")
+        base = ["_data", "title", "artist", "album", "duration", "date_modified"]
+        extra = ["album_artist", "track", "date_added", "genre"]
+        cursor = None
+        # genre and album_artist are columns on newer Android only: drop them one by one when refused
+        for count in range(len(extra), -1, -1):
+            try:
+                cursor = _ctx().getContentResolver().query(Media.EXTERNAL_CONTENT_URI, jarray(strings)(base + extra[:count]),
+                                                           "is_music != 0", None, "title")
+                extra = extra[:count]
+                break
+            except Exception:
+                continue
+        tracks = []
+        if cursor is None:
+            return tracks
+        try:
+            while cursor.moveToNext():
+                path = cursor.getString(0)
+                if not path:
+                    continue
+                path = str(path)
+                if not os.path.exists(path):
+                    continue
+                artist = cursor.getString(2)
+                artist = str(artist) if artist and str(artist) != "<unknown>" else UNKNOWN_ARTIST
+                album = str(cursor.getString(3) or "")
+                # Android names a file with no album tag after its folder
+                if album.lower() in GENERIC_FOLDERS and album == os.path.basename(os.path.dirname(path)):
+                    album = ""
+                row = {"path": path, "title": str(cursor.getString(1) or os.path.basename(path)), "artist": artist,
+                       "album": album, "duration": int(cursor.getLong(4) // 1000), "mtime": int(cursor.getLong(5))}
+                for index, column in enumerate(extra):
+                    value = cursor.getString(6 + index)
+                    if value and str(value) != "<unknown>":
+                        row[column] = str(value)
+                row["added"] = int(row.pop("date_added", 0) or row["mtime"])
+                if "?" in row["title"] + row["artist"] + row["album"]:
+                    self._fix_mangled(row, old.get(path))
+                tracks.append(row)
+        finally:
+            cursor.close()
+        return tracks
+
+    @staticmethod
+    def _fix_mangled(row, cached):
+        """MediaStore turns characters it cannot store into "?"; the file's own tags still have them."""
+        if cached and cached.get("mtime") == row["mtime"] and cached.get("tags_fixed"):
+            for key in ("title", "artist", "album"):
+                row[key] = cached.get(key) or row[key]
+            row["tags_fixed"] = 1
+            return
+        Retriever = jclass("android.media.MediaMetadataRetriever")
+        retriever = Retriever()
+        try:
+            retriever.setDataSource(row["path"])
+            for key, code in (("title", Retriever.METADATA_KEY_TITLE), ("artist", Retriever.METADATA_KEY_ARTIST),
+                              ("album", Retriever.METADATA_KEY_ALBUM)):
+                value = retriever.extractMetadata(code)
+                if value:
+                    row[key] = str(value)
+        except Exception:
+            pass
+        finally:
+            retriever.release()
+        row["tags_fixed"] = 1
+
+    # -- lists --------------------------------------------------------------
+
+    def groups(self):
+        """Authors, albums and genres, computed once per scan."""
+        if self.grouped is not None:
+            return self.grouped
+        artists, albums, genres = {}, {}, {}
+
+        def add(table, key, name, track, **more):
+            group = table.get(key)
+            if group is None:
+                group = table[key] = dict(name=name, tracks=[], **more)
+            group["tracks"].append(track)
+
+        for track in self.tracks:
+            names = split_artists(track["artist"])
+            for name in names:
+                add(artists, sort_text(name), name, track)
+            if track["album"]:
+                owner = track.get("album_artist") or names[0]
+                add(albums, (sort_text(track["album"]), sort_text(owner)), track["album"], track, artist=owner)
+            for genre in re.split(r"\s*[;,/]\s*", track.get("genre", "")):
+                if genre.strip():
+                    add(genres, sort_text(genre), genre.strip(), track)
+
+        def ordered(table):
+            return sorted(table.values(), key=lambda g: sort_text(g["name"]))
+
+        self.grouped = {"artists": ordered(artists), "albums": ordered(albums), "genres": ordered(genres)}
+        return self.grouped
+
+    @staticmethod
+    def artist_albums(tracks):
+        table = {}
+        for track in tracks:
+            if track["album"]:
+                owner = track.get("album_artist") or split_artists(track["artist"])[0]
+                group = table.setdefault(sort_text(track["album"]), {"name": track["album"], "artist": owner, "tracks": []})
+                group["tracks"].append(track)
+        return sorted(table.values(), key=lambda g: sort_text(g["name"]))
+
+    def recently_added(self):
+        return sorted(self.tracks, key=lambda t: -t.get("added", 0))
+
+    def history_tracks(self):
+        found = (self.by_path.get(h["path"]) for h in self.history)
+        return [t for t in found if t is not None]
+
+    def favorite_tracks(self):
+        found = (self.by_path.get(p) for p in self.favorites)
+        return [t for t in found if t is not None]
+
+    def is_favorite(self, path):
+        return path in self.favorites
+
+    def toggle_favorite(self, path):
+        if path in self.favorites:
+            del self.favorites[path]
+        else:
+            self.favorites[path] = int(time.time())
+        data = dict(self.favorites)
+        run_on_queue(lambda: self._save("favorites.json", data))
+        return path in self.favorites
+
+    def add_history(self, path):
+        entry = {"path": path, "at": int(time.time())}
+        self.history = [entry] + [h for h in self.history if h["path"] != path][:HISTORY_MAX - 1]
+        data = list(self.history)
+        run_on_queue(lambda: self._save("history.json", data))
+        self._notify()
+
+    # -- playback -----------------------------------------------------------
+
+    def message_for(self, track):
+        """A local MessageObject, the same shape Telegram's attach menu uses."""
+        UserConfig = jclass("org.telegram.messenger.UserConfig")
+        account = UserConfig.selectedAccount
+        TL = "org.telegram.tgnet.TLRPC$"
+        path = track["path"]
+        message = jclass(TL + "TL_message")()
+        self.id_seq += 1
+        message.id = self.id_seq
+        message.out = True
+        user_id = UserConfig.getInstance(account).getClientUserId()
+        message.peer_id = jclass(TL + "TL_peerUser")()
+        message.peer_id.user_id = user_id
+        message.from_id = jclass(TL + "TL_peerUser")()
+        message.from_id.user_id = user_id
+        message.date = int(time.time())
+        message.message = ""
+        message.attachPath = path
+        media = jclass(TL + "TL_messageMediaDocument")()
+        media.flags |= 3
+        media.document = jclass(TL + "TL_document")()
+        message.media = media
+        message.flags |= 768
+        document = media.document
+        document.id = 0
+        document.access_hash = 0
+        document.file_reference = jarray(jbyte)(0)
+        document.date = message.date
+        extension = os.path.splitext(path)[1][1:].lower() or "mp3"
+        document.mime_type = "audio/" + ("mpeg" if extension == "mp3" else extension)
+        try:
+            document.size = os.path.getsize(path)
+        except OSError:
+            document.size = 0
+        document.dc_id = 0
+        audio = jclass(TL + "TL_documentAttributeAudio")()
+        is_double = str(audio.getClass().getField("duration").getType().getName()) == "double"
+        audio.duration = float(track.get("duration") or 0) if is_double else int(track.get("duration") or 0)
+        audio.title = track.get("title") or os.path.basename(path)
+        audio.performer = track.get("artist") or ""
+        audio.flags |= 3
+        document.attributes.add(audio)
+        name = jclass(TL + "TL_documentAttributeFilename")()
+        name.file_name = os.path.basename(path)
+        document.attributes.add(name)
+        return jclass("org.telegram.messenger.MessageObject")(account, message, False, True)
+
+    def play(self, tracks, index):
+        """The list becomes the queue, starting from the song that was tapped."""
+        if not tracks:
+            return
+        queue = (tracks[index:] + tracks[:index])[:QUEUE_MAX]
+        self.covers.warm([t["path"] for t in queue[:8]], first=True)
+
+        def work():
+            try:
+                items = jclass("java.util.ArrayList")()
+                messages = []
+                for track in queue:
+                    message = self.message_for(track)
+                    messages.append(message)
+                    items.add(message)
+                run_on_ui_thread(lambda: self._start(items, messages[0]))
+            except Exception as e:
+                failure = e
+                run_on_ui_thread(lambda: self.plugin.report("play", failure))
+
+        run_on_queue(work)
+
+    def _start(self, items, first):
+        try:
+            controller = jclass("org.telegram.messenger.MediaController").getInstance()
+            controller.setPlaylist(items, first, 0, False, None)
+            # This overload forces looping; the repeat button stays in charge.
+            self.plugin.media_fields.field("forceLoopCurrentPlaylist").setBoolean(controller, False)
+        except Exception as e:
+            self.plugin.report("play", e)
+
+    def _active_list(self, controller):
+        config = jclass("org.telegram.messenger.SharedConfig")
+        playlist = controller.getPlaylist()
+        active = self.plugin.media_fields.get(controller, "shuffledPlaylist") if config.shuffleMusic else playlist
+        return config, playlist, active
+
+    def _remember(self, controller, config, playlist, message):
+        if config.shuffleMusic:
+            playlist.add(message)
+        table = self.plugin.media_fields.get(controller, "playlistMap")
+        if table is not None:
+            table.put(JInteger.valueOf(message.getId()), message)
+
+    def play_next(self, track):
+        controller = jclass("org.telegram.messenger.MediaController").getInstance()
+        if controller.getPlayingMessageObject() is None:
+            self.play([track], 0)
+            return
+        message = self.message_for(track)
+        config, playlist, active = self._active_list(controller)
+        number = controller.getPlayingMessageObjectNum()
+        if active is None or number < 0 or number >= active.size():
+            return
+        if config.playOrderReversed:
+            active.add(number + 1, message)
+        else:
+            # the next song is at index - 1: the new one goes before the current, which shifts by one
+            active.add(number, message)
+            self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + 1)
+        self._remember(controller, config, playlist, message)
+
+    def play_last(self, track):
+        controller = jclass("org.telegram.messenger.MediaController").getInstance()
+        if controller.getPlayingMessageObject() is None:
+            self.play([track], 0)
+            return
+        message = self.message_for(track)
+        config, playlist, active = self._active_list(controller)
+        number = controller.getPlayingMessageObjectNum()
+        if active is None or number < 0:
+            return
+        if config.playOrderReversed:
+            active.add(message)
+        else:
+            # the list plays from its end towards index 0
+            active.add(0, message)
+            self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + 1)
+        self._remember(controller, config, playlist, message)
+
+
+class ListenTimer:
+    """Counts what is really heard: a song joins the history after 30 seconds, or half of a shorter one."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.running = False
+        self.stopped = False
+        self.path = None
+        self.listened = 0.0
+        self.counted = False
+        self.last = 0.0
+
+    def kick(self):
+        if self.running or self.stopped:
+            return
+        self.running = True
+        self.last = time.monotonic()
+        run_on_ui_thread(self.tick, LISTEN_TICK_MS)
+
+    def tick(self):
+        try:
+            controller = jclass("org.telegram.messenger.MediaController").getInstance()
+            message = controller.getPlayingMessageObject()
+            if self.stopped or message is None or controller.isMessagePaused():
+                self.running = False
+                return
+            now = time.monotonic()
+            path = local_path(message)
+            if path != self.path:
+                self.path = path
+                self.listened = 0.0
+                self.counted = False
+            else:
+                self.listened += min(now - self.last, LISTEN_TICK_MS / 1000.0 + 1.0)
+            self.last = now
+            if path is not None and not self.counted:
+                duration = float(message.getDuration() or 0.0)
+                if self.listened >= min(LISTEN_SECONDS, duration / 2.0 if duration > 0 else LISTEN_SECONDS):
+                    self.counted = True
+                    self.plugin.music.add_history(path)
+            run_on_ui_thread(self.tick, LISTEN_TICK_MS)
+        except Exception as e:
+            self.running = False
+            self.plugin.report("listen", e)
+
+
+class Spectrum:
+    """24 frequency bands from exteraGram's own RhythmAnalyzer, in time with what is heard.
+
+    The analyzer sees audio before it reaches the speaker, so each snapshot waits until the playback
+    position catches up with it, the way RhythmTap.read treats its frames.
+    """
+
+    def __init__(self):
+        self.tap_fields = Fields(RHYTHM_TAP)
+        self.analyzer_fields = Fields(RHYTHM_ANALYZER)
+        self.tap_class = jclass(RHYTHM_TAP)
+        self.queue = collections.deque(maxlen=128)
+        self.last_frame = -1
+        self.tap_id = 0
+        self.fresh_at = 0.0
+        self.peaks = [0.05] * BANDS
+        self.current = [0.0] * BANDS
+
+    def poll(self, playing):
+        """The band levels (0..1) to show now."""
+        tap = self.tap_class.getCurrent()
+        if tap is None or not playing:
+            self.queue.clear()
+            self.current = [0.0] * BANDS
+            return self.current
+        tap_id = tap.hashCode()
+        if tap_id != self.tap_id:
+            # every track gets a new tap, and its levels have nothing to do with the last track's peaks
+            self.tap_id = tap_id
+            self.queue.clear()
+            self.last_frame = -1
+            self.peaks = [0.05] * BANDS
+        analyzer = self.tap_fields.get(tap, "analyzer")
+        frame = self.analyzer_fields.field("frame").getLong(analyzer)
+        if frame < self.last_frame:
+            self.queue.clear()
+        if frame != self.last_frame and frame > 0:
+            self.last_frame = frame
+            times = self.analyzer_fields.get(analyzer, "pendingTime")
+            self.queue.append((times[int((frame - 1) % 64)], list(self.analyzer_fields.get(analyzer, "bandLevel"))))
+        position = self.tap_fields.field("positionUs").getLong(tap)
+        elapsed = (jclass("android.os.SystemClock").elapsedRealtimeNanos() - self.tap_fields.field("positionAtNs").getLong(tap)) // 1000
+        position += 40000 + min(120000, max(0, elapsed))
+        # A seek back leaves entries far ahead of the position; they would hold back everything behind them.
+        while self.queue and self.queue[0][0] > position + 2000000:
+            self.queue.popleft()
+        levels = None
+        while self.queue and self.queue[0][0] <= position:
+            levels = self.queue.popleft()[1]
+        now = time.monotonic()
+        if levels is None and now - self.fresh_at > 0.25:
+            # nothing new yet (the next track is loading): let the bars fall instead of standing still
+            self.current = [0.0] * BANDS
+        if levels is not None:
+            out = []
+            peaks = self.peaks
+            for i in range(BANDS):
+                level = levels[i]
+                peak = max(level, peaks[i] * 0.997, 0.05)
+                peaks[i] = peak
+                # the levels are logarithmic and rarely fall far below the peak: spread the top part over the height
+                ratio = max(0.0, (level / peak - 0.55) / 0.45)
+                out.append(ratio * ratio)
+            self.current = out
+            self.fresh_at = now
+        return self.current
+
+
+class Visualizer:
+    """Bars above and below the cover, drawn on PlayerLayout's canvas with one gradient across the cover."""
+
+    def __init__(self, plugin, player):
+        self.plugin = plugin
+        self.player = player
+        self.spectrum = Spectrum()
+        Paint = jclass("android.graphics.Paint")
+        self.paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        self.paint.setStyle(jclass("android.graphics.Paint$Style").STROKE)
+        self.paint.setStrokeCap(jclass("android.graphics.Paint$Cap").ROUND)
+        self.layers = [[], [], []]
+        self.parts = None
+        self.palette = None
+        self.cover_id = 0
+        self.cover_checked = 0.0
+        self.settings = None
+        self.settings_at = 0.0
+        self.media = jclass("org.telegram.messenger.MediaController")
+        caps = jclass("android.graphics.Paint$Cap")
+        self.butt = caps.BUTT
+        self.round = caps.ROUND
+        self.batches = []
+        self.built_at = 0.0
+        self.built_key = None
+        self.moving = False
+        self.last_time = 0.0
+        self.colors = None
+        self.shader_key = None
+
+    def set_colors(self, colors):
+        self.colors = colors
+        self.shader_key = None
+
+    def _config(self, now):
+        """Reading settings goes through Java: once per second is enough, a change in the sheet resets it."""
+        if self.settings is None or now - self.settings_at > 1.0:
+            get = self.plugin.get_setting
+            self.settings = (get("vis_top", True), get("vis_bottom", True), get("vis_density", 1), get("vis_color_mode", 0),
+                             get("vis_height", 1), get("vis_style", 0), self.plugin.cover_radius())
+            self.settings_at = now
+        return self.settings
+
+    def _shader(self, left, size, top, height_top, height_bottom):
+        """The paint for the bars: solid colors per layer in the three-layer mode, a gradient in the others."""
+        mode = self.settings[3]
+        key = (round(left), round(size), round(top), round(height_top), round(height_bottom), mode)
+        if key == self.shader_key or self.colors is None:
+            return
+        self.shader_key = key
+        colors = self.colors
+        Gradient = jclass("android.graphics.LinearGradient")
+        clamp = jclass("android.graphics.Shader$TileMode").CLAMP
+        base, middle, tip = vivid_parts(self.palette or [colors.glow[0]])
+        span = height_top + size + height_bottom
+        if mode == 2 or span <= 0:
+            self.paint.setShader(Gradient(float(left), 0.0, float(left + size), 0.0, jarray(jint)([colors.accent, colors.accent]), None, clamp))
+            return
+        y0, y1 = top - height_top, top + size + height_bottom
+        if mode == 1:
+            # colors fixed across the cover, whitening towards the tip of each bar
+            edge, side, center = tip, middle, base
+            across = Gradient(float(left), 0.0, float(left + size), 0.0, jarray(jint)([edge, side, center, side, edge]), None, clamp)
+            clear, white = 16777215, -1
+            marks = [0.0, 0.75 * height_top / span, height_top / span, (height_top + size) / span,
+                     (height_top + size + 0.25 * height_bottom) / span, 1.0]
+            along = Gradient(0.0, float(y0), 0.0, float(y1), jarray(jint)([white, clear, clear, clear, clear, white]),
+                             jarray(jfloat)(marks), clamp)
+            self.paint.setShader(jclass("android.graphics.ComposeShader")(across, along, jclass("android.graphics.PorterDuff$Mode").SRC_OVER))
+            return
+        self.parts = (base, middle, tip)
+        self.paint.setShader(None)
+
+    def _check_cover(self, now):
+        """exteraGram fills its own glow colors with shifted hues when a cover has few of them or is not read yet,
+        so the palette comes from the bitmap on screen, read once per bitmap."""
+        if now - self.cover_checked < VIS_COVER_CHECK:
+            return
+        self.cover_checked = now
+        receiver = self.player.coverView.getImageReceiver()
+        bitmap = receiver.getBitmap() if receiver is not None else None
+        if bitmap is None or bitmap.isRecycled():
+            return
+        cover_id = bitmap.hashCode()
+        if cover_id == self.cover_id:
+            return
+        self.cover_id = cover_id
+        try:
+            self.palette = cover_palette(bitmap)
+        except Exception as e:
+            self.palette = None
+            _log("cover palette: %s" % e)
+        self.shader_key = None
+
+    def _advance(self, count, bands, layered):
+        now = time.monotonic()
+        dt = min(0.1, now - self.last_time) if self.last_time else 0.016
+        self.last_time = now
+        moving = False
+        scale = (BANDS - 1) / float(max(1, count - 1))
+        last = BANDS - 1
+        for layer, (shift, rise, fall, gain, depth, speed, phase) in enumerate(VIS_LAYERS if layered else VIS_LAYERS[:1]):
+            values = self.layers[layer]
+            if len(values) != count:
+                values = self.layers[layer] = [0.0] * count
+            rise = min(1.0, dt * rise)
+            fall = min(1.0, dt * fall)
+            if not layered:
+                gain = 1.0
+            for i in range(count):
+                at = max(0.0, min(float(last), i * scale + shift))
+                low = int(at)
+                high = min(last, low + 1)
+                target = (bands[low] + (bands[high] - bands[low]) * (at - low)) * gain
+                if depth:
+                    target *= 1.0 - depth + depth * (0.5 + 0.5 * math.sin(now * speed + i * phase))
+                value = values[i]
+                value += (target - value) * (rise if target > value else fall)
+                values[i] = value
+                if value > 0.005:
+                    moving = True
+        return moving
+
+    def draw(self, canvas):
+        if self.player.library_visible():
+            return  # hidden under the media library: nothing to draw, and no reason to keep redrawing
+        started = time.monotonic()
+        show_top, show_bottom, density, color_mode, height_index, style, cover_radius = self._config(started)
+        if not show_top and not show_bottom:
+            return
+        player = self.player
+        sheet_fields, f = self.plugin.sheet_fields, self.plugin.layout_fields
+        lay = player.layout
+        mode = max(0.0, min(1.0, sheet_fields.float(player.sheet, "modeProgress")))
+        if mode >= 0.99:
+            return
+        playing = not self.media.getInstance().isMessagePaused()
+
+        full_left = f.float(lay, "coverLeft")
+        full_size = f.float(lay, "coverSize")
+        if full_size <= 0:
+            return
+        # the cover shrinks around its center on pause (PlayerCoverView.pauseScale): the bars stay on its edges
+        scale = self.plugin.cover_fields.float(player.coverView, "pauseScale")
+        inset = full_size * (1.0 - scale) / 2.0
+        left = full_left + inset
+        size = full_size * scale
+        top = f.float(lay, "coverTop") + inset
+
+        # The numbers change 40 times a second at most: other frames paint what is built, at almost no cost.
+        key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
+        if started - self.built_at >= VIS_BUILD_SECONDS or key != self.built_key:
+            self._build(lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
+                        height_index, show_top, show_bottom, cover_radius)
+            self.built_at = started
+            self.built_key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
+
+        paint = self.paint
+        for color, width, tip_width, corner_width, body, tips, corners, alpha in self.batches:
+            if color is not None:
+                # setARGB: Python ints would pick the setColor(long) overload
+                paint.setARGB(alpha, color[0], color[1], color[2])
+            else:
+                paint.setAlpha(alpha)
+            paint.setStrokeCap(self.butt if tips is not None else self.round)
+            paint.setStrokeWidth(width)
+            canvas.drawLines(body, paint)
+            if tips is not None:
+                # Slightly rounded rectangles in three batches, far cheaper than a drawRoundRect call per bar.
+                paint.setStrokeWidth(tip_width)
+                canvas.drawLines(tips, paint)
+                paint.setStrokeCap(self.round)
+                paint.setStrokeWidth(corner_width)
+                canvas.drawPoints(corners, paint)
+        if playing or self.moving or 0.941 < scale < 0.999:
+            lay.postInvalidateOnAnimation()
+
+    def _build(self, lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
+               height_index, show_top, show_bottom, cover_radius):
+        count = VIS_BARS[density]
+        layered = color_mode == 0
+        self._check_cover(self.built_at)
+        self.moving = self._advance(count, self.spectrum.poll(playing), layered)
+        wanted = _dp(VIS_HEIGHT_DP[height_index])
+        full_top = top - inset
+        above = max(0.0, min(wanted, full_top - (f.int(lay, "headerBottom") + _dp(4)))) if show_top else 0.0
+        below = max(0.0, min(wanted, f.int(lay, "titleTop") - _dp(4) - (full_top + full_size))) if show_bottom else 0.0
+        self._shader(full_left, full_size, full_top, above, below)
+
+        step = size / count
+        half = step / 2.0
+        rows = []
+        if show_top:
+            room = top - (f.int(lay, "headerBottom") + _dp(4))
+            rows.append((top, -1.0, max(0.0, min(wanted, room))))
+        if show_bottom:
+            room = f.int(lay, "titleTop") - _dp(4) - (top + size)
+            rows.append((top + size, 1.0, max(0.0, min(wanted, room))))
+
+        # The bars start under the cover, which is drawn over them: this also fills its rounded corners.
+        inside = _dp(cover_radius) + _dp(2)
+        width = step * VIS_WIDTHS[style]
+        radius = min(_dp(BAR_RADIUS), width * VIS_CORNER)
+        offset = width / 2.0 - radius
+        alpha = int(255 * (1.0 - mode))
+        batches = []
+        for layer in (2, 1, 0) if layered else (0,):
+            values = self.layers[layer]
+            hiding = self.layers[:layer] if layered else ()
+            body, tips, corners = array.array("f"), array.array("f"), array.array("f")
+            for base, sign, height in rows:
+                start = base - sign * inside
+                for i, value in enumerate(values):
+                    # what a layer in front covers is not drawn at all
+                    if value <= 0.005 or any(front[i] >= value for front in hiding):
+                        continue
+                    x = left + half + i * step
+                    tip = base + sign * height * value
+                    if style != 0:
+                        body.extend((x, start, x, tip))
+                        continue
+                    neck = tip - sign * radius
+                    body.extend((x, start, x, neck))
+                    tips.extend((x, neck - sign, x, tip))
+                    corners.extend((x - offset, neck, x + offset, neck))
+            if not len(body):
+                continue
+            color = None
+            if layered and self.parts is not None:
+                part = self.parts[layer]
+                color = ((part >> 16) & 255, (part >> 8) & 255, part & 255)
+            batches.append((color, float(width), float(width - 2.0 * radius), float(2.0 * radius), jarray(jfloat)(body),
+                            jarray(jfloat)(tips) if style == 0 else None, jarray(jfloat)(corners) if style == 0 else None, alpha))
+        self.batches = batches
+
+
+# ---------------------------------------------------------------------------
+# Media library: the screens
+# ---------------------------------------------------------------------------
+
+
+class Run(dynamic_proxy(jclass("java.lang.Runnable"))):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def run(self):
+        self.action()
+
+
+class LongClick(dynamic_proxy(jclass("android.view.View$OnLongClickListener"))):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def onLongClick(self, view):
+        self.action(view)
+        return True
+
+
+class RowClick(dynamic_proxy(jclass("android.widget.AdapterView$OnItemClickListener"))):
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+
+    def onItemClick(self, parent, view, position, row_id):
+        index = position - self.screen.list.getHeaderViewsCount()
+        if index >= 0:
+            self.screen.guarded(self.screen.row_clicked, index, view)
+
+
+class RowLongClick(dynamic_proxy(jclass("android.widget.AdapterView$OnItemLongClickListener"))):
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+
+    def onItemLongClick(self, parent, view, position, row_id):
+        index = position - self.screen.list.getHeaderViewsCount()
+        if index < 0:
+            return False
+        self.screen.guarded(self.screen.row_long_clicked, index, view)
+        return True
+
+
+class RowsAdapter(dynamic_proxy(jclass("android.widget.ListAdapter"))):
+    """RecyclerView.Adapter is a class and a proxy can only be an interface, so the long lists are ListViews."""
+
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+        self.observers = []
+
+    def changed(self):
+        for observer in list(self.observers):
+            observer.onChanged()
+
+    def registerDataSetObserver(self, observer):
+        self.observers.append(observer)
+
+    def unregisterDataSetObserver(self, observer):
+        self.observers = [o for o in self.observers if not o.equals(observer)]
+
+    def getCount(self):
+        return self.screen.count()
+
+    def getItem(self, position):
+        return None
+
+    def getItemId(self, position):
+        return position
+
+    def hasStableIds(self):
+        return False
+
+    def getView(self, position, convert, parent):
+        try:
+            return self.screen.row_view(position, convert)
+        except Exception as e:
+            self.screen.owner.plugin.report("row", e)
+            return convert if convert is not None else jclass("android.view.View")(parent.getContext())
+
+    def getItemViewType(self, position):
+        return 0
+
+    def getViewTypeCount(self):
+        return 1
+
+    def isEmpty(self):
+        return self.screen.count() == 0
+
+    def areAllItemsEnabled(self):
+        return True
+
+    def isEnabled(self, position):
+        return True
+
+    def getAutofillOptions(self):
+        return None
+
+
+class ThumbTouch(dynamic_proxy(jclass("android.view.View$OnTouchListener"))):
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+
+    def onTouch(self, view, event):
+        try:
+            return self.screen.thumb_touched(view, event)
+        except Exception as e:
+            self.screen.owner.plugin.report("thumb", e)
+            return False
+
+
+class ListScrolled(dynamic_proxy(jclass("android.widget.AbsListView$OnScrollListener"))):
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+
+    def onScrollStateChanged(self, view, state):
+        pass
+
+    def onScroll(self, view, first, visible, total):
+        self.screen.list_scrolled(first, visible, total)
+
+
+class Screen:
+    """One level of the library: a header and a body. It stays alive under the next one, so going back keeps its place."""
+
+    def __init__(self, owner, title, subtitle=""):
+        self.owner = owner
+        self.tints = []
+        self.keep = []
+        self.title_text = title
+        self.subtitle_text = subtitle
+        self.view = None
+        self.title_view = None
+        self.subtitle_view = None
+
+    def guarded(self, action, *args):
+        try:
+            action(*args)
+        except Exception as e:
+            self.owner.plugin.report("library", e)
+
+    def click(self, view, action, *args):
+        listener = OnClickListener(lambda _: self.guarded(action, *args))
+        self.keep.append(listener)
+        view.setOnClickListener(listener)
+
+    def long_click(self, view, action):
+        listener = LongClick(lambda v: self.guarded(action, v))
+        self.keep.append(listener)
+        view.setOnLongClickListener(listener)
+
+    def tint_text(self, view, role):
+        self.tints.append((True, view, role))
+        view.setTextColor(self.owner.color(role))
+        return view
+
+    def tint_icon(self, view, role):
+        self.tints.append((False, view, role))
+        self.owner.tint(view, self.owner.color(role))
+        return view
+
+    def retint(self):
+        owner = self.owner
+        for is_text, view, role in self.tints:
+            if is_text:
+                view.setTextColor(owner.color(role))
+            else:
+                owner.tint(view, owner.color(role))
+        self.colors_changed()
+
+    def colors_changed(self):
+        pass
+
+    def label(self, size, role, bold=False):
+        return self.tint_text(self.owner.text_view(size, bold), role)
+
+    def icon_button(self, icons, description, action, *args):
+        owner = self.owner
+        button = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(button, icons)
+        button.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
+        button.setContentDescription(description)
+        button.setBackground(owner.selector(_dp(20)))
+        self.tint_icon(button, "icon")
+        self.click(button, action, *args)
+        return button
+
+    def header(self, large=False, trailing=None):
+        owner = self.owner
+        LinearLayout = jclass("android.widget.LinearLayout$LayoutParams")
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)  # center vertically
+        row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
+        if large:
+            row.addView(self.icon_button(("arrow_more",), "Закрыть плеер", owner.close_player), owner.params(40, 40))
+        else:
+            row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+        column = jclass("android.widget.LinearLayout")(owner.context)
+        column.setOrientation(1)
+        self.title_view = self.label(28 if large else 20, "text", True)
+        self.title_view.setText(self.title_text)
+        column.addView(self.title_view)
+        self.subtitle_view = self.label(13, "textSecondary")
+        self.subtitle_view.setText(self.subtitle_text)
+        self.subtitle_view.setVisibility(0 if self.subtitle_text else 8)
+        column.addView(self.subtitle_view)
+        place = LinearLayout(0, -2, 1.0)
+        place.setMarginStart(_dp(8))
+        row.addView(column, place)
+        if trailing is not None:
+            row.addView(trailing, owner.params(40, 40))
+        return row
+
+    def set_subtitle(self, text):
+        self.subtitle_view.setText(text)
+        self.subtitle_view.setVisibility(0 if text else 8)
+
+    def refresh(self):
+        pass
+
+    def tile(self, image_path, title, subtitle, action, long_action=None):
+        """A cover with two lines under it, for the rows that scroll sideways."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        tile = jclass("android.widget.LinearLayout")(owner.context)
+        tile.setOrientation(1)
+        image = owner.cover_view(TILE_RADIUS, TILE_SIZE)
+        owner.bind_cover(image, image_path, TILE_SIZE)
+        tile.addView(image, owner.params(TILE_SIZE, TILE_SIZE))
+        name = self.label(14, "text", True)
+        name.setText(title)
+        top = Params(_dp(TILE_SIZE), -2)
+        top.topMargin = _dp(6)
+        tile.addView(name, top)
+        second = self.label(12, "textSecondary")
+        second.setText(subtitle)
+        tile.addView(second, Params(_dp(TILE_SIZE), -2))
+        self.click(tile, action)
+        if long_action is not None:
+            self.long_click(tile, long_action)
+        return tile
+
+    def sideways(self):
+        """(scroller, row) for covers in a line."""
+        owner = self.owner
+        scroller = jclass("android.widget.HorizontalScrollView")(owner.context)
+        scroller.setHorizontalScrollBarEnabled(False)
+        scroller.setOverScrollMode(2)
+        scroller.setClipToPadding(False)
+        scroller.setPadding(_dp(20), 0, _dp(8), 0)
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        scroller.addView(row)
+        return scroller, row
+
+
+class ListScreen(Screen):
+    """A header and a long list with a slider at the edge that jumps through it and names the place."""
+
+    def __init__(self, owner, title, subtitle="", list_header=None):
+        super().__init__(owner, title, subtitle)
+        self.list_header = list_header
+        self.adapter = None
+        self.list = None
+        self.empty = None
+        self.track_view = None
+        self.thumb = None
+        self.bubble = None
+
+    def build(self, trailing=None, empty_text=""):
+        owner = self.owner
+        context = owner.context
+        Linear = jclass("android.widget.LinearLayout$LayoutParams")
+        Frame = jclass("android.widget.FrameLayout$LayoutParams")
+        page = jclass("android.widget.LinearLayout")(context)
+        page.setOrientation(1)
+        page.addView(self.header(False, trailing))
+        body = jclass("android.widget.FrameLayout")(context)
+        page.addView(body, Linear(-1, 0, 1.0))
+        self.view = page
+
+        rows = jclass("android.widget.ListView")(context)
+        rows.setDivider(None)
+        rows.setDividerHeight(0)
+        rows.setCacheColorHint(0)
+        rows.setVerticalScrollBarEnabled(False)
+        rows.setOverScrollMode(2)
+        rows.setClipToPadding(False)
+        rows.setPadding(0, 0, 0, _dp(8))
+        rows.setSelector(owner.selector(0))
+        rows.setDrawSelectorOnTop(True)
+        self.list = rows
+        if self.list_header is not None:
+            header = self.list_header(self)
+            if header is not None:
+                rows.addHeaderView(header, None, False)
+        self.adapter = RowsAdapter(self)
+        rows.setAdapter(self.adapter)
+        self.keep.extend((RowClick(self), RowLongClick(self), ListScrolled(self), ThumbTouch(self)))
+        rows.setOnItemClickListener(self.keep[-4])
+        rows.setOnItemLongClickListener(self.keep[-3])
+        rows.setOnScrollListener(self.keep[-2])
+        body.addView(rows, Frame(-1, -1))
+
+        self.empty = self.label(15, "textSecondary")
+        self.empty.setText(empty_text)
+        self.empty.setGravity(17)
+        self.empty.setSingleLine(False)
+        self.empty.setPadding(_dp(32), 0, _dp(32), _dp(32))
+        self.empty.setVisibility(8)
+        body.addView(self.empty, Frame(-1, -1))
+
+        # The slider: wide enough for a finger to catch, with a thin mark and a bubble naming the place.
+        self.track_view = jclass("android.view.View")(context)
+        self.track_view.setOnTouchListener(self.keep[-1])
+        body.addView(self.track_view, Frame(_dp(THUMB_AREA), -1, 8388613))  # end
+        self.thumb = jclass("android.view.View")(context)
+        mark = Frame(_dp(4), _dp(THUMB_H), 8388661)  # top end
+        mark.setMarginEnd(_dp(4))
+        body.addView(self.thumb, mark)
+        self.bubble = owner.text_view(22, True)
+        self.bubble.setGravity(17)
+        self.bubble.setVisibility(8)
+        place = Frame(_dp(84), _dp(56), 8388661)
+        place.setMarginEnd(_dp(THUMB_AREA + 8))
+        body.addView(self.bubble, place)
+        self.paint_slider()
+        self.refresh()
+
+    def paint_slider(self):
+        owner = self.owner
+        self.thumb.setBackground(owner.rounded(owner.color("accent"), _dp(2)))
+        self.bubble.setTextColor(owner.color("onAccent"))
+        self.bubble.setBackground(owner.rounded(owner.color("accent"), _dp(16)))
+
+    def colors_changed(self):
+        self.paint_slider()
+        self.adapter.changed()
+
+    def data_refreshed(self):
+        count = self.count()
+        self.empty.setVisibility(8 if count else 0)
+        self.list.setVisibility(0 if count else 8)
+        show = 0 if count >= THUMB_MIN_ROWS else 8
+        self.thumb.setVisibility(show)
+        self.track_view.setVisibility(show)
+        self.adapter.changed()
+
+    def list_scrolled(self, first, visible, total):
+        room = total - visible
+        height = self.list.getHeight() - _dp(THUMB_H)
+        if room > 0 and height > 0 and self.thumb is not None:
+            self.thumb.setTranslationY(float(height) * first / room)
+
+    def thumb_touched(self, view, event):
+        action = event.getActionMasked()
+        if action in (1, 3):  # up, cancel
+            self.bubble.setVisibility(8)
+            return True
+        if action not in (0, 2):  # down, move
+            return True
+        view.getParent().requestDisallowInterceptTouchEvent(True)
+        height = max(1, view.getHeight())
+        share = max(0.0, min(1.0, event.getY() / height))
+        count = self.count()
+        if count <= 0:
+            return True
+        index = min(count - 1, int(share * count))
+        self.list.setSelectionFromTop(index + self.list.getHeaderViewsCount(), 0)
+        self.bubble.setText(self.letter(index))
+        self.bubble.setVisibility(0)
+        self.bubble.setTranslationY(float(max(0, int(share * height) - _dp(28))))
+        return True
+
+    def count(self):
+        return 0
+
+    def letter(self, index):
+        return ""
+
+    def row_view(self, position, convert):
+        raise NotImplementedError
+
+    def row_clicked(self, index, view):
+        pass
+
+    def row_long_clicked(self, index, view):
+        pass
+
+
+class SongsScreen(ListScreen):
+    """A list of songs. Any of them starts the whole list from itself."""
+
+    def __init__(self, owner, title, source, list_id=None, default_sort="title", empty_text="", list_header=None, fav_dates=False):
+        super().__init__(owner, title, "", list_header)
+        self.source = source
+        self.list_id = list_id
+        self.default_sort = default_sort
+        self.fav_dates = fav_dates
+        self.tracks = []
+        self.sort_mode, self.reverse = self.read_sort()
+        trailing = None
+        if list_id is not None:
+            trailing = self.icon_button(("msg_filter",), "Сортировка", self.show_sort)
+        self.build(trailing, empty_text)
+
+    def read_sort(self):
+        if self.list_id is None:
+            return None, False
+        stored = str(self.owner.plugin.get_setting("sort_" + self.list_id, self.default_sort + ":0"))
+        mode, _, flag = stored.partition(":")
+        return mode, flag == "1"
+
+    def show_sort(self):
+        owner = self.owner
+        check = owner.resource("msg_text_check")
+        menu = owner.make_menu(self.title_view, False)
+        modes = list(SORT_MODES)
+        if self.default_sort == "track":
+            modes.insert(0, ("track", "По номеру"))
+        for mode, title in modes:
+            menu.add(check if mode == self.sort_mode else 0, title,
+                     Run(lambda m=mode: self.pick_sort(menu, m, self.reverse)))
+        menu.addGap()
+        menu.add(check if self.reverse else 0, "В обратном порядке", Run(lambda: self.pick_sort(menu, self.sort_mode, not self.reverse)))
+        menu.show()
+
+    def pick_sort(self, menu, mode, reverse):
+        try:
+            menu.dismiss()
+            self.sort_mode, self.reverse = mode, reverse
+            self.owner.plugin.set_setting("sort_" + self.list_id, "%s:%d" % (mode, 1 if reverse else 0))
+            self.refresh()
+            self.list.setSelection(0)
+        except Exception as e:
+            self.owner.plugin.report("sort", e)
+
+    def when(self, track):
+        return self.owner.data.favorites.get(track["path"], 0) if self.fav_dates else track.get("added", 0)
+
+    def sort_key(self, track):
+        mode = self.sort_mode
+        if mode == "artist":
+            return sort_text(track["artist"]), sort_text(track["title"])
+        if mode == "album":
+            # songs with no album go last, not first
+            album = sort_text(track["album"])
+            return not album, album, track_number(track), sort_text(track["title"])
+        if mode == "added":
+            return -self.when(track)
+        if mode == "duration":
+            return track.get("duration", 0)
+        if mode == "track":
+            return track_number(track), sort_text(track["title"])
+        return sort_text(track["title"])
+
+    def refresh(self):
+        tracks = list(self.source())
+        if self.sort_mode is not None:
+            tracks.sort(key=self.sort_key, reverse=self.reverse)
+        self.tracks = tracks
+        self.set_subtitle(songs_label(len(tracks)) if tracks else "")
+        self.data_refreshed()
+
+    def count(self):
+        return len(self.tracks)
+
+    def letter(self, index):
+        track = self.tracks[index]
+        mode = self.sort_mode
+        if mode == "artist":
+            return first_letter(track["artist"])
+        if mode == "album":
+            return first_letter(track["album"])
+        if mode == "added":
+            return time.strftime("%m.%y", time.localtime(self.when(track)))
+        if mode == "duration":
+            return "%d мин" % (track.get("duration", 0) // 60)
+        if mode == "track":
+            number = track_number(track)
+            return str(number % 1000) if number < NO_TRACK_NUMBER else "#"
+        return first_letter(track["title"])
+
+    def row_view(self, position, convert):
+        owner = self.owner
+        if convert is None:
+            convert = owner.song_row()
+        holder = owner.holders[convert.hashCode()]
+        track = self.tracks[position]
+        path = track["path"]
+        owner.bind_cover(holder["image"], path, 48)
+        holder["title"].setText(track["title"])
+        holder["subtitle"].setText(track["artist"])
+        holder["time"].setText(format_time(track.get("duration", 0)))
+        playing = path == owner.playing_path()
+        holder["title"].setTextColor(owner.color("accent") if playing else owner.color("text"))
+        holder["title"].setTypeface(owner.bold if playing else owner.regular)
+        holder["subtitle"].setTextColor(owner.color("textSecondary"))
+        holder["time"].setTextColor(owner.color("textSecondary"))
+        return convert
+
+    def row_clicked(self, index, view):
+        self.owner.play(self.tracks, index)
+
+    def row_long_clicked(self, index, view):
+        self.owner.song_menu(view, self.tracks[index])
+
+
+class GroupsScreen(ListScreen):
+    """Authors, albums or genres; a tap opens the songs of one."""
+
+    def __init__(self, owner, kind, title):
+        super().__init__(owner, title)
+        self.kind = kind
+        self.items = []
+        empty = {"artists": "Здесь появятся авторы твоих песен.",
+                 "albums": "Здесь появятся альбомы. Песни без альбома в тегах сюда не попадают.",
+                 "genres": "Здесь появятся жанры. Android знает их только из тегов файлов, а у этих песен жанр не указан."}[kind]
+        self.build(None, empty)
+
+    def refresh(self):
+        self.items = self.owner.data.groups()[self.kind]
+        self.set_subtitle(str(len(self.items)) if self.items else "")
+        self.data_refreshed()
+
+    def count(self):
+        return len(self.items)
+
+    def letter(self, index):
+        return first_letter(self.items[index]["name"])
+
+    def row_view(self, position, convert):
+        owner = self.owner
+        if convert is None:
+            convert = owner.group_row(self.kind)
+        holder = owner.holders[convert.hashCode()]
+        item = self.items[position]
+        holder["title"].setText(item["name"])
+        holder["title"].setTextColor(owner.color("text"))
+        count = songs_label(len(item["tracks"]))
+        holder["subtitle"].setText("%s, %s" % (item["artist"], count) if self.kind == "albums" else count)
+        holder["subtitle"].setTextColor(owner.color("textSecondary"))
+        if "letter" in holder:
+            holder["letter"].setText(first_letter(item["name"]))
+            holder["letter"].setTextColor(owner.color("textSecondary"))
+        if "image" in holder:
+            owner.bind_cover(holder["image"], owner.group_cover(item["tracks"]), 48)
+        return convert
+
+    def row_clicked(self, index, view):
+        self.owner.open_group(self.kind, self.items[index])
+
+
+class BlankScreen(Screen):
+    """Popular songs: only the place for them, until there is something to count."""
+
+    def __init__(self, owner, title, text):
+        super().__init__(owner, title)
+        page = jclass("android.widget.LinearLayout")(owner.context)
+        page.setOrientation(1)
+        page.addView(self.header())
+        label = self.label(15, "textSecondary")
+        label.setText(text)
+        label.setGravity(17)
+        label.setSingleLine(False)
+        label.setPadding(_dp(32), 0, _dp(32), _dp(56))
+        page.addView(label, jclass("android.widget.LinearLayout$LayoutParams")(-1, 0, 1.0))
+        self.view = page
+
+
+class RootScreen(Screen):
+    """The first level: places to go first, the two rows of covers under them."""
+
+    def __init__(self, owner):
+        super().__init__(owner, "Медиатека")
+        LinearLayout = jclass("android.widget.LinearLayout")
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        context = owner.context
+        page = LinearLayout(context)
+        page.setOrientation(1)
+        page.addView(self.header(True))
+        self.scroll = jclass("android.widget.ScrollView")(context)
+        self.scroll.setVerticalScrollBarEnabled(False)
+        self.scroll.setOverScrollMode(2)
+        self.content = LinearLayout(context)
+        self.content.setOrientation(1)
+        self.content.setPadding(0, 0, 0, _dp(16))
+        self.scroll.addView(self.content)
+        page.addView(self.scroll, Params(-1, 0, 1.0))
+
+        self.message = self.label(15, "textSecondary")
+        self.message.setGravity(17)
+        self.message.setSingleLine(False)
+        self.message.setPadding(_dp(32), 0, _dp(32), _dp(16))
+        self.button = self.label(15, "onAccent", True)
+        self.button.setGravity(17)
+        self.button.setText("Разрешить")
+        self.click(self.button, owner.ask_permission)
+        self.notice = LinearLayout(context)
+        self.notice.setOrientation(1)
+        self.notice.setGravity(17)
+        self.notice.addView(self.message, Params(-1, -2))
+        button_at = Params(_dp(180), _dp(44))
+        button_at.gravity = 1
+        self.notice.addView(self.button, button_at)
+        page.addView(self.notice, Params(-1, 0, 1.0))
+        self.view = page
+
+        self.counts = {}
+        self.tile_views = []
+        self.nav("all", ("msg_filled_data_music", "msg_played"), "Все песни", owner.open_all)
+        self.nav("favorites", ("media_like",), "Любимые", owner.open_favorites)
+        self.nav(None, ("msg_stats",), "Популярные", owner.open_popular)
+        self.tiles()
+        self.added_row = self.preview("Недавно добавленные", owner.open_added)
+        self.played_row = self.preview("Недавно сыгранные", owner.open_played)
+        self.colors_changed()
+        self.refresh()
+
+    def colors_changed(self):
+        owner = self.owner
+        self.button.setBackground(owner.rounded(owner.color("accent"), _dp(22)))
+        for tile in self.tile_views:
+            tile.setBackground(owner.rounded(owner.color("surfaceContainer"), _dp(16)))
+
+    def nav(self, key, icons, title, action):
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        ImageView = jclass("android.widget.ImageView")
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(20), 0, _dp(16), 0)
+        row.setBackground(owner.selector(0))
+        icon = ImageView(owner.context)
+        owner.set_icon(icon, icons)
+        self.tint_icon(icon, "icon")
+        row.addView(icon, owner.params(24, 24))
+        name = self.label(16, "text")
+        name.setText(title)
+        name_at = Params(0, -2, 1.0)
+        name_at.setMarginStart(_dp(16))
+        row.addView(name, name_at)
+        count = self.label(14, "textSecondary")
+        row.addView(count)
+        if key is not None:
+            self.counts[key] = count
+        arrow = ImageView(owner.context)
+        owner.set_icon(arrow, ("msg_arrowright",))
+        self.tint_icon(arrow, "textSecondary")
+        arrow_at = owner.params(24, 24)
+        arrow_at.setMarginStart(_dp(4))
+        row.addView(arrow, arrow_at)
+        self.click(row, action)
+        self.content.addView(row, Params(-1, _dp(56)))
+
+    def tiles(self):
+        owner = self.owner
+        LinearLayout = jclass("android.widget.LinearLayout")
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        ImageView = jclass("android.widget.ImageView")
+        row = LinearLayout(owner.context)
+        row.setOrientation(0)
+        row.setPadding(_dp(16), _dp(8), _dp(16), _dp(8))
+        for index, (kind, title, icons) in enumerate((("artists", "Авторы", ("msg_contacts",)),
+                                                      ("albums", "Альбомы", ("msg_media",)),
+                                                      ("genres", "Жанры", ("msg_voice_headphones",)))):
+            tile = LinearLayout(owner.context)
+            tile.setOrientation(1)
+            tile.setGravity(17)
+            icon = ImageView(owner.context)
+            owner.set_icon(icon, icons)
+            self.tint_icon(icon, "icon")
+            tile.addView(icon, owner.params(24, 24))
+            name = self.label(13, "text", True)
+            name.setText(title)
+            name.setGravity(17)
+            top = Params(-1, -2)
+            top.topMargin = _dp(6)
+            tile.addView(name, top)
+            self.click(tile, owner.open_groups, kind, title)
+            place = Params(0, _dp(80), 1.0)
+            if index:
+                place.setMarginStart(_dp(8))
+            row.addView(tile, place)
+            self.tile_views.append(tile)
+        self.content.addView(row, Params(-1, -2))
+
+    def preview(self, title, action):
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        ImageView = jclass("android.widget.ImageView")
+        head = jclass("android.widget.LinearLayout")(owner.context)
+        head.setOrientation(0)
+        head.setGravity(16)
+        head.setPadding(_dp(20), 0, _dp(12), 0)
+        head.setBackground(owner.selector(0))
+        name = self.label(17, "text", True)
+        name.setText(title)
+        head.addView(name, Params(0, -2, 1.0))
+        more = self.label(14, "accent")
+        more.setText("Показать всё")
+        head.addView(more)
+        arrow = ImageView(owner.context)
+        owner.set_icon(arrow, ("msg_arrowright",))
+        self.tint_icon(arrow, "accent")
+        head.addView(arrow, owner.params(24, 24))
+        self.click(head, action)
+        top = Params(-1, _dp(44))
+        top.topMargin = _dp(8)
+        self.content.addView(head, top)
+
+        scroller, row = self.sideways()
+        self.content.addView(scroller, Params(-1, -2))
+        hint = self.label(14, "textSecondary")
+        hint.setSingleLine(False)
+        hint.setPadding(_dp(20), 0, _dp(20), 0)
+        self.content.addView(hint, Params(-1, -2))
+        return {"scroller": scroller, "row": row, "hint": hint, "shown": None, "tracks": []}
+
+    def fill(self, block, tracks, empty):
+        block["tracks"] = tracks
+        shown = [t["path"] for t in tracks[:PREVIEW_MAX]]
+        if shown != block["shown"]:
+            block["shown"] = shown
+            row = block["row"]
+            row.removeAllViews()
+            owner = self.owner
+            Params = jclass("android.widget.LinearLayout$LayoutParams")
+            for index, track in enumerate(tracks[:PREVIEW_MAX]):
+                tile = self.tile(track["path"], track["title"], track["artist"],
+                                 lambda i=index: owner.play(block["tracks"], i),
+                                 lambda view, t=track: owner.song_menu(view, t))
+                place = Params(-2, -2)
+                place.setMarginEnd(_dp(12))
+                row.addView(tile, place)
+        block["scroller"].setVisibility(0 if tracks else 8)
+        block["hint"].setVisibility(8 if tracks else 0)
+        block["hint"].setText(empty)
+
+    def refresh(self):
+        data = self.owner.data
+        has_songs = bool(data.tracks)
+        if not has_songs and not data.has_permission():
+            self.message.setText("Разреши доступ к музыке на телефоне, чтобы песни появились в медиатеке.")
+            self.button.setVisibility(0)
+        elif not has_songs:
+            self.message.setText("Ищу музыку на телефоне." if data.scanning or not data.loaded
+                                 else "На телефоне пока нет песен. Добавь музыку, и она появится здесь.")
+            self.button.setVisibility(8)
+        self.scroll.setVisibility(0 if has_songs else 8)
+        self.notice.setVisibility(8 if has_songs else 0)
+        if not has_songs:
+            return
+        self.counts["all"].setText(str(len(data.tracks)))
+        favorites = data.favorite_tracks()
+        self.counts["favorites"].setText(str(len(favorites)) if favorites else "")
+        self.fill(self.added_row, data.recently_added(), "")
+        self.fill(self.played_row, data.history_tracks(), "Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд.")
+
+
+class LibraryView:
+    """The media library tab of one open player: a stack of screens above the bottom panel."""
+
+    def __init__(self, player, context):
+        self.player = player
+        self.plugin = player.plugin
+        self.data = self.plugin.music
+        self.context = context
+        self.colors = None
+        self.colors_at = 0.0
+        self.colors_waiting = False
+        self.colors_dirty = False
+        self.stack = []
+        self.holders = {}
+        self.slots = {}
+        self.waiters = {}
+        self.visible = False
+        self.ready_paths = set()
+        self.ready_posted = False
+        self.bold = jclass("org.telegram.messenger.AndroidUtilities").bold()
+        self.regular = jclass("android.graphics.Typeface").DEFAULT
+        self.root = jclass("android.widget.FrameLayout")(context)
+        self.root.setClickable(True)
+        self.root.setVisibility(8)
+        player.layout.addOwnView(self.root)
+        self.data.covers.on_ready = self.cover_ready
+
+    # -- small helpers --------------------------------------------------------
+
+    def color(self, role):
+        return getattr(self.colors, role)
+
+    def selector(self, radius):
+        color = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(self.colors.text, 24)
+        return jclass("org.telegram.ui.ActionBar.Theme").createRadSelectorDrawable(color, radius, radius)
+
+    @staticmethod
+    def tint(view, color):
+        view.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(color, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
+
+    def resource(self, name):
+        return self.context.getResources().getIdentifier(name, "drawable", self.context.getPackageName())
+
+    def set_icon(self, view, icons):
+        for name in icons:
+            resource = self.resource(name)
+            if resource:
+                view.setImageResource(resource)
+                return
+
+    @staticmethod
+    def params(width, height):
+        return jclass("android.widget.LinearLayout$LayoutParams")(_dp(width), _dp(height))
+
+    @staticmethod
+    def rounded(color, radius):
+        drawable = jclass("android.graphics.drawable.GradientDrawable")()
+        drawable.setColor(color)
+        drawable.setCornerRadius(float(radius))
+        return drawable
+
+    def text_view(self, size, bold=False):
+        view = jclass("android.widget.TextView")(self.context)
+        view.setTextSize(1, float(size))
+        view.setSingleLine(True)
+        view.setEllipsize(jclass("android.text.TextUtils$TruncateAt").END)
+        if bold:
+            view.setTypeface(self.bold)
+        return view
+
+    def cover_view(self, radius, size):
+        """An image over a plain tile with a note, which is what stays when a file has no cover."""
+        image = jclass("org.telegram.ui.Components.BackupImageView")(self.context)
+        image.setRoundRadius(_dp(radius))
+        note = self.context.getResources().getDrawable(self.resource("msg_filled_data_music") or self.resource("msg_played"), None).mutate()
+        note.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(self.colors.textSecondary, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
+        inset = jclass("android.graphics.drawable.InsetDrawable")(note, _dp(size * 0.28))
+        Drawable = jclass("android.graphics.drawable.Drawable")
+        image.setBackground(jclass("android.graphics.drawable.LayerDrawable")(jarray(Drawable)([self.rounded(self.colors.surfaceContainer, _dp(radius)), inset])))
+        return image
+
+    def bind_cover(self, image, path, size):
+        image_id = image.hashCode()
+        if path is None:
+            self.slots[image_id] = None
+            image.getImageReceiver().clearImage()
+            return
+        if self.slots.get(image_id) == path and image.getImageReceiver().hasImageSet():
+            return
+        self.slots[image_id] = path
+        known, jpg = self.data.covers.cached(path)
+        if jpg is not None:
+            image.setImage(jpg, "%d_%d" % (size, size), None)
+            return
+        image.getImageReceiver().clearImage()
+        if not known:
+            self.waiters.setdefault(path, []).append((image, size))
+            self.data.covers.warm([path], first=True)
+
+    def cover_ready(self, path):
+        """Called on the covers' thread; many at once are handed to the screen in one go."""
+        if path not in self.waiters:
+            return
+        self.ready_paths.add(path)
+        if not self.ready_posted:
+            self.ready_posted = True
+            run_on_ui_thread(self.deliver_covers, COVERS_DELIVERY_MS)
+
+    def deliver_covers(self):
+        self.ready_posted = False
+        paths, self.ready_paths = self.ready_paths, set()
+        try:
+            for path in paths:
+                for image, size in self.waiters.pop(path, ()):
+                    if self.slots.get(image.hashCode()) != path:
+                        continue
+                    jpg = self.data.covers.cached(path)[1]
+                    if jpg is not None:
+                        image.setImage(jpg, "%d_%d" % (size, size), None)
+            if paths and self.stack and isinstance(self.stack[-1], GroupsScreen):
+                self.stack[-1].adapter.changed()
+        except Exception as e:
+            self.plugin.report("covers", e)
+
+    def group_cover(self, tracks):
+        """The first cover among a group's songs: what is read yet wins, and the unread ones get read."""
+        covers = self.data.covers
+        unknown = []
+        for track in tracks[:GROUP_COVER_TRIES]:
+            known, jpg = covers.cached(track["path"])
+            if jpg is not None:
+                return track["path"]
+            if not known:
+                unknown.append(track["path"])
+        return unknown[0] if unknown else None
+
+    def playing_path(self):
+        return local_path(jclass("org.telegram.messenger.MediaController").getInstance().getPlayingMessageObject())
+
+    # -- rows -----------------------------------------------------------------
+
+    def _row(self, height):
+        row = jclass("android.widget.LinearLayout")(self.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(16), 0, _dp(THUMB_AREA), 0)
+        row.setLayoutParams(jclass("android.widget.AbsListView$LayoutParams")(-1, _dp(height)))
+        return row
+
+    def _texts(self, row, holder):
+        column = jclass("android.widget.LinearLayout")(self.context)
+        column.setOrientation(1)
+        holder["title"] = self.text_view(16)
+        column.addView(holder["title"])
+        holder["subtitle"] = self.text_view(13)
+        column.addView(holder["subtitle"])
+        place = jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0)
+        place.setMarginStart(_dp(12))
+        row.addView(column, place)
+
+    def song_row(self):
+        holder = {}
+        row = self._row(64)
+        holder["image"] = self.cover_view(8, 48)
+        row.addView(holder["image"], self.params(48, 48))
+        self._texts(row, holder)
+        holder["time"] = self.text_view(13)
+        place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
+        place.setMarginStart(_dp(8))
+        row.addView(holder["time"], place)
+        self.holders[row.hashCode()] = holder
+        return row
+
+    def group_row(self, kind):
+        holder = {}
+        row = self._row(64)
+        Frame = jclass("android.widget.FrameLayout$LayoutParams")
+        if kind == "artists":
+            frame = jclass("android.widget.FrameLayout")(self.context)
+            frame.setBackground(self.rounded(self.colors.surfaceContainer, _dp(24)))
+            holder["letter"] = self.text_view(20, True)
+            holder["letter"].setGravity(17)
+            frame.addView(holder["letter"], Frame(-1, -1))
+            holder["image"] = jclass("org.telegram.ui.Components.BackupImageView")(self.context)
+            holder["image"].setRoundRadius(_dp(24))
+            frame.addView(holder["image"], Frame(-1, -1))
+            row.addView(frame, self.params(48, 48))
+        elif kind == "albums":
+            holder["image"] = self.cover_view(8, 48)
+            row.addView(holder["image"], self.params(48, 48))
+        self._texts(row, holder)
+        self.holders[row.hashCode()] = holder
+        return row
+
+    # -- menus ------------------------------------------------------------------
+
+    def make_menu(self, anchor, swipeback=True):
+        return self.plugin.sheet_menu(self.player.sheet, anchor, swipeback)
+
+    def song_menu(self, anchor, track):
+        path = track["path"]
+        menu = self.make_menu(anchor)
+        menu.add(self.resource("msg_played"), "Играть следующей", Run(lambda: self.menu_action(menu, self.queue_next, track)))
+        menu.add(self.resource("player_new_queue"), "В конец очереди", Run(lambda: self.menu_action(menu, self.queue_last, track)))
+        favorite = self.data.is_favorite(path)
+        menu.add(self.resource("media_like_active" if favorite else "media_like"), "Убрать из любимых" if favorite else "В любимые",
+                 Run(lambda: self.menu_action(menu, self.toggle_favorite, path)))
+        self.player.add_playlist_item(menu)
+        menu.show()
+
+    def menu_action(self, menu, action, *args):
+        try:
+            menu.dismiss()
+            action(*args)
+        except Exception as e:
+            self.plugin.report("menu", e)
+
+    def queue_next(self, track):
+        self.data.play_next(track)
+        self.plugin.bulletin(self.player.sheet, "saved_messages", "Песня заиграет следующей")
+
+    def queue_last(self, track):
+        self.data.play_last(track)
+        self.plugin.bulletin(self.player.sheet, "saved_messages", "Песня добавлена в конец очереди")
+
+    def toggle_favorite(self, path):
+        added = self.data.toggle_favorite(path)
+        self.plugin.bulletin(self.player.sheet, "saved_messages" if added else "ic_delete", "Добавлено в любимые" if added else "Убрано из любимых")
+        self.data_changed()
+        self.player.update_like()
+
+    # -- navigation ----------------------------------------------------------
+
+    def push(self, screen):
+        if self.stack:
+            self.root.removeView(self.stack[-1].view)
+        self.stack.append(screen)
+        self.root.addView(screen.view, jclass("android.widget.FrameLayout$LayoutParams")(-1, -1))
+        view = screen.view
+        view.setAlpha(0.0)
+        view.setTranslationX(float(_dp(24)))
+        interpolator = jclass("android.view.animation.DecelerateInterpolator")()
+        view.animate().alpha(1.0).translationX(0.0).setDuration(180).setInterpolator(interpolator).start()
+
+    def back(self):
+        if len(self.stack) > 1:
+            self.root.removeView(self.stack.pop().view)
+            top = self.stack[-1]
+            self.root.addView(top.view, jclass("android.widget.FrameLayout$LayoutParams")(-1, -1))
+            top.view.setAlpha(1.0)
+            top.view.setTranslationX(0.0)
+            top.refresh()
+        else:
+            self.player.show_tab(PANEL_ACTIVE)
+
+    def close_player(self):
+        self.player.collapseButton.performClick()
+
+    def show(self):
+        self.visible = True
+        self.root.setVisibility(0)
+        self.root.setAlpha(0.0)
+        self.root.animate().alpha(1.0).setDuration(150).start()
+        if not self.stack:
+            if self.colors is None:
+                self.colors = self.plugin.sheet_fields.get(self.player.sheet, "colors")
+            self.root.setBackgroundColor(self.colors.background)
+            self.root.setPadding(0, self.plugin.layout_fields.int(self.player.layout, "contentTop"), 0, 0)
+            self.push(RootScreen(self))
+        elif self.colors_dirty:
+            self.apply_colors()
+        self.data.scan()
+        self.data_changed()
+
+    def hide(self):
+        self.visible = False
+        self.root.animate().cancel()
+        self.root.setVisibility(8)
+
+    def data_changed(self):
+        if not self.visible:
+            return
+        for screen in self.stack:
+            screen.guarded(screen.refresh)
+
+    def set_colors(self, colors):
+        self.colors = colors
+        if not self.stack:
+            return
+        if not self.visible:
+            self.colors_dirty = True
+            return
+        # applyColors fires on every frame of a color animation: a few repaints a second are plenty here
+        if time.monotonic() - self.colors_at >= COLORS_SECONDS:
+            self.apply_colors()
+        elif not self.colors_waiting:
+            self.colors_waiting = True
+            run_on_ui_thread(self.apply_colors, int(COLORS_SECONDS * 1000))
+
+    def apply_colors(self):
+        self.colors_waiting = False
+        self.colors_dirty = False
+        self.colors_at = time.monotonic()
+        try:
+            self.root.setBackgroundColor(self.colors.background)
+            for screen in self.stack:
+                screen.retint()
+        except Exception as e:
+            self.plugin.report("library colors", e)
+
+    # -- opening things --------------------------------------------------------
+
+    def open_all(self):
+        self.push(SongsScreen(self, "Все песни", lambda: self.data.tracks, "all", "title"))
+
+    def open_favorites(self):
+        self.push(SongsScreen(self, "Любимые", self.data.favorite_tracks, "favorites", "added",
+                              "Здесь будут песни, которые ты отметишь сердечком. Отметить можно в плеере или долгим нажатием на песню.", fav_dates=True))
+
+    def open_added(self):
+        self.push(SongsScreen(self, "Недавно добавленные", lambda: self.data.tracks, "added", "added"))
+
+    def open_played(self):
+        self.push(SongsScreen(self, "Недавно сыгранные", self.data.history_tracks, None, "title",
+                              "Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд."))
+
+    def open_popular(self):
+        self.push(BlankScreen(self, "Популярные", "Здесь появятся песни, которые ты слушаешь чаще всего."))
+
+    def open_groups(self, kind, title):
+        self.push(GroupsScreen(self, kind, title))
+
+    def open_group(self, kind, item):
+        if kind == "artists":
+            albums = self.data.artist_albums(item["tracks"])
+            self.push(SongsScreen(self, item["name"], lambda: item["tracks"], "artist", "title",
+                                  list_header=lambda screen: self.albums_header(screen, albums)))
+        elif kind == "albums":
+            self.push(SongsScreen(self, item["name"], lambda: item["tracks"], "album", "track"))
+        else:
+            self.push(SongsScreen(self, item["name"], lambda: item["tracks"], "genre", "title"))
+
+    def albums_header(self, screen, albums):
+        """The author's albums above the songs, when there is more than one to choose from."""
+        if len(albums) < 2:
+            return None
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        block = jclass("android.widget.LinearLayout")(self.context)
+        block.setOrientation(1)
+        block.setLayoutParams(jclass("android.widget.AbsListView$LayoutParams")(-1, -2))
+        name = screen.label(17, "text", True)
+        name.setText("Альбомы")
+        name.setPadding(_dp(20), _dp(8), _dp(20), _dp(12))
+        block.addView(name)
+        scroller, row = screen.sideways()
+        for album in albums:
+            tile = screen.tile(self.group_cover(album["tracks"]), album["name"], songs_label(len(album["tracks"])),
+                               lambda a=album: self.open_group("albums", a))
+            place = Params(-2, -2)
+            place.setMarginEnd(_dp(12))
+            row.addView(tile, place)
+        block.addView(scroller, Params(-1, -2))
+        songs = screen.label(17, "text", True)
+        songs.setText("Песни")
+        songs.setPadding(_dp(20), _dp(16), _dp(20), _dp(8))
+        block.addView(songs)
+        return block
+
+    def play(self, tracks, index):
+        self.player.show_tab(PANEL_ACTIVE)
+        self.data.play(list(tracks), index)
+
+    # -- permission --------------------------------------------------------------
+
+    def ask_permission(self):
+        activity = jclass("org.telegram.ui.LaunchActivity").instance
+        permission = self.data.permission()
+        if self.plugin.get_setting("permission_asked", False) and not activity.shouldShowRequestPermissionRationale(permission):
+            # Android stopped showing the question after a refusal: only the app's settings page can change it now
+            uri = jclass("android.net.Uri").fromParts("package", self.context.getPackageName(), None)
+            activity.startActivity(jclass("android.content.Intent")("android.settings.APPLICATION_DETAILS_SETTINGS", uri))
+        else:
+            self.plugin.set_setting("permission_asked", True)
+            activity.requestPermissions(jarray(jclass("java.lang.String"))([permission]), PERMISSION_REQUEST)
+        self.wait_permission(PERMISSION_POLLS)
+
+    def wait_permission(self, polls):
+        if self.data.has_permission():
+            self.data.scan()
+            self.data_changed()
+        elif polls > 0:
+            run_on_ui_thread(lambda: self.wait_permission(polls - 1), 500)
+
+
+class Player:
+    """One open MusicPlayerSheet: its views and the ones this plugin adds to it."""
+
+    NAMES = ("titleView", "artistView", "seekBar", "timeView", "durationView", "controlsView", "profileButton",
+             "lyricsButton", "queueButton", "moreButton", "speedButton", "repeatButton", "shuffleButton",
+             "collapseButton", "headerTitle", "headerSubtitle", "coverView")
+
+    def __init__(self, plugin, sheet):
+        self.plugin = plugin
+        self.sheet = sheet
+        self.layout = plugin.sheet_fields.get(sheet, "playerLayout")
+        self.layout_id = self.layout.hashCode()
+        for name in self.NAMES:
+            setattr(self, name, plugin.sheet_fields.get(sheet, name))
+        self.album = None
+        self.volume = None
+        self.equalizer = None
+        self.listeners = []
+        self.visualizer = None
+        self.album_checked = 0.0
+        self.tabs = []
+        self.panel_top = 0
+        self.divider = None
+        self.indicator = None
+        self.panel_hidden = False
+        self.context = None
+        self.active_tab = PANEL_ACTIVE
+        self.library = None
+        self.like = None
+        self.add = None
+        self.add_ring = None
+        self.menu_runs = []
+
+    def library_visible(self):
+        return self.library is not None and self.library.visible
+
+    def build(self, context):
+        self.context = context
+        TextView = jclass("android.widget.TextView")
+        Gravity = jclass("android.view.Gravity")
+        self.titleView.setIsCenter()
+        self.artistView.setIsCenter()
+
+        self.album = TextView(context)
+        self.album.setTextSize(1, 14.0)
+        self.album.setSingleLine(True)
+        self.album.setEllipsize(jclass("android.text.TextUtils$TruncateAt").END)
+        self.album.setGravity(Gravity.CENTER)
+        self.layout.addOwnView(self.album)
+
+        self.volume = self._button(context, ("filled_sound_on", "msg_call_speaker"), "Громкость", self.plugin.show_volume)
+        self.equalizer = self._button(context, ("msg_photo_settings", "msg_settings"), "Эквалайзер", self.plugin.show_equalizer)
+
+        self.like = self._button(context, ("media_like",), "В любимые", self.like_pressed)
+        self.add = self._button(context, ("msg_add",), "Добавить", self.add_pressed)
+        self.add_ring = jclass("android.graphics.drawable.GradientDrawable")()
+        self.add_ring.setShape(1)  # oval
+        self.add.setBackground(jclass("android.graphics.drawable.InsetDrawable")(self.add_ring, _dp((BUTTON - 28.0) / 2.0)))
+
+        # The seek bar is 68 dp tall and reaches over the icon row: this one was added before it.
+        self.moreButton.bringToFront()
+
+        self.apply_wave()
+        self.build_panel(context)
+        self.visualizer = Visualizer(self.plugin, self)
+        self.update_like()
+        self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
+        self.update_album()
+
+    def build_panel(self, context):
+        View = jclass("android.view.View")
+        self.divider = View(context)
+        self.layout.addOwnView(self.divider)
+        for index, (title, icons) in enumerate(PANEL_TABS):
+            # the others are blanks for now: only the icon and the name, shown as a tooltip on a long press
+            tab = self._button(context, icons, title, lambda i=index: self.tab_pressed(i))
+            tab.setTooltipText(title)
+            self.tabs.append(tab)
+        self.indicator = View(context)
+        self.layout.addOwnView(self.indicator)
+        self.moreButton.bringToFront()
+
+    def tab_pressed(self, index):
+        if index in (PANEL_ACTIVE, PANEL_LIBRARY):
+            self.show_tab(index)
+
+    def show_tab(self, index):
+        if index == self.active_tab:
+            return
+        self.active_tab = index
+        if index == PANEL_LIBRARY:
+            if self.library is None:
+                self.library = LibraryView(self, self.context)
+                self.library.set_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
+                self.layout.requestLayout()
+            self.library.show()
+        elif self.library is not None:
+            self.library.hide()
+            self.layout.postInvalidateOnAnimation()
+        self.paint_tabs(self.plugin.sheet_fields.get(self.sheet, "colors"))
+        self.place_indicator()
+
+    def paint_tabs(self, colors):
+        PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
+        mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
+        for index, tab in enumerate(self.tabs):
+            tab.setColorFilter(PorterDuffColorFilter(colors.accent if index == self.active_tab else colors.icon, mode))
+
+    def place_indicator(self):
+        f = self.plugin.layout_fields
+        slot = f.int(self.layout, "paneWidth") // (len(self.tabs) + 1)
+        left = f.int(self.layout, "paneLeft") + self.active_tab * slot
+        self.indicator.layout(left, self.panel_top, left + self.indicator.getMeasuredWidth(), self.panel_top + self.indicator.getMeasuredHeight())
+
+    def playing(self):
+        return jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+
+    def like_pressed(self):
+        path = local_path(self.playing())
+        if path is None:
+            self.plugin.bulletin(self.sheet, "info", "В любимые можно добавить только песню с телефона.")
+            return
+        added = self.plugin.music.toggle_favorite(path)
+        self.plugin.bulletin(self.sheet, "saved_messages" if added else "ic_delete", "Добавлено в любимые" if added else "Убрано из любимых")
+        self.update_like()
+        if self.library is not None:
+            self.library.data_changed()
+
+    def update_like(self):
+        if self.like is None:
+            return
+        res = self.context.getResources()
+        package = self.context.getPackageName()
+        path = local_path(self.playing())
+        favorite = path is not None and self.plugin.music.is_favorite(path)
+        self.like.setImageResource(res.getIdentifier("media_like_active" if favorite else "media_like", "drawable", package))
+        self.like.setContentDescription("Убрать из любимых" if favorite else "В любимые")
+        colors = self.plugin.sheet_fields.get(self.sheet, "colors")
+        if colors is not None:
+            self.tint_like(colors, path, favorite)
+
+    def tint_like(self, colors, path, favorite):
+        # A song from a chat cannot be marked: the heart stays visible, dimmed, and says why when pressed.
+        color = colors.accent if favorite else colors.icon
+        if path is None:
+            color = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(colors.icon, 90)
+        self.like.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(color, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
+
+    def add_pressed(self):
+        message = self.playing()
+        if message is None:
+            return
+        res = self.context.getResources()
+        package = self.context.getPackageName()
+
+        def icon(name):
+            return res.getIdentifier(name, "drawable", package)
+
+        menu = self.plugin.sheet_menu(self.sheet, self.add, True)
+        self.menu_runs = []
+        if local_path(message) is not None:
+            # Telegram can only keep what it has on its servers, and this file is only on the phone.
+            menu.add(icon("left_status_profile"), "Добавить в профиль", self.run_later(lambda: self.plugin.bulletin(self.sheet, "info", "В профиль можно добавить только песню из Telegram.")))
+            last = menu.getLast()
+            if last is not None:
+                last.setAlpha(0.5)
+        else:
+            inside = self.plugin.sheet_actions(self.sheet).isInProfile(message)
+
+            def toggle():
+                menu.dismiss()
+                self.plugin.toggle_profile(self.sheet)
+
+            menu.add(icon("left_status_profile"), "Убрать из профиля" if inside else "Добавить в профиль", self.run_later(toggle))
+        self.add_playlist_item(menu)
+        menu.show()
+
+    def run_later(self, action):
+        run = Run(lambda: self.guarded_menu(action))
+        self.menu_runs.append(run)
+        return run
+
+    def guarded_menu(self, action):
+        try:
+            action()
+        except Exception as e:
+            self.plugin.report("menu", e)
+
+    def add_playlist_item(self, menu):
+        """Playlists are a blank for now: the list and its "create" button are in place, with nothing behind them."""
+        res = self.context.getResources()
+        package = self.context.getPackageName()
+
+        def icon(name):
+            return res.getIdentifier(name, "drawable", package)
+
+        submenu = menu.makeSwipeback()
+        submenu.add(icon("ic_ab_back"), "Назад", self.run_later(menu.closeSwipeback))
+
+        def create():
+            menu.dismiss()
+            self.plugin.bulletin(self.sheet, "info", "Плейлисты появятся позже.")
+
+        submenu.addGap()
+        submenu.add(icon("msg_add"), "Создать плейлист", self.run_later(create))
+        menu.add(icon("msg_addfolder"), "В плейлист", self.run_later(lambda: menu.openSwipeback(submenu)))
+        last = menu.getLast()
+        if last is not None:
+            last.setRightIcon(icon("msg_arrowright"))
+
+    def hide_panel(self, hidden):
+        """Search in the queue opens the keyboard: the panel gives way, like the rest of the controls."""
+        if hidden == self.panel_hidden or self.divider is None:
+            return
+        self.panel_hidden = hidden
+        for view in self.tabs + [self.divider, self.indicator, self.moreButton]:
+            view.setAlpha(0.0 if hidden else 1.0)
+            view.setEnabled(not hidden)
+
+    def apply_wave(self):
+        amplitude = 0.0 if self.plugin.get_setting("flat_seek", True) else 3.0
+        self.seekBar.setWaveStyle(4.0, amplitude, 40.0, 24.0, 4.0, 18.0)
+
+    def _button(self, context, icons, description, action):
+        button = jclass("android.widget.ImageView")(context)
+        res = context.getResources()
+        for icon in icons:
+            resource = res.getIdentifier(icon, "drawable", context.getPackageName())
+            if resource:
+                button.setImageResource(resource)
+                break
+        button.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
+        button.setContentDescription(description)
+        listener = OnClickListener(lambda view: action())
+        self.listeners.append(listener)
+        button.setOnClickListener(listener)
+        self.layout.addOwnView(button)
+        return button
+
+    def apply_colors(self, colors):
+        if self.album is None or colors is None:
+            return
+        self.album.setTextColor(colors.textSecondary)
+        PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
+        mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
+        self.volume.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
+        self.equalizer.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
+        self.paint_tabs(colors)
+        if self.like is not None:
+            path = local_path(self.playing())
+            self.tint_like(colors, path, path is not None and self.plugin.music.is_favorite(path))
+            self.add.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
+            self.add_ring.setStroke(_dp(1.5), colors.icon)
+        if self.library is not None:
+            self.library.set_colors(colors)
+        if self.divider is not None:
+            ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+            self.divider.setBackgroundColor(ColorUtils.setAlphaComponent(colors.text, 30))
+            self.indicator.setBackgroundColor(colors.accent)
+        if self.visualizer is not None:
+            self.visualizer.set_colors(colors)
+
+    def update_album(self):
+        if self.album is None:
+            return
+        album = None
+        try:
+            info = jclass("org.telegram.messenger.MediaController").getInstance().getAudioInfo()
+            album = info.getAlbum() if info is not None else None
+        except Exception:
+            pass
+        text = str(album) if album else ""
+        if str(self.album.getText()) != text:
+            self.album.setText(text)
+        self.recenter()
+
+    def recenter(self):
+        """Beside the small cover in queue and lyrics: the text keeps close to the middle of the screen.
+
+        Its center sits halfway between the screen's right edge and the point halfway across the cover's left
+        margin. A long title moves right just enough to clear the cover.
+        """
+        sf, f = self.plugin.sheet_fields, self.plugin.layout_fields
+        progress = max(sf.float(self.sheet, "modeProgress"), sf.float(self.sheet, "canvasTitleProgress"))
+        if progress <= 0.0:
+            return
+        lay = self.layout
+        pane_left = f.int(lay, "paneLeft")
+        left = pane_left + _dp(MARGIN)
+        shift = (f.int(lay, "compactCoverSize") + _dp(16)) * progress
+        width = f.int(lay, "textWidth") - round(shift)
+        wanted = (pane_left + f.int(lay, "paneWidth") + pane_left + _dp(10)) / 2.0
+        center = left + shift + width / 2.0
+        for switcher in (self.titleView, self.artistView):
+            label = switcher.getTextView()
+            text = label.getText()
+            text_width = min(float(width), label.getPaint().measureText(str(text))) if text is not None else 0.0
+            target = max(wanted, left + shift + text_width / 2.0)
+            switcher.setTranslationX(float(shift + min(0.0, target - center)))
+
+    def geometry(self, height):
+        """All the numbers PlayerLayout.onLayout and applyTransitions read, built from the bottom up."""
+        f = self.plugin.layout_fields
+        lay = self.layout
+        content_top = f.int(lay, "contentTop")
+        content_left = f.int(lay, "contentLeft")
+        content_width = f.int(lay, "contentWidth")
+
+        self.panel_top = height - _dp(PANEL_H)
+        transport_top = self.panel_top - _dp(4) - _dp(TRANSPORT_H)
+        line_center = transport_top - _dp(20)
+        toolbar_top = line_center - _dp(24) - _dp(BUTTON)
+        title_top = toolbar_top - _dp(8) - _dp(TEXT_BLOCK)
+
+        header = content_top + _dp(HEADER_H)
+        space = title_top - _dp(12) - (header + _dp(8))
+        size = float(max(0, min(content_width - 2 * _dp(MARGIN), space)))
+        f.set_int(lay, "headerBottom", header)
+        f.set_int(lay, "stageTop", header + _dp(8))
+        f.set_float(lay, "coverSize", size)
+        f.set_float(lay, "coverLeft", content_left + (content_width - size) / 2.0)
+        f.set_float(lay, "coverTop", header + _dp(8) + (space - size) / 2.0)
+        f.set_int(lay, "titleTop", title_top)
+        f.set_int(lay, "toolbarTop", toolbar_top)
+        f.set_int(lay, "lineCenter", line_center)
+        f.set_int(lay, "timesTop", line_center - _dp(9))
+        f.set_int(lay, "transportTop", transport_top)
+        if not f.bool(lay, "keyboardLayout"):
+            f.set_int(lay, "stageBottom", title_top - _dp(16))
+
+    def measure(self):
+        f = self.plugin.layout_fields
+        lay = self.layout
+        pane = f.int(lay, "paneWidth")
+        text = pane - 2 * _dp(MARGIN)
+        f.set_int(lay, "textWidth", text)
+        spec = jclass("android.view.View$MeasureSpec")
+        exact = spec.EXACTLY
+
+        def measure(view, width, height):
+            view.measure(spec.makeMeasureSpec(max(0, int(width)), exact), spec.makeMeasureSpec(max(0, int(height)), exact))
+
+        measure(self.titleView, text, _dp(TITLE_H))
+        measure(self.artistView, text + 2 * _dp(6), _dp(TITLE_H))
+        measure(self.album, text, _dp(ALBUM_H))
+        measure(self.seekBar, text - 2 * _dp(TIME_WIDTH + 4), _dp(SEEK_H))
+        measure(self.timeView, _dp(TIME_WIDTH), _dp(18))
+        measure(self.durationView, _dp(TIME_WIDTH), _dp(18))
+        for button in (self.like, self.add, self.lyricsButton, self.queueButton, self.moreButton, self.speedButton,
+                       self.repeatButton, self.shuffleButton, self.volume, self.equalizer):
+            measure(button, _dp(BUTTON), _dp(BUTTON))
+        slot = pane // (len(self.tabs) + 1)
+        for tab in self.tabs:
+            measure(tab, slot, _dp(PANEL_H))
+        measure(self.divider, pane, max(1, _dp(1) // 2))
+        measure(self.indicator, slot, _dp(2))
+        if self.library is not None:
+            measure(self.library.root, pane, self.panel_top)
+
+    def step(self):
+        pane = self.plugin.layout_fields.int(self.layout, "paneWidth")
+        # seven buttons in the row: heart, plus, lyrics, queue, then speed, repeat and shuffle at the other end
+        return min(_dp(STEP), (pane - 2 * _dp(MARGIN) - _dp(BUTTON)) // 6)
+
+    def place_mode_buttons(self):
+        f = self.plugin.layout_fields
+        left = f.int(self.layout, "paneLeft") + _dp(MARGIN)
+        top = f.int(self.layout, "toolbarTop")
+        size = _dp(BUTTON)
+        step = self.step()
+        for index, button in ((2, self.lyricsButton), (3, self.queueButton)):
+            x = left + index * step
+            button.layout(x, top, x + size, top + size)
+
+    def place(self):
+        f = self.plugin.layout_fields
+        lay = self.layout
+        left = f.int(lay, "paneLeft") + _dp(MARGIN)
+        right = f.int(lay, "paneLeft") + f.int(lay, "paneWidth") - _dp(MARGIN)
+        title_top = f.int(lay, "titleTop")
+        toolbar_top = f.int(lay, "toolbarTop")
+        line_center = f.int(lay, "lineCenter")
+        times_top = f.int(lay, "timesTop")
+        transport_top = f.int(lay, "transportTop")
+        size = _dp(BUTTON)
+
+        def put(view, x, y):
+            view.layout(x, y, x + view.getMeasuredWidth(), y + view.getMeasuredHeight())
+
+        put(self.titleView, left, title_top)
+        put(self.artistView, left - _dp(6), title_top + _dp(ARTIST_OFFSET))
+        put(self.album, left, title_top + _dp(ALBUM_OFFSET))
+
+        step = self.step()
+        # the player's own heart adds to the Telegram profile; here that is a line in the plus's menu
+        self.profileButton.layout(0, 0, 0, 0)
+        put(self.like, left, toolbar_top)
+        put(self.add, left + step, toolbar_top)
+        self.place_mode_buttons()
+        put(self.speedButton, right - size - 2 * step, toolbar_top)
+        put(self.repeatButton, right - size - step, toolbar_top)
+        put(self.shuffleButton, right - size, toolbar_top)
+
+        put(self.timeView, left, times_top)
+        put(self.durationView, right - _dp(TIME_WIDTH), times_top)
+        put(self.seekBar, left + _dp(TIME_WIDTH + 4), line_center - _dp(SEEK_LINE))
+
+        center_y = transport_top + (self.controlsView.getMeasuredHeight() - size) // 2
+        put(self.volume, left, center_y)
+        put(self.equalizer, right - size, center_y)
+        put(self.controlsView, left + size + _dp(8), transport_top)
+
+        pane_left = f.int(lay, "paneLeft")
+        slot = f.int(lay, "paneWidth") // (len(self.tabs) + 1)
+        put(self.divider, pane_left, self.panel_top)
+        for index, tab in enumerate(self.tabs):
+            put(tab, pane_left + index * slot, self.panel_top)
+        self.place_indicator()
+        put(self.moreButton, pane_left + len(self.tabs) * slot + (slot - size) // 2, self.panel_top + (_dp(PANEL_H) - size) // 2)
+        if self.library is not None:
+            put(self.library.root, pane_left, 0)
+
+
+class _Hook(MethodHook):
+    def __init__(self, plugin, name):
+        self.plugin = plugin
+        self.name = name
+
+    def fail(self, exc):
+        self.plugin.report(self.name, exc)
+
+
+class ConstructorHook(_Hook):
+    def after_hooked_method(self, param):
+        try:
+            self.plugin.open_player(param.thisObject, param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+
+class LayoutHook(_Hook):
+    """PlayerLayout.computeGeometry / onMeasure / onLayout, after the original, portrait only."""
+
+    def __init__(self, plugin, name, action):
+        super().__init__(plugin, name)
+        self.action = action
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player_for(param.thisObject)
+            if player is not None:
+                self.action(player, param)
+        except Exception as e:
+            self.fail(e)
+
+
+class ModeSegmentsHook(_Hook):
+    """PlayerLayout.layoutModeSegments: lyrics and queue join the icon row instead of the two wide segments."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player_for(param.thisObject)
+            if player is not None:
+                player.place_mode_buttons()
+                param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class ModeSegmentColorsHook(_Hook):
+    """applyModeSegment(ImageView, ExpressiveStateDrawable, PlayerColors): plain icon, accent when selected."""
+
+    def before_hooked_method(self, param):
+        try:
+            view, background, colors = param.args[0], param.args[1], param.args[2]
+            tint = jclass("androidx.core.graphics.ColorUtils").blendARGB(colors.icon, colors.accent, background.getSelectProgress())
+            view.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(tint, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
+            background.setColors(tint, 0).setSelectedContainerColor(0)
+            param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class ColorsHook(_Hook):
+    """MusicPlayerSheet.applyColors: what this plugin added follows the cover colors too."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None:
+                player.apply_colors(param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+
+class SpeedColorsHook(_Hook):
+    """applySpeedColors: the speed button is a plain label like its neighbours, without the outline."""
+
+    def after_hooked_method(self, param):
+        try:
+            self.plugin.sheet_fields.get(param.thisObject, "speedBackground").setOutline(0, 1.0)
+        except Exception as e:
+            self.fail(e)
+
+
+class ControlsColorsHook(_Hook):
+    """PlayerControlsView.setColors(tonal, onTonal, accent, onAccent): no containers, only the icons."""
+
+    def before_hooked_method(self, param):
+        try:
+            icon = int(param.args[1])
+            param.args[0] = JInteger(0)
+            param.args[2] = JInteger(0)
+            param.args[3] = JInteger(icon)
+        except Exception as e:
+            self.fail(e)
+
+
+class CoverRectHook(_Hook):
+    """PlayerCoverView.setCoverRect(left, top, size, radius, compact): the big cover's corners."""
+
+    def before_hooked_method(self, param):
+        try:
+            compact = float(param.args[4])
+            radius = _dp(self.plugin.cover_radius()) * (1.0 - compact) + _dp(14) * compact
+            param.args[3] = JFloat(float(radius))
+        except Exception as e:
+            self.fail(e)
+
+
+class TransitionsHook(_Hook):
+    """applyTransitions runs on every frame of a mode change: the album line leaves with the big cover."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.album is not None:
+                player.album.setAlpha(1.0 - min(1.0, max(0.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress"))))
+                # the heart and the plus come and go the way the player's own heart would
+                alpha = player.profileButton.getAlpha()
+                player.like.setAlpha(alpha)
+                player.add.setAlpha(alpha)
+                player.recenter()
+                player.hide_panel(self.plugin.layout_fields.bool(player.layout, "keyboardLayout"))
+        except Exception as e:
+            self.fail(e)
+
+
+class DrawHook(_Hook):
+    """PlayerLayout.onDraw, after the background and under the views: the visualizer."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player_for(param.thisObject)
+            if player is not None and player.visualizer is not None:
+                player.visualizer.draw(param.args[0])
+                # the file's tags arrive after bindMessage, with nothing to tell when
+                now = time.monotonic()
+                if now - player.album_checked > 1.0:
+                    player.album_checked = now
+                    player.update_album()
+        except Exception as e:
+            self.fail(e)
+
+
+class RhythmHook(_Hook):
+    """updateRhythm: the analyzer also runs for the visualizer, even with the rhythm background off."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is None or not (self.plugin.get_setting("vis_top", True) or self.plugin.get_setting("vis_bottom", True)):
+                return
+            sheet = param.thisObject
+            shown = sheet.isShowing() and not sheet.isDismissed() and player.layout.getWindowVisibility() == 0
+            jclass(RHYTHM_TAP).setEnabled(bool(shown))
+        except Exception as e:
+            self.fail(e)
+
+
+class BindHook(_Hook):
+    def after_hooked_method(self, param):
+        try:
+            if self.plugin.player is not None:
+                self.plugin.player.update_album()
+                self.plugin.player.update_like()
+        except Exception as e:
+            self.fail(e)
+
+
+class SettingsFillHook(_Hook):
+    """PlayerSettingsSheet.fillItems(items, adapter): this plugin's settings live in the player's own sheet."""
+
+    def after_hooked_method(self, param):
+        try:
+            self.plugin.fill_settings(param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+
+class SettingsClickHook(_Hook):
+    """PlayerSettingsSheet.onItemClick(item, view): the switches of this plugin."""
+
+    def before_hooked_method(self, param):
+        try:
+            key = CHECKS.get(int(param.args[0].id))
+            if key is None:
+                return
+            value = not self.plugin.get_setting(key, True)
+            self.plugin.set_setting(key, value)
+            param.args[1].setChecked(value)
+            self.plugin.settings_changed()
+            param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class BackHook(_Hook):
+    """MusicPlayerSheet.onBackPressed: inside the media library, back goes up one level at a time."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.library_visible():
+                player.library.back()
+                param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class SwipeAreaHook(_Hook):
+    """isSwipeDismissArea(x, y): the lists scroll under the finger, so only the screen's header drags the player down."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.library_visible():
+                if float(param.args[1]) >= self.plugin.layout_fields.int(player.layout, "headerBottom"):
+                    param.setResult(JBoolean.FALSE)
+        except Exception as e:
+            self.fail(e)
+
+
+class ArtworkHook(_Hook):
+    """MessageObject.getArtworkUrl(boolean): the file's own cover for a song from the library, never a search by title."""
+
+    def before_hooked_method(self, param):
+        try:
+            path = local_path(param.thisObject)
+            if path is not None:
+                param.setResult(self.plugin.music.covers.get(path))
+        except Exception as e:
+            self.fail(e)
+
+
+class NeedsArtworkHook(_Hook):
+    """PlayerCovers.needsArtwork: a small cover in a phone's file is still that song's cover, so no looking online."""
+
+    def before_hooked_method(self, param):
+        try:
+            if local_path(param.args[0]) is not None:
+                param.setResult(JBoolean.FALSE)
+        except Exception as e:
+            self.fail(e)
+
+
+class PlayHook(_Hook):
+    """MediaController.playMessage: something started, so the time spent listening is counted from here."""
+
+    def after_hooked_method(self, param):
+        try:
+            self.plugin.listen.kick()
+        except Exception as e:
+            self.fail(e)
+
+
+class NewPlayerHook(_Hook):
+    """ExteraConfig.getNewPlayerStyle: the sculpted player is the new one, so it is on while the plugin is."""
+
+    def before_hooked_method(self, param):
+        param.setResult(JBoolean.TRUE)
+
+
+class SculptPlayerPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self.hooks = []
+        self.player = None
+        self.sheet_fields = None
+        self.layout_fields = None
+        self.reported = set()
+        self.callbacks = []
+        self.music = None
+        self.listen = None
+        self.media_fields = None
+        self.sheet_methods = {}
+
+    def on_plugin_load(self):
+        try:
+            self.sheet_fields = Fields(SHEET)
+            self.media_fields = Fields(MEDIA_CONTROLLER)
+            self.music = MusicData(self)
+            self.listen = ListenTimer(self)
+            self.layout_fields = Fields(LAYOUT)
+            self.cover_fields = Fields(COVER)
+            sheet = self.sheet_fields.cls
+            layout = self.layout_fields.cls
+            view = _java_class("android.widget.ImageView")
+            drawable = _java_class(SEGMENT_DRAWABLE)
+            colors = _java_class(COLORS)
+            controls = _java_class(CONTROLS)
+            cover = _java_class(COVER)
+            config = _java_class(CONFIG)
+            i, f, b = JInteger.TYPE, JFloat.TYPE, JBoolean.TYPE
+
+            self.remember(self.hook_all_constructors(sheet, ConstructorHook(self, "constructor")))
+            self.install(layout, "computeGeometry", (i,), LayoutHook(self, "computeGeometry", lambda p, a: p.geometry(int(a.args[0]))))
+            self.install(layout, "onMeasure", (i, i), LayoutHook(self, "onMeasure", lambda p, a: p.measure()))
+            self.install(layout, "onLayout", (b, i, i, i, i), LayoutHook(self, "onLayout", lambda p, a: p.place()))
+            self.install(layout, "layoutModeSegments", (), ModeSegmentsHook(self, "layoutModeSegments"))
+            self.install(sheet, "applyModeSegment", (view, drawable, colors), ModeSegmentColorsHook(self, "applyModeSegment"))
+            self.install(sheet, "applyColors", (colors,), ColorsHook(self, "applyColors"))
+            self.install(sheet, "applySpeedColors", (colors,), SpeedColorsHook(self, "applySpeedColors"))
+            self.install(sheet, "applyTransitions", (), TransitionsHook(self, "applyTransitions"))
+            self.install(sheet, "bindMessage", (b, b), BindHook(self, "bindMessage"))
+            self.install(sheet, "updateRhythm", (), RhythmHook(self, "updateRhythm"))
+            self.install(layout, "onDraw", (_java_class("android.graphics.Canvas"),), DrawHook(self, "onDraw"))
+            self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
+            self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
+            self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
+            self.install(sheet, "onBackPressed", (), BackHook(self, "onBackPressed"))
+            self.install(sheet, "isSwipeDismissArea", (f, f), SwipeAreaHook(self, "isSwipeDismissArea"))
+            message = _java_class(MESSAGE_OBJECT)
+            self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
+            self.install(_java_class(PLAYER_COVERS), "needsArtwork", (message,), NeedsArtworkHook(self, "needsArtwork"))
+            self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", PlayHook(self, "playMessage")))
+            settings = _java_class(SETTINGS_SHEET)
+            self.install(settings, "fillItems", (_java_class("java.util.ArrayList"), _java_class("org.telegram.ui.Components.UniversalAdapter")),
+                         SettingsFillHook(self, "fillItems"))
+            self.install(settings, "onItemClick", (_java_class("org.telegram.ui.Components.UItem"), _java_class("android.view.View")),
+                         SettingsClickHook(self, "onItemClick"))
+            _log("loaded " + __version__)
+        except Exception as e:
+            _show_error("Sculpt Player: не удалось загрузиться", e)
+
+    def on_plugin_unload(self):
+        for handle in self.hooks:
+            try:
+                self.unhook_method(handle)
+            except Exception:
+                pass
+        self.hooks = []
+        self.player = None
+        if self.listen is not None:
+            self.listen.stopped = True
+
+    def install(self, cls, name, types, handler):
+        method = cls.getDeclaredMethod(name, *types)
+        method.setAccessible(True)
+        handle = self.hook_method(method, handler)
+        if not handle:
+            handle = self.hook_all_methods(cls, name, handler)
+        if not handle:
+            raise RuntimeError("no hook on %s" % name)
+        self.remember(handle)
+
+    def remember(self, handle):
+        if isinstance(handle, (list, tuple)):
+            self.hooks.extend(handle)
+        elif handle:
+            self.hooks.append(handle)
+
+    def report(self, name, exc):
+        # Layout hooks fire many times a second: one bulletin per failing hook is enough.
+        if name not in self.reported:
+            self.reported.add(name)
+            _show_error("Sculpt Player: ошибка в %s" % name, exc)
+
+    def sheet_method(self, name, *types):
+        method = self.sheet_methods.get(name)
+        if method is None:
+            method = self.sheet_fields.cls.getDeclaredMethod(name, *types)
+            method.setAccessible(True)
+            self.sheet_methods[name] = method
+        return method
+
+    def sheet_menu(self, sheet, anchor, swipeback):
+        """The player's own menu builder, so these menus look and dim like its other ones."""
+        method = self.sheet_method("makeMenu", _java_class("android.view.View"), JBoolean.TYPE, JBoolean.TYPE)
+        return method.invoke(sheet, anchor, bool(swipeback), not swipeback)
+
+    def sheet_actions(self, sheet):
+        return self.sheet_fields.get(sheet, "actions")
+
+    def toggle_profile(self, sheet):
+        self.sheet_method("toggleProfile").invoke(sheet)
+
+    def bulletin(self, sheet, animation, text):
+        """A message at the player's own bottom edge, the way it reports saving a song."""
+        context = _ctx()
+        resource = context.getResources().getIdentifier(animation, "raw", context.getPackageName())
+        self.sheet_method("bulletins").invoke(sheet).createSimpleBulletin(resource, text).show()
+
+    def cover_radius(self):
+        index = self.get_setting("cover_radius", 1)
+        return RADIUS_VALUES[index if 0 <= index < len(RADIUS_VALUES) else 1]
+
+    def open_player(self, sheet, context):
+        player = Player(self, sheet)
+        player.build(context)
+        self.player = player
+        player.layout.requestLayout()
+
+    def player_for(self, layout):
+        player = self.player
+        if player is None or layout.hashCode() != player.layout_id:
+            return None
+        if self.layout_fields.bool(layout, "landscape"):
+            return None
+        return player
+
+    def show_volume(self):
+        audio = _ctx().getSystemService("audio")
+        audio.adjustStreamVolume(3, 0, 1)  # STREAM_MUSIC, ADJUST_SAME, FLAG_SHOW_UI
+
+    def show_equalizer(self):
+        ctx = _ctx()
+        intent = jclass("android.content.Intent")("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL")
+        intent.putExtra("android.media.extra.PACKAGE_NAME", ctx.getPackageName())
+        try:
+            activity = jclass("org.telegram.ui.LaunchActivity").instance
+            activity.startActivityForResult(intent, 0)
+        except Exception:
+            run_on_ui_thread(lambda: BulletinHelper.show_error("На этом телефоне нет системного эквалайзера"))
+
+    def settings_changed(self):
+        player = self.player
+        if player is None:
+            return
+        player.visualizer.shader_key = None
+        player.visualizer.settings = None
+        player.apply_wave()
+        player.layout.requestLayout()
+        player.layout.invalidate()
+
+    def _slider(self, item_id, labels, key, default):
+        plugin = self
+
+        class Chosen(dynamic_proxy(jclass("org.telegram.messenger.Utilities$Callback"))):
+            def run(self, value):
+                try:
+                    plugin.set_setting(key, int(value))
+                    plugin.settings_changed()
+                except Exception as e:
+                    plugin.report("slider", e)
+
+        callback = Chosen()
+        self.callbacks.append(callback)
+        UItem = jclass("org.telegram.ui.Components.UItem")
+        return UItem.asSlideView(item_id, jarray(jclass("java.lang.String"))(labels), self.get_setting(key, default), callback)
+
+    def fill_settings(self, items):
+        UItem = jclass("org.telegram.ui.Components.UItem")
+        self.callbacks = []
+
+        def check(item_id, text, subtext):
+            return UItem.asCheck(item_id, text, subtext, True).setChecked(self.get_setting(CHECKS[item_id], True))
+
+        for item in (
+            UItem.asHeader("Визуализатор"),
+            check(ID_VIS_TOP, "Над обложкой", "Столбики растут вверх от края обложки."),
+            check(ID_VIS_BOTTOM, "Под обложкой", "Столбики растут вниз от края обложки."),
+            UItem.asShadow(None),
+            UItem.asHeader("Столбики"),
+            self._slider(ID_VIS_STYLE, VIS_STYLES, "vis_style", 0),
+            UItem.asShadow(None),
+            UItem.asHeader("Высота столбиков"),
+            self._slider(ID_VIS_HEIGHT, VIS_HEIGHTS, "vis_height", 1),
+            UItem.asShadow(None),
+            UItem.asHeader("Количество столбиков"),
+            self._slider(ID_VIS_DENSITY, VIS_DENSITIES, "vis_density", 1),
+            UItem.asShadow(None),
+            UItem.asHeader("Цвет столбиков"),
+            self._slider(ID_VIS_COLORS, VIS_COLORS, "vis_color_mode", 0),
+            UItem.asShadow(None),
+            UItem.asHeader("Скругление обложки"),
+            self._slider(ID_COVER_RADIUS, RADIUS_LABELS, "cover_radius", 1),
+            UItem.asShadow(None),
+            UItem.asHeader("Прогресс"),
+            check(ID_FLAT_SEEK, "Ровная линия", "Выключено: волна, как в обычном плеере exteraGram."),
+            UItem.asShadow(None),
+        ):
+            items.add(item)
+
+    def create_settings(self):
+        return [
+            Divider(text="Все настройки теперь в самом плеере: «⋮» → настройки плеера. "
+                         "Пока плагин включён, в exteraGram работает новый плеер, даже если его переключатель выключен."),
+        ]
