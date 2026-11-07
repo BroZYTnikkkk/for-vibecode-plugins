@@ -30,6 +30,11 @@ def release_on_dismiss(menu, runs):
 
     def release():
         for run in runs:
+            # a view of the menu's own (a header with a button) lets go of its listener here too
+            cleanup = getattr(run, "cleanup", None)
+            if cleanup is not None:
+                run.cleanup = None
+                cleanup()
             run.action = None
 
     closer = Run(release)

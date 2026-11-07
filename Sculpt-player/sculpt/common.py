@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.9.3"
+VERSION = "0.11.5"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -52,6 +52,7 @@ PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
 MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode
+QUEUES_MAX = 10  # queues kept at once; the oldest goes first
 HEADER_H = 56.0  # the player's own header, same as PlayerLayout's
 
 ID_VIS_TOP, ID_VIS_BOTTOM, ID_FLAT_SEEK = 9101, 9102, 9103
@@ -212,6 +213,20 @@ def sculpt_method(class_name, name):
                 _dex["methods"][key] = method = candidate
                 return method
         raise RuntimeError("%s.%s not found" % (class_name, name))
+    except Exception as e:
+        _dex["failed"] = True
+        _log("sculpt.dex: %s" % e)
+        return None
+
+
+def sculpt_class(class_name):
+    """A class of this plugin's own Java code, or None when the DEX cannot be loaded."""
+    if _dex["failed"]:
+        return None
+    try:
+        if _dex["loader"] is None:
+            _dex["loader"] = _dex_loader()
+        return _dex["loader"].loadClass(class_name)
     except Exception as e:
         _dex["failed"] = True
         _log("sculpt.dex: %s" % e)

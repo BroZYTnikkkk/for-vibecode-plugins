@@ -170,9 +170,12 @@ class RhythmHook(_Hook):
 class BindHook(_Hook):
     def after_hooked_method(self, param):
         try:
-            if self.plugin.player is not None:
-                self.plugin.player.update_album()
-                self.plugin.player.update_like()
+            player = self.plugin.player
+            if player is not None:
+                player.update_album()
+                player.update_like()
+                if player.queue_visible():
+                    player.queue_screen.playing_changed()
         except Exception as e:
             self.fail(e)
 
@@ -256,7 +259,7 @@ class SwipeAreaHook(_Hook):
     def before_hooked_method(self, param):
         try:
             player = self.plugin.player
-            if player is not None and player.library_visible():
+            if player is not None and (player.library_visible() or player.queue_visible()):
                 if float(param.args[1]) >= self.plugin.layout_fields.int(player.layout, "headerBottom"):
                     param.setResult(JBoolean.FALSE)
         except Exception as e:
@@ -292,6 +295,7 @@ class PlayHook(_Hook):
     def after_hooked_method(self, param):
         try:
             self.plugin.listen.kick()
+            self.plugin.song_started()
         except Exception as e:
             self.fail(e)
 
@@ -302,6 +306,28 @@ class DetachHook(_Hook):
     def after_hooked_method(self, param):
         try:
             self.plugin.close_player(param.thisObject)
+        except Exception as e:
+            self.fail(e)
+
+
+class PlaylistHook(_Hook):
+    """MediaController.setPlaylist(list, message, dialog, loop, search): the queue it replaces keeps its song
+    and place, and a chat's music becomes a queue of its own."""
+
+    def before_hooked_method(self, param):
+        try:
+            if self.plugin.queues is not None:
+                self.plugin.queues.before_playlist()
+        except Exception as e:
+            self.fail(e)
+
+    def after_hooked_method(self, param):
+        try:
+            if self.plugin.queues is not None:
+                self.plugin.queues.after_playlist()
+            player = self.plugin.player
+            if player is not None and player.queue_visible():
+                player.queue_screen.refresh_soon()
         except Exception as e:
             self.fail(e)
 

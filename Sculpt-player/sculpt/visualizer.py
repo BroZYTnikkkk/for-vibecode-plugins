@@ -294,8 +294,8 @@ class Visualizer:
         return moving
 
     def draw(self, canvas):
-        if self.player.library_visible():
-            return  # hidden under the media library: nothing to draw, and no reason to keep redrawing
+        if self.player.library_visible() or self.player.queue_visible():
+            return  # hidden under the media library or the queue: nothing to draw, and no reason to keep redrawing
         started = time.monotonic()
         show_top, show_bottom, density, color_mode, height_index, style, cover_radius = self._config(started)
         if not show_top and not show_bottom:
@@ -327,8 +327,24 @@ class Visualizer:
             self.built_at = started
             self.built_key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
 
+        # A finger swiping the cover moves it sideways, shrinks it and fades it (PlayerCoverView.drawSide): the
+        # bars go with it, so they never hang in place over the next cover.
+        cover = player.coverView
+        offset = float(cover.getPageOffset())
+        fade = 1.0
+        if offset != 0.0:
+            page = float(cover.getPageWidth())
+            pager = self.plugin.cover_fields.float(cover, "pager")
+            amount = (1.0 - pager) * min(1.0, abs(offset) / page) if page > 0 else 0.0
+            shrink = 1.0 + (0.86 - 1.0) * amount
+            fade = 1.0 + (0.55 - 1.0) * amount
+            canvas.save()
+            canvas.translate(offset, 0.0)
+            canvas.scale(shrink, shrink, left + size / 2.0, top + size / 2.0)
+
         paint = self.paint
         for color, width, tip_width, corner_width, body, tips, corners, alpha in self.batches:
+            alpha = int(alpha * fade)
             if color is not None:
                 # setARGB: Python ints would pick the setColor(long) overload
                 paint.setARGB(alpha, color[0], color[1], color[2])
@@ -344,7 +360,10 @@ class Visualizer:
                 paint.setStrokeCap(self.round)
                 paint.setStrokeWidth(corner_width)
                 canvas.drawPoints(corners, paint)
-        if playing or self.moving or 0.941 < scale < 0.999:
+        if offset != 0.0:
+            canvas.restore()
+        # the cover redraws only itself while it slides: the layer under it is asked for each frame here
+        if playing or self.moving or offset != 0.0 or 0.941 < scale < 0.999:
             lay.postInvalidateOnAnimation()
 
     def _build(self, lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,

@@ -603,13 +603,16 @@ class MusicData:
             items.add(self.message_for(track))
         return items, "python"
 
-    def play(self, tracks, index, title=""):
-        """The list becomes the queue, starting from the song that was tapped.
+    def play(self, tracks, index, title="", progress=0.0):
+        """The list becomes the queue, starting from the song that was tapped, `progress` (0..1) into it.
 
         The first songs start the music at once; the rest is built in parts and joins the queue behind them.
         """
         if not tracks:
             return
+        queues = getattr(self.plugin, "queues", None)
+        if queues is not None:
+            queues.library_started(title, tracks, index, progress)
         queue = (tracks[index:] + tracks[:index])[:QUEUE_MAX]
         self.covers.warm([t["path"] for t in queue[:8]], first=True)
         self.queue_generation += 1
@@ -625,7 +628,7 @@ class MusicData:
                 items, way = self._messages(queue[:QUEUE_HEAD])
                 first = items.get(0)
                 timing = {"songs": items.size(), "way": way, "waited": started - tapped, "built": time.monotonic() - started}
-                run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing))
+                run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress))
                 if len(queue) > QUEUE_HEAD:
                     run_on_queue(lambda: self._build_rest(generation, queue, QUEUE_HEAD, first.getId()))
             except Exception as e:
@@ -634,16 +637,26 @@ class MusicData:
 
         run_on_queue(head)
 
-    def _start(self, generation, items, first, title, total, timing):
+    def _start(self, generation, items, first, title, total, timing, progress=0.0):
         if generation != self.queue_generation:
             return
+        queues = getattr(self.plugin, "queues", None)
         try:
             started = time.monotonic()
             # set before the playlist: starting it redraws the player's header, which reads these
             self.queue_title = title
             self.queue_total = total
+            if progress > 0.0:
+                # MediaController seeks there itself once the file is open
+                first.forceSeekTo = float(progress)
             controller = jclass(MEDIA_CONTROLLER).getInstance()
-            controller.setPlaylist(items, first, 0, False, None)
+            if queues is not None:
+                queues.starting = True
+            try:
+                controller.setPlaylist(items, first, 0, False, None)
+            finally:
+                if queues is not None:
+                    queues.starting = False
             # This overload forces looping; the repeat button stays in charge.
             self.plugin.media_fields.field("forceLoopCurrentPlaylist").setBoolean(controller, False)
             _log("queue: %d of %d songs via %s, waited %.0f ms, built %.0f ms, setPlaylist %.0f ms" % (
@@ -704,6 +717,9 @@ class MusicData:
                 message = items.get(i)
                 table.put(JInteger(message.getId()), message)
             _log("queue part: +%d songs, %d queued" % (count, playlist.size()))
+            player = self.plugin.player
+            if player is not None and player.queue_visible():
+                player.queue_screen.refresh_soon()
         except Exception as e:
             _log("queue part failed: %s" % e)
             self.plugin.report("queue", e)

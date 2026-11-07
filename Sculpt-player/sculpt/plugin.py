@@ -3,14 +3,16 @@
 from android_utils import run_on_ui_thread
 from base_plugin import BasePlugin
 from java import dynamic_proxy, jarray, jclass
-from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
+from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger, Long as JLong
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider
 
 from .common import CHECKS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
 from .music import ListenTimer, MusicData, local_path
+from .library_ui import Run
 from .player import Player
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .queues import QueueStore
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -23,6 +25,10 @@ class SculptPlayerPlugin(BasePlugin):
         self.reported = set()
         self.callbacks = []
         self.music = None
+        self.queues = None
+        # "stop after this song": the song's identity, and the one that played last
+        self.stop_after = None
+        self.last_song = None
         self.listen = None
         self.media_fields = None
         self.sheet_methods = {}
@@ -33,6 +39,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.media_fields = Fields(MEDIA_CONTROLLER)
             self.music = MusicData(self)
             self.music.covers.on_extracted = self.cover_extracted
+            self.queues = QueueStore(self)
             self.listen = ListenTimer(self)
             self.layout_fields = Fields(LAYOUT)
             self.cover_fields = Fields(COVER)
@@ -71,6 +78,9 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
             self.install(_java_class(PLAYER_COVERS), "needsArtwork", (message,), NeedsArtworkHook(self, "needsArtwork"))
             self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", PlayHook(self, "playMessage")))
+            self.install(self.media_fields.cls, "setPlaylist", (_java_class("java.util.ArrayList"), message, JLong.TYPE, b,
+                                                                _java_class(MEDIA_CONTROLLER + "$PlaylistGlobalSearchParams")),
+                         PlaylistHook(self, "setPlaylist"))
             settings = _java_class(SETTINGS_SHEET)
             self.install(settings, "fillItems", (_java_class("java.util.ArrayList"), _java_class("org.telegram.ui.Components.UniversalAdapter")),
                          SettingsFillHook(self, "fillItems"))
@@ -181,6 +191,30 @@ class SculptPlayerPlugin(BasePlugin):
         playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
         if self.player is not None and local_path(playing) == path:
             run_on_ui_thread(lambda: self.refresh_cover(path))
+        player = self.player
+        if player is not None and player.queue_visible():
+            screen = player.queue_screen
+            run_on_ui_thread(lambda: screen.guarded(screen.cover_ready, path))
+
+    @staticmethod
+    def song_identity(message):
+        """The same key the song menu uses: the file for a song from the phone, the message for a chat's."""
+        if message is None:
+            return None
+        path = local_path(message)
+        if path is not None:
+            return ("path", path)
+        return ("message", message.getDialogId(), message.getId())
+
+    def song_started(self):
+        """After MediaController.playMessage: when the song marked "stop after" is over, the next one waits."""
+        controller = jclass(MEDIA_CONTROLLER).getInstance()
+        playing = controller.getPlayingMessageObject()
+        now = self.song_identity(playing)
+        if self.stop_after is not None and self.last_song == self.stop_after and now != self.stop_after:
+            self.stop_after = None
+            run_on_ui_thread(lambda: controller.pauseMessage(controller.getPlayingMessageObject()))
+        self.last_song = now
 
     def refresh_cover(self, path):
         player = self.player
@@ -225,6 +259,15 @@ class SculptPlayerPlugin(BasePlugin):
         context = _ctx()
         resource = context.getResources().getIdentifier(animation, "raw", context.getPackageName())
         self.sheet_method("bulletins").invoke(sheet).createSimpleBulletin(resource, text).show()
+
+    def bulletin_undo(self, sheet, text, action):
+        """A message with an "Undo" button, for what is easy to do by mistake."""
+        context = _ctx()
+        resource = context.getResources().getIdentifier("ic_delete", "raw", context.getPackageName())
+        run = Run(action)
+        factory = self.sheet_method("bulletins").invoke(sheet)
+        # long enough to read and reach the button: the default short one is gone in under three seconds
+        factory.createSimpleBulletin(resource, text, "Отменить", run).setDuration(5000).show()
 
     def cover_radius(self):
         index = self.get_setting("cover_radius", 1)

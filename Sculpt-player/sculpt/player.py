@@ -8,6 +8,7 @@ from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARG
 from .visualizer import Visualizer
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
+from .queue_ui import QueueScreen
 
 
 class Player:
@@ -41,6 +42,7 @@ class Player:
         self.like = None
         self.add = None
         self.add_ring = None
+        self.queue_screen = None
         self.menu_runs = []
 
     def library_visible(self):
@@ -76,7 +78,8 @@ class Player:
         self.build_panel(context)
         # the player may reopen in the queue it was left in
         if self.mode() == MODE_QUEUE:
-            self.active_tab = PANEL_QUEUE
+            # the player's own queue mode is the Queue tab's job now
+            self.set_mode(MODE_PLAYER)
         self.visualizer = Visualizer(self.plugin, self)
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
@@ -103,41 +106,48 @@ class Player:
         if index == self.active_tab:
             return
         self.active_tab = index
+        colors = self.plugin.sheet_fields.get(self.sheet, "colors")
+        if index != PANEL_LIBRARY and self.library_visible():
+            self.library.hide()
+            self.layout.postInvalidateOnAnimation()
+        if index != PANEL_QUEUE and self.queue_visible():
+            self.queue_screen.hide()
+            self.layout.postInvalidateOnAnimation()
         if index == PANEL_LIBRARY:
             if self.library is None:
                 self.library = LibraryView(self, self.context)
-                self.library.set_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
+                self.library.set_colors(colors)
                 self.layout.requestLayout()
             self.library.show()
-        else:
-            if self.library is not None and self.library.visible:
-                self.library.hide()
-                self.layout.postInvalidateOnAnimation()
-            # the active tab is set first, so the mode hook finds them already agreeing
-            if index == PANEL_QUEUE:
-                self.set_mode(MODE_QUEUE)
-            elif self.mode() == MODE_QUEUE:
-                self.set_mode(MODE_PLAYER)
-        self.paint_tabs(self.plugin.sheet_fields.get(self.sheet, "colors"))
+        elif index == PANEL_QUEUE:
+            if self.queue_screen is None:
+                self.queue_screen = QueueScreen(self, self.context)
+                self.layout.requestLayout()
+            self.queue_screen.show()
+        if self.mode() == MODE_QUEUE:
+            self.set_mode(MODE_PLAYER)
+        self.paint_tabs(colors)
         self.place_indicator()
+
+    def queue_visible(self):
+        return self.queue_screen is not None and self.queue_screen.visible
 
     def mode(self):
         return self.plugin.sheet_fields.int(self.sheet, "mode")
 
     def wants_back(self):
         """Whether back has a step to take inside the player before it closes."""
-        return self.library_visible() or self.active_tab == PANEL_QUEUE or self.mode() != MODE_PLAYER
+        return self.library_visible() or self.queue_visible() or self.mode() != MODE_PLAYER
 
     def go_back(self):
         """One step back: up the library, out of the queue's search, out of the queue or the lyrics."""
         if self.library_visible():
             self.library.back()
-            return
-        queue = self.plugin.sheet_fields.get(self.sheet, "queueView")
-        if self.mode() == MODE_QUEUE and queue is not None and queue.isSearchFocused():
-            queue.clearSearch()
-        elif self.active_tab == PANEL_QUEUE:
-            self.show_tab(PANEL_ACTIVE)
+        elif self.queue_visible():
+            if self.queue_screen.query:
+                self.queue_screen.search.setText("")
+            else:
+                self.show_tab(PANEL_ACTIVE)
         else:
             self.set_mode(MODE_PLAYER)
 
@@ -147,21 +157,11 @@ class Player:
         method.invoke(self.sheet, JInteger(mode), JBoolean(True))
 
     def mode_changed(self, mode):
-        """After MusicPlayerSheet.setMode: back, the lyrics button or a swipe may leave the queue on their own."""
-        if self.indicator is None:
+        """After MusicPlayerSheet.setMode: the player's own queue mode, if anything opens it, is the Queue tab."""
+        if self.indicator is None or mode != MODE_QUEUE:
             return
-        if mode == MODE_QUEUE:
-            wanted = PANEL_QUEUE
-        elif self.active_tab == PANEL_QUEUE:
-            wanted = PANEL_ACTIVE
-        else:
-            return
-        if wanted != self.active_tab:
-            self.active_tab = wanted
-            if self.library is not None and self.library.visible:
-                self.library.hide()
-            self.paint_tabs(self.plugin.sheet_fields.get(self.sheet, "colors"))
-            self.place_indicator()
+        self.set_mode(MODE_PLAYER)
+        self.show_tab(PANEL_QUEUE)
 
     def paint_tabs(self, colors):
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
@@ -260,6 +260,9 @@ class Player:
             except Exception:
                 pass
         self.listeners = []
+        if self.queue_screen is not None:
+            self.queue_screen.dispose()
+            self.queue_screen = None
         if self.library is not None:
             self.library.dispose()
             self.library = None
@@ -337,6 +340,8 @@ class Player:
         self.volume.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
         self.equalizer.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
         self.paint_tabs(colors)
+        if self.queue_visible():
+            self.queue_screen.set_colors(colors)
         if self.like is not None:
             path = local_path(self.playing())
             self.tint_like(colors, path, path is not None and self.plugin.music.is_favorite(path))
@@ -447,6 +452,8 @@ class Player:
         measure(self.indicator, slot, _dp(2))
         if self.library is not None:
             measure(self.library.root, pane, self.panel_top)
+        if self.queue_screen is not None:
+            measure(self.queue_screen.root, pane, self.panel_top)
 
     def step(self):
         pane = self.plugin.layout_fields.int(self.layout, "paneWidth")
@@ -511,3 +518,5 @@ class Player:
         put(self.moreButton, pane_left + len(self.tabs) * slot + (slot - size) // 2, self.panel_top + (_dp(PANEL_H) - size) // 2)
         if self.library is not None:
             put(self.library.root, pane_left, 0)
+        if self.queue_screen is not None:
+            put(self.queue_screen.root, pane_left, 0)
