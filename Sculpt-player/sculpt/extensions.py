@@ -52,6 +52,90 @@ QUALITIES = (("LOSSLESS", "Lossless, 16 бит"), ("HI_RES_LOSSLESS", "Hi-Res Lo
              ("HIGH", "Высокое, до 320 кбит/с"), ("LOW", "Низкое"))
 
 
+HEALTH_TTL = 600  # seconds a service's health is trusted; an unknown one is asked again sooner
+HEALTH_UNKNOWN_TTL = 120
+TRANSIENT = ("timeout", "timed out", "temporar", "try again", "unavailable", "rate limit")
+
+
+def _health_word(value):
+    """A status word from a service's answer, the way Mornye's health.rs reads it."""
+    text = str(value or "").strip().lower()
+    if text in ("degraded", "partial", "warning"):
+        return "degraded"
+    if text in ("down", "offline", "error", "failed", "unhealthy"):
+        return "offline"
+    return "online"
+
+
+def _health_code(code, message=""):
+    if 200 <= code < 300:
+        return "online"
+    if code in (401, 403):
+        return "degraded"
+    if code in (408, 429, 502, 503, 504) or any(word in str(message).lower() for word in TRANSIENT):
+        return "unknown"
+    return "offline"
+
+
+def check_one(manifest, check):
+    """One health check of a manifest: GET or HEAD over https to a host the extension may reach."""
+    import requests
+    from urllib.parse import urlsplit
+    url = str(check.get("url") or "")
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not manifest.is_domain_allowed(parts.hostname or ""):
+        return "offline"
+    method = "HEAD" if str(check.get("method") or "GET").upper() == "HEAD" else "GET"
+    timeout = max(1.0, float(check.get("timeoutMs") or check.get("timeout_ms") or 4000) / 1000.0)
+    try:
+        response = requests.request(method, url, timeout=timeout, headers={"Accept": "application/json"})
+    except requests.exceptions.Timeout:
+        return "unknown"
+    except requests.exceptions.ConnectionError as e:
+        return "unknown" if any(word in str(e).lower() for word in TRANSIENT) else "offline"
+    if not 200 <= response.status_code < 300:
+        return "offline"
+    if method == "HEAD":
+        return "online"
+    try:
+        body = response.json()
+    except Exception:
+        return "online"
+    if not isinstance(body, dict):
+        return "online"
+    key = str(check.get("serviceKey") or check.get("service_key") or "")
+    services = body.get("services")
+    if key and isinstance(services, dict) and key in services:
+        entry = services[key]
+        if isinstance(entry, dict):
+            if isinstance(entry.get("status"), int):
+                return _health_code(entry["status"], entry.get("message") or "")
+            if isinstance(entry.get("ok"), bool):
+                return "online" if entry["ok"] else "offline"
+            return _health_word(entry.get("status"))
+        return _health_word(entry)
+    return _health_word(body.get("status"))
+
+
+def check_health(manifest):
+    """A service's state from all its checks: "online", "degraded", "unknown", "offline"; None without checks."""
+    raw = manifest.raw if isinstance(manifest.raw, dict) else {}
+    checks = [c for c in (raw.get("serviceHealth") or raw.get("service_health") or []) if isinstance(c, dict) and c.get("url")]
+    if not checks:
+        return None
+    status = "online"
+    for check in checks:
+        one = check_one(manifest, check)
+        required = bool(check.get("required", True))
+        if one == "offline":
+            status = "offline" if required else ("degraded" if status != "offline" else status)
+        elif one == "degraded" and status == "online":
+            status = "degraded"
+        elif one == "unknown" and status == "online":
+            status = "unknown"
+    return status
+
+
 class ScanDone(dynamic_proxy(jclass("android.media.MediaScannerConnection$OnScanCompletedListener"))):
     def __init__(self, action):
         super().__init__()
@@ -88,7 +172,21 @@ class Extensions:
         self.queue = None
         self.listeners = []  # called on the UI thread when a download changes
         self.change_posted = False
+        self.health_cache = {}  # ext -> (status, when)
         self.root = os.path.join(plugin.music.dir, "extensions")
+
+    def health(self, ext):
+        """A download service's state, from its own health checks; cached for ten minutes. Off the UI thread."""
+        import time
+        cached = self.health_cache.get(ext)
+        if cached is not None:
+            status, when = cached
+            if time.time() - when < (HEALTH_UNKNOWN_TTL if status == "unknown" else HEALTH_TTL):
+                return status
+        manifest = self.get().manifest(ext)
+        status = check_health(manifest) if manifest is not None else None
+        self.health_cache[ext] = (status, time.time())
+        return status
 
     # -- downloads
 

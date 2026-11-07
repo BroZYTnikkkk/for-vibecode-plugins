@@ -90,6 +90,12 @@ class SculptPlayerPlugin(BasePlugin):
                          SettingsClickHook(self, "onItemClick"))
             self.extensions = Extensions(self)
             self.add_menu_item(MenuItemData(
+                menu_type=MenuItemType.DRAWER_MENU,
+                text="Sculpt Player",
+                icon="msg_played",
+                on_click=lambda context: run_on_ui_thread(self.open_from_menu),
+            ))
+            self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
                 text="Установить расширение",
                 icon="msg_plugins",
@@ -119,6 +125,28 @@ class SculptPlayerPlugin(BasePlugin):
             self.listen.stopped = True
         if self.extensions is not None:
             self.extensions.close()
+
+    def open_from_menu(self):
+        """From the side menu: the player even with nothing playing, where it opens on the library.
+
+        PlayerLauncher builds the sheet with no song; it closes only when a playing song goes away later."""
+        try:
+            launcher = jclass("com.exteragram.messenger.player.PlayerLauncher")
+            if launcher.isShowing():
+                return
+            activity = jclass("org.telegram.ui.LaunchActivity").instance
+            if activity is None:
+                return
+            launcher.create(activity, None).show()
+            if jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject() is None:
+                run_on_ui_thread(self.open_library, 150)
+        except Exception as e:
+            _show_error("Sculpt Player: не удалось открыть плеер", e)
+
+    def open_library(self):
+        from .common import PANEL_LIBRARY
+        if self.player is not None:
+            self.player.show_tab(PANEL_LIBRARY)
 
     def install_predictive_back(self):
         """BottomSheet's back callback is an anonymous class: the one that implements OnBackAnimationCallback.
