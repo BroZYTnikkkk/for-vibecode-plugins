@@ -4,6 +4,7 @@
 from java import jclass
 
 from .common import _dp
+from .ext_ui import CatalogScreen, ExtensionScreen, ExtensionsScreen, ReposScreen
 from .library_ui import BlankScreen, LibraryView, Screen
 
 MORNYE_LINKS = (
@@ -164,12 +165,20 @@ class MornyeView(LibraryView):
         self.data_changed()
 
     def open_extensions(self):
-        self.push(BlankScreen(self, "Расширения", "Здесь будут расширения Mornye: каталог, установка из файла и свои репозитории. "
-                                                  "Они ищут и скачивают песни. Появятся в следующем обновлении."))
+        self.push(ExtensionsScreen(self))
+
+    def open_catalog(self):
+        self.push(CatalogScreen(self))
+
+    def open_repos(self):
+        self.push(ReposScreen(self))
+
+    def open_extension(self, ext):
+        self.push(ExtensionScreen(self, ext))
 
     def open_download_search(self):
-        self.push(BlankScreen(self, "Поиск песен", "Искать песни для скачивания можно будет, когда появятся расширения: "
-                                                   "поиск и скачивание идут через них."))
+        self.push(BlankScreen(self, "Поиск песен", "Поиск песен для скачивания появится в следующем обновлении. "
+                                                   "Он идёт через расширения: их уже можно установить кнопкой справа вверху."))
 
     def open_downloads(self):
         self.push(BlankScreen(self, "Загрузки", "Здесь будут песни, которые ты скачиваешь, с ходом загрузки. "

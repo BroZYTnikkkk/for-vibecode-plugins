@@ -1,7 +1,7 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
 from android_utils import run_on_ui_thread
-from base_plugin import BasePlugin
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
 from java import dynamic_proxy, jarray, jclass
 from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger, Long as JLong
 from ui.bulletin import BulletinHelper
@@ -12,6 +12,7 @@ from .music import ListenTimer, MusicData, local_path
 from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
+from .extensions import SFLX_CONDITION, Extensions
 from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
@@ -32,6 +33,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.listen = None
         self.media_fields = None
         self.sheet_methods = {}
+        self.extensions = None
 
     def on_plugin_load(self):
         try:
@@ -86,6 +88,14 @@ class SculptPlayerPlugin(BasePlugin):
                          SettingsFillHook(self, "fillItems"))
             self.install(settings, "onItemClick", (_java_class("org.telegram.ui.Components.UItem"), _java_class("android.view.View")),
                          SettingsClickHook(self, "onItemClick"))
+            self.extensions = Extensions(self)
+            self.add_menu_item(MenuItemData(
+                menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
+                text="Установить расширение",
+                icon="msg_plugins",
+                condition=SFLX_CONDITION,
+                on_click=self.extensions.install_message,
+            ))
             from . import music as music_module
             tags = music_module.mutagen
             _log("loaded %s, mutagen %s" % (VERSION, getattr(tags, "version_string", None) if tags else "missing"))
@@ -107,6 +117,8 @@ class SculptPlayerPlugin(BasePlugin):
         self.player = None
         if self.listen is not None:
             self.listen.stopped = True
+        if self.extensions is not None:
+            self.extensions.close()
 
     def install_predictive_back(self):
         """BottomSheet's back callback is an anonymous class: the one that implements OnBackAnimationCallback.
