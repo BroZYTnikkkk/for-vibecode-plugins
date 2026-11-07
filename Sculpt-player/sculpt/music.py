@@ -242,6 +242,8 @@ class MusicData:
         self.grouped = None
         self.favorites = self._load("favorites.json", {})
         self.history = self._load("history.json", [])
+        # how many times each song was heard (the same 30 seconds the history counts), from 0.15.0 on
+        self.plays = self._load("plays.json", {})
         # MediaController sorts negative ids from the largest down and plays towards larger ids: ids grow in listening order.
         self.id_seq = -2000000000 + int(time.time() * 10) % 500000000
         # the queue started from the library: a new start makes the parts of the last one that are still coming stale
@@ -520,9 +522,26 @@ class MusicData:
 
     def add_history(self, path):
         entry = {"path": path, "at": int(time.time())}
+        known = any(h["path"] == path for h in self.history)
         self.history = [entry] + [h for h in self.history if h["path"] != path][:HISTORY_MAX - 1]
-        data = list(self.history)
-        run_on_queue(lambda: self._save("history.json", data))
+        # a song heard before the counter existed has played at least once already
+        self.plays[path] = self.plays.get(path, 1 if known else 0) + 1
+        data, plays = list(self.history), dict(self.plays)
+        run_on_queue(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
+        self._notify()
+
+    def last_played(self, path):
+        return next((h["at"] for h in self.history if h["path"] == path), 0)
+
+    def play_count(self, path):
+        return self.plays.get(path, 1 if self.last_played(path) else 0)
+
+    def clear_history(self, path):
+        """The song is as if never heard: out of the history, its count back to nothing."""
+        self.history = [h for h in self.history if h["path"] != path]
+        self.plays.pop(path, None)
+        data, plays = list(self.history), dict(self.plays)
+        run_on_queue(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
         self._notify()
 
     # -- playback -----------------------------------------------------------

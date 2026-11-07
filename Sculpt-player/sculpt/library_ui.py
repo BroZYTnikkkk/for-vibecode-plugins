@@ -1202,6 +1202,7 @@ class LibraryView:
         path = track["path"]
         menu = self.make_menu(anchor)
         later = self.player.start_menu()
+        menu.add(self.resource("msg_info"), "Информация о песне", later(lambda: self.menu_action(menu, self.song_info, track)))
         menu.add(self.resource("msg_played"), "Играть следующей", later(lambda: self.menu_action(menu, self.queue_next, track)))
         menu.add(self.resource("player_new_queue"), "В конец очереди", later(lambda: self.menu_action(menu, self.queue_last, track)))
         favorite = self.data.is_favorite(path)
@@ -1216,6 +1217,11 @@ class LibraryView:
             action(*args)
         except Exception as e:
             self.plugin.report("menu", e)
+
+    def song_info(self, track):
+        from .song_info import SongInfo
+        SongInfo(self.player, track["path"], track["path"], {"title": track["title"], "artist": track["artist"],
+                                                             "album": track["album"], "seconds": track.get("duration", 0)}).show()
 
     def queue_next(self, track):
         self.data.play_next(track)

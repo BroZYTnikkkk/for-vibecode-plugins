@@ -129,46 +129,9 @@ class SongMenu:
         return None
 
     def info(self):
-        track = self.plugin.music.by_path.get(self.row.path, {}) if self.row.path else {}
-        lines = [("Название", self.row.title), ("Автор", self.row.artist), ("Альбом", self.row.album),
-                 ("Жанр", track.get("genre") or ""), ("Длительность", self.screen_clock(self.row.seconds))]
-        path = self.file()
-        if path is not None:
-            retriever = jclass("android.media.MediaMetadataRetriever")()
-            try:
-                retriever.setDataSource(path)
-                bitrate = retriever.extractMetadata(20)  # METADATA_KEY_BITRATE
-                rate = retriever.extractMetadata(38)  # METADATA_KEY_SAMPLERATE
-                depth = retriever.extractMetadata(39)  # METADATA_KEY_BITS_PER_SAMPLE
-                quality = []
-                if depth:
-                    quality.append("%s бит" % depth)
-                if rate:
-                    quality.append("%.1f кГц" % (int(rate) / 1000.0))
-                if bitrate:
-                    quality.append("%d кбит/с" % (int(bitrate) // 1000))
-                lines.append(("Качество", ", ".join(quality)))
-            except Exception:
-                pass
-            finally:
-                retriever.release()
-            lines.append(("Формат", os.path.splitext(path)[1].lstrip(".").upper()))
-            try:
-                lines.append(("Размер", human_size(os.path.getsize(path))))
-            except OSError:
-                pass
-            lines.append(("Файл", path))
-        text = "\n".join("%s: %s" % (name, value) for name, value in lines if value)
-        builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(self.screen.context)
-        builder.setTitle("Информация о песне")
-        builder.setMessage(text)
-        builder.setPositiveButton("OK", None)
-        builder.show()
-
-    @staticmethod
-    def screen_clock(seconds):
-        from .queue_ui import clock
-        return clock(seconds)
+        from .song_info import SongInfo
+        fallback = {"title": self.row.title, "artist": self.row.artist, "album": self.row.album, "seconds": self.row.seconds}
+        SongInfo(self.player, self.file(), self.row.path, fallback).show()
 
     def remove(self):
         screen = self.screen

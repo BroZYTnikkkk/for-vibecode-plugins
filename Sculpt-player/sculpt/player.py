@@ -166,6 +166,22 @@ class Player:
             if child.hashCode() not in keep:
                 child.setTransitionAlpha(value)
 
+    def open_group(self, kind, name):
+        """From the song info: that author, album or genre, opened in the library."""
+        from .music import sort_text, split_artists
+        groups = self.plugin.music.groups().get(kind, [])
+        item = None
+        for wanted in [name] + (split_artists(name) if kind == "artists" else []):
+            key = sort_text(wanted)
+            item = next((g for g in groups if sort_text(g["name"]) == key), None)
+            if item is not None:
+                break
+        if item is None:
+            self.plugin.bulletin(self.sheet, "info", "В медиатеке нет «%s»." % name)
+            return
+        self.show_tab(PANEL_LIBRARY)
+        self.library.open_group(kind, item)
+
     def queue_visible(self):
         return self.queue_screen is not None and self.queue_screen.visible
 
