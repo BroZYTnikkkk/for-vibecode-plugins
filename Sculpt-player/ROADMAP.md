@@ -28,17 +28,20 @@
    - переход к автору и альбому не в меню, а по нажатию на автора или альбом в самом плеере (отдельный пункт).
    - баг: при свайпе обложки пальцем визуализатор остаётся на месте, а должен уезжать вместе с обложкой.
 4. **Фон плеера сквозь все вкладки:** свечение обложки и ритм видны во вкладках, кнопки плеера там прячутся. Проверить, что текст читается.
-5. **Вкладка Mornye** (на месте «Поиска»; поиск по своим песням уходит строкой наверх Медиатеки):
-   - расширения для скачивания: перенос `ext_manager.py`, `ext_runtime.py`, `ext_sessions.py`, `downloads.py` из Mornye Player, они уже совместимы с `.mornye-ext` и реестром Mornye;
-   - поиск песен для скачивания;
-   - поиск метаданных: найденное пишется в файл только после «Сохранить», с показом «было → станет»; так же пакетно, списком;
-   - «О Mornye»: авторы, ссылки, лицензия (раздел ниже).
+5. **Вкладка Mornye** (на месте «Поиска»; поиск по своим песням уходит строкой наверх Медиатеки).
+   Устройство (решено 2026-11-07): как Медиатека. Сверху строка «Найти песню для скачивания», под ней пункты-переходы «Загрузки» (с прогрессом), «Метаданные песен», «О Mornye»; экраны внутри с шагом назад. Расширения — кнопкой в правом верхнем углу.
+   Части, каждая с проверкой на телефоне:
+   1. вкладка, строка поиска в Медиатеке, «О Mornye»: авторы, ссылки, лицензия (раздел ниже);
+   2. расширения: перенос `ext_manager.py`, `ext_runtime.py`, `ext_sessions.py`, `downloads.py` из Mornye Player. Формат `.sflx`, официальный реестр `mornyeapp/Mornye-Extension` плюс свои репозитории и установка из файла. Расширения выполняются в WebView (Web Worker) без окна, мост к Python через `127.0.0.1`;
+   3. поиск и скачивание песен с прогрессом. Скачанное ложится в `Music/Mornye` на устройстве, общую папку с Mornye Player, и сразу попадает в Медиатеку;
+   4. поиск метаданных (MusicBrainz, Deezer): найденное пишется в файл только после «Сохранить», с показом «было → станет»; потом пакетно, списком.
 6. **Mornye Link** (клиент к Mornye Desktop, пока Telegram открыт):
    - слушать песни с ПК;
    - передавать песни в обе стороны, в том числе по запросу ПК;
    - пульт для плеера на ПК;
    - общие любимые, плейлисты и история.
 7. **Поддержка внешних песен из Music Player Actions (cactus):**
+   - найдено 2026-11-07 на AyuGram 13.1.1: вместе со Sculpt cactus ломает песни из Telegram (долгая загрузка, старые название и обложка, меняется только альбом). Без cactus всё работает. Cactus деоптимизирует 652 метода плеера (`MusicPlayerSheet`, `PlayerLauncher`, `PlayerCovers`, `PlayerCoverView`, `PlayerQueueView`, `PlayerQueueCell`, `FragmentContextView`), и они идут через интерпретатор. Его `RemotePlayer` при старте песни Telegram пишет «host took over the player, waiting to restore» и возвращает свой трек. Цель шага — чтобы cactus был не нужен;
    - Sculpt берёт название, альбом и обложку из трека, показанного в плеере, а не только из `MediaController`;
    - визуализатор для внешнего звука через системный `Visualizer` на общем выходе, отдельной настройкой (нужен микрофон, на части телефонов отдаёт тишину);
    - приоритет источника: всегда данные самой песни (`RhythmTap`). Системный `Visualizer` (микрофон) включается только тогда, когда данных песни нет, например при трансфере внешнего плеера через уведомления, и выключается, как только они снова появились.
@@ -50,6 +53,20 @@
 11. **Запуск и сохранение плеера** через Player Resume от Rooni (@RnPlugins, YouRooni; права на его плагины у автора Sculpt есть). В Mornye Player он уже встроен как `assets/player_resume.dex` (`mornye/modules.py`), брать тот же способ: очередь, позиция и состояние плеера переживают перезапуск Telegram.
 12. **Плейлисты:** рабочие плейлисты на месте нынешней заготовки (создание, добавление из меню «+» и из меню песни, вкладка «Плейлисты»).
 13. **Функции Musicolet**, по одной, расширенные параметры функции — внутри неё самой или в контекстном меню, без свалки настроек.
+
+Добавлено 2026-11-07 из Mornye и Mornye Player, по одному пункту:
+
+14. **Таймер сна как в Musicolet** (удобнее и богаче, чем в Mornye Player).
+15. **AutoMix и кроссфейд** (`automix.py`, `audio.py` в Mornye Player).
+16. **Редактор тегов** (`tags.py`), закрывает «Редактировать теги» в меню песни.
+17. **Бэкапы** настроек, очередей, любимых и истории: в файл или в чат (`backup.py`).
+18. **Текст песен:** подсветка слов по мере пения (`player_lyrics_word_sweep.dart`), карточка текста для отправки (`lyrics_share_screen.dart`).
+19. **ReplayGain** (`replaygain_service.dart`).
+20. **Миксы «Для тебя»** (`autoplay_taste.dart`, `library_mixes.dart`).
+21. **Итоги прослушиваний** (`listening_rewind_screen.dart`).
+22. **Поиск дубликатов** (`duplicate_review_sheet.dart`).
+23. **Проверка честного hi-res и спектрограмма** (`hires_check_card.dart`, `audio_analysis_spectrogram.dart`).
+24. **Перевод текста** — в самом конце, для полноты (`lyrics_translation_provider.dart`).
 
 ## Архив идей на потом
 
@@ -86,17 +103,13 @@
 
 Плагину внутри Telegram недоступно и в план не входит: виджеты рабочего стола, свой экран блокировки, свой декодер.
 
-### Из Mornye 5.3.1, кандидаты
+### Скачивание в чат
 
-- ReplayGain (`lib/services/replaygain_service.dart`);
-- слова текста с подсветкой по мере пения (`lib/widgets/player_lyrics_word_sweep.dart`);
-- перевод текста (`lib/providers/lyrics_translation_provider.dart`);
-- карточка текста для отправки (`lib/screens/lyrics_share_screen.dart`);
-- миксы «Для тебя» (`lib/services/autoplay_taste.dart`, `lib/services/library_mixes.dart`);
-- итоги прослушиваний (`lib/screens/listening_rewind_screen.dart`);
-- поиск дубликатов (`lib/widgets/duplicate_review_sheet.dart`);
-- проверка честного hi-res и спектрограмма (`lib/widgets/hires_check_card.dart`, `lib/widgets/audio_analysis_spectrogram.dart`);
-- редактор тегов (`lib/screens/track_metadata_edit_sheet.dart`).
+Идея: скачанную песню отправлять в выбранный чат, а не только класть на устройство.
+
+### Пути в Mornye 5.3.1 для пунктов 16–24
+
+Все под `lib/`: `services/replaygain_service.dart`, `widgets/player_lyrics_word_sweep.dart`, `providers/lyrics_translation_provider.dart`, `screens/lyrics_share_screen.dart`, `services/autoplay_taste.dart`, `services/library_mixes.dart`, `screens/listening_rewind_screen.dart`, `widgets/duplicate_review_sheet.dart`, `widgets/hires_check_card.dart`, `widgets/audio_analysis_spectrogram.dart`, `screens/track_metadata_edit_sheet.dart`.
 
 ### Приложение-компаньон
 

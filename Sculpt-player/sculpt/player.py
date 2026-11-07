@@ -4,11 +4,12 @@ from android_utils import OnClickListener
 from java import jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_QUEUE, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_QUEUE, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
+from .mornye_ui import MornyeView
 
 
 class Player:
@@ -39,14 +40,26 @@ class Player:
         self.context = None
         self.active_tab = PANEL_ACTIVE
         self.library = None
+        self.mornye = None
         self.like = None
         self.add = None
         self.add_ring = None
         self.queue_screen = None
         self.menu_runs = []
 
+    def stacks(self):
+        """The tabs made of a stack of screens, in the order of their panel indexes: library, Mornye."""
+        return ((PANEL_LIBRARY, self.library), (PANEL_MORNYE, self.mornye))
+
+    def visible_stack(self):
+        for _, stack in self.stacks():
+            if stack is not None and stack.visible:
+                return stack
+        return None
+
     def library_visible(self):
-        return self.library is not None and self.library.visible
+        """Whether the library or the Mornye tab is over the player."""
+        return self.visible_stack() is not None
 
     def build(self, context):
         self.context = context
@@ -99,7 +112,7 @@ class Player:
         self.moreButton.bringToFront()
 
     def tab_pressed(self, index):
-        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY):
+        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY, PANEL_MORNYE):
             self.show_tab(index)
 
     def show_tab(self, index):
@@ -107,9 +120,10 @@ class Player:
             return
         self.active_tab = index
         colors = self.plugin.sheet_fields.get(self.sheet, "colors")
-        if index != PANEL_LIBRARY and self.library_visible():
-            self.library.hide()
-            self.layout.postInvalidateOnAnimation()
+        for panel, stack in self.stacks():
+            if index != panel and stack is not None and stack.visible:
+                stack.hide()
+                self.layout.postInvalidateOnAnimation()
         if index != PANEL_QUEUE and self.queue_visible():
             self.queue_screen.hide()
             self.layout.postInvalidateOnAnimation()
@@ -119,6 +133,12 @@ class Player:
                 self.library.set_colors(colors)
                 self.layout.requestLayout()
             self.library.show()
+        elif index == PANEL_MORNYE:
+            if self.mornye is None:
+                self.mornye = MornyeView(self, self.context)
+                self.mornye.set_colors(colors)
+                self.layout.requestLayout()
+            self.mornye.show()
         elif index == PANEL_QUEUE:
             if self.queue_screen is None:
                 self.queue_screen = QueueScreen(self, self.context)
@@ -126,7 +146,7 @@ class Player:
             self.queue_screen.show()
         if self.mode() == MODE_QUEUE:
             self.set_mode(MODE_PLAYER)
-        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE))
+        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE, PANEL_MORNYE))
         self.paint_tabs(colors)
         self.place_indicator()
 
@@ -137,7 +157,7 @@ class Player:
         tab's root takes the touches, so nothing hidden can be pressed.
         """
         keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator, self.moreButton]}
-        for screen in (self.library, self.queue_screen):
+        for screen in (self.library, self.mornye, self.queue_screen):
             if screen is not None:
                 keep.add(screen.root.hashCode())
         value = 0.0 if hidden else 1.0
@@ -159,7 +179,7 @@ class Player:
     def go_back(self):
         """One step back: up the library, out of the queue's search, out of the queue or the lyrics."""
         if self.library_visible():
-            self.library.back()
+            self.visible_stack().back()
         elif self.queue_visible():
             if self.queue_screen.query:
                 self.queue_screen.search.setText("")
@@ -283,6 +303,9 @@ class Player:
         if self.library is not None:
             self.library.dispose()
             self.library = None
+        if self.mornye is not None:
+            self.mornye.dispose()
+            self.mornye = None
         self.visualizer = None
         self.menu_runs = []
 
@@ -364,8 +387,9 @@ class Player:
             self.tint_like(colors, path, path is not None and self.plugin.music.is_favorite(path))
             self.add.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
             self.add_ring.setStroke(_dp(1.5), colors.icon)
-        if self.library is not None:
-            self.library.set_colors(colors)
+        for _, stack in self.stacks():
+            if stack is not None:
+                stack.set_colors(colors)
         if self.divider is not None:
             ColorUtils = jclass("androidx.core.graphics.ColorUtils")
             self.divider.setBackgroundColor(ColorUtils.setAlphaComponent(colors.text, 30))
@@ -467,8 +491,9 @@ class Player:
             measure(tab, slot, _dp(PANEL_H))
         measure(self.divider, pane, max(1, _dp(1) // 2))
         measure(self.indicator, slot, _dp(2))
-        if self.library is not None:
-            measure(self.library.root, pane, self.panel_top)
+        for _, stack in self.stacks():
+            if stack is not None:
+                measure(stack.root, pane, self.panel_top)
         if self.queue_screen is not None:
             measure(self.queue_screen.root, pane, self.panel_top)
 
@@ -533,7 +558,8 @@ class Player:
             put(tab, pane_left + index * slot, self.panel_top)
         self.place_indicator()
         put(self.moreButton, pane_left + len(self.tabs) * slot + (slot - size) // 2, self.panel_top + (_dp(PANEL_H) - size) // 2)
-        if self.library is not None:
-            put(self.library.root, pane_left, 0)
+        for _, stack in self.stacks():
+            if stack is not None:
+                put(stack.root, pane_left, 0)
         if self.queue_screen is not None:
             put(self.queue_screen.root, pane_left, 0)

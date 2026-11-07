@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.12.0"
+VERSION = "0.13.0"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -46,11 +46,13 @@ PANEL_TABS = (
     ("Плеер", ("tab_music", "msg_filled_data_music", "msg_played")),
     ("Медиатека", ("msg_folders", "msg2_folder")),
     ("Плейлисты", ("files_music", "filled_widget_music")),
-    ("Поиск", ("outline_search_1_24", "msg_search")),
+    ("Mornye", ("menu_download_round", "msg_download")),
 )
 PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
+PANEL_MORNYE = 4  # downloads, metadata and extensions from Mornye; search of one's own songs is in the library
+PANEL_STACKS = (PANEL_LIBRARY, PANEL_MORNYE)  # tabs that are a stack of screens
 MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode
 QUEUES_MAX = 10  # queues kept at once; the oldest goes first
 # The tabs lie over the player's own animated glow (RhythmBackground): the player's background color at this

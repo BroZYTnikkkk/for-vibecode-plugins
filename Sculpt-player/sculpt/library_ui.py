@@ -1,5 +1,6 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
+import re
 import time
 
 from android_utils import OnClickListener, run_on_ui_thread
@@ -130,6 +131,22 @@ class RowsAdapter(dynamic_proxy(jclass("android.widget.ListAdapter"))):
 
     def getAutofillOptions(self):
         return None
+
+
+class TextChanged(dynamic_proxy(jclass("android.text.TextWatcher"))):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def afterTextChanged(self, text):
+        if self.action is not None:
+            self.action(str(text))
+
+    def beforeTextChanged(self, text, start, count, after):
+        pass
+
+    def onTextChanged(self, text, start, before, count):
+        pass
 
 
 class ThumbTouch(dynamic_proxy(jclass("android.view.View$OnTouchListener"))):
@@ -294,6 +311,68 @@ class Screen:
         if long_action is not None:
             self.long_click(tile, long_action)
         return {"view": tile, "image": image, "name": name, "second": second}
+
+    def nav_row(self, container, icons, title, action):
+        """A place to go: an icon, the name, room for a count, an arrow. Returns the count's view."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        ImageView = jclass("android.widget.ImageView")
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(20), 0, _dp(16), 0)
+        row.setBackground(owner.selector(0))
+        icon = ImageView(owner.context)
+        owner.set_icon(icon, icons)
+        self.tint_icon(icon, "icon")
+        row.addView(icon, owner.params(24, 24))
+        name = self.label(16, "text")
+        name.setText(title)
+        name_at = Params(0, -2, 1.0)
+        name_at.setMarginStart(_dp(16))
+        row.addView(name, name_at)
+        count = self.label(14, "textSecondary")
+        row.addView(count)
+        arrow = ImageView(owner.context)
+        owner.set_icon(arrow, ("msg_arrowright",))
+        self.tint_icon(arrow, "textSecondary")
+        arrow_at = owner.params(24, 24)
+        arrow_at.setMarginStart(_dp(4))
+        row.addView(arrow, arrow_at)
+        self.click(row, action)
+        container.addView(row, Params(-1, _dp(56)))
+        return count
+
+    def search_pill(self, container, text, action):
+        """A field-shaped button that opens a search screen; the field itself, with the keyboard, is there."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        pill = jclass("android.widget.LinearLayout")(owner.context)
+        pill.setOrientation(0)
+        pill.setGravity(16)
+        pill.setPadding(_dp(16), 0, _dp(16), 0)
+        icon = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(icon, ("outline_search_1_24", "msg_search"))
+        self.tint_icon(icon, "textSecondary")
+        pill.addView(icon, owner.params(24, 24))
+        label = self.label(16, "textSecondary")
+        label.setText(text)
+        label_at = Params(0, -2, 1.0)
+        label_at.setMarginStart(_dp(12))
+        pill.addView(label, label_at)
+        pill.setContentDescription(text)
+        self.click(pill, action)
+        place = Params(-1, _dp(48))
+        place.setMargins(_dp(16), _dp(4), _dp(16), _dp(8))
+        container.addView(pill, place)
+        self.pills = getattr(self, "pills", []) + [pill]
+        self.paint_pills()
+        return pill
+
+    def paint_pills(self):
+        owner = self.owner
+        for pill in getattr(self, "pills", ()):
+            pill.setBackground(owner.rounded(owner.color("surfaceContainer"), _dp(24)))
 
     def sideways(self):
         """(scroller, row) for covers in a line."""
@@ -638,6 +717,108 @@ class BlankScreen(Screen):
         self.view = page
 
 
+class SearchScreen(SongsScreen):
+    """Songs of the library by name, author or album; each letter narrows the list."""
+
+    HINT = "Начни вводить название песни, автора или альбом."
+
+    def __init__(self, owner):
+        self.query = ""
+        self.field = None
+        self.watcher = None
+        super().__init__(owner, "Поиск", self.matches, None, "title", self.HINT)
+        run_on_ui_thread(self.open_keyboard, 250)
+
+    def header(self, large=False, trailing=None):
+        owner = self.owner
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
+        row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+        self.field = jclass("android.widget.EditText")(owner.context)
+        self.field.setHint("Песня, автор или альбом")
+        self.field.setTextSize(1, 18.0)
+        self.field.setSingleLine(True)
+        self.field.setBackground(None)
+        self.field.setPadding(_dp(12), 0, _dp(8), 0)
+        self.paint_field()
+        self.watcher = TextChanged(lambda text: self.guarded(self.searched, text))
+        self.field.addTextChangedListener(self.watcher)
+        row.addView(self.field, jclass("android.widget.LinearLayout$LayoutParams")(0, _dp(48), 1.0))
+        # the list's subtitle has nowhere to go here: views of their own, never shown
+        self.title_view = owner.text_view(13)
+        self.subtitle_view = owner.text_view(13)
+        return row
+
+    def paint_field(self):
+        self.field.setTextColor(self.owner.color("text"))
+        self.field.setHintTextColor(self.owner.color("textSecondary"))
+
+    def colors_changed(self):
+        super().colors_changed()
+        self.paint_field()
+
+    def matches(self):
+        query = self.query.casefold()
+        if not query:
+            return []
+        found = [t for t in self.owner.data.tracks
+                 if query in t["title"].casefold() or query in t["artist"].casefold() or query in (t.get("album") or "").casefold()]
+        # a title that starts with the query, then one with a word that does, then any title that has it,
+        # then the authors and albums
+        word = re.compile(r"(?:^|\W)" + re.escape(query))
+
+        def rank(track):
+            title = track["title"].casefold()
+            return (not title.startswith(query), not word.search(title), query not in title, sort_text(track["title"]))
+
+        found.sort(key=rank)
+        return found
+
+    def searched(self, text):
+        query = text.strip()
+        if query == self.query:
+            return
+        self.query = query
+        self.refresh()
+        self.list.setSelection(0)
+
+    def refresh(self):
+        super().refresh()
+        if self.empty is not None:
+            self.empty.setText("Ничего не нашлось по запросу «%s»." % self.query if self.query else self.HINT)
+
+    def open_keyboard(self):
+        if self.field is not None and self.owner.visible:
+            self.field.requestFocus()
+            jclass("org.telegram.messenger.AndroidUtilities").showKeyboard(self.field)
+
+    def close_keyboard(self):
+        if self.field is not None:
+            try:
+                jclass("org.telegram.messenger.AndroidUtilities").hideKeyboard(self.field)
+                self.field.clearFocus()
+            except Exception:
+                pass
+
+    def row_clicked(self, index, view):
+        self.close_keyboard()
+        self.owner.play(self.tracks, index, "Поиск: %s" % self.query)
+
+    def dispose(self):
+        self.close_keyboard()
+        if self.watcher is not None:
+            self.watcher.action = None
+            try:
+                self.field.removeTextChangedListener(self.watcher)
+            except Exception:
+                pass
+        self.watcher = None
+        self.field = None
+        super().dispose()
+
+
 class RootScreen(Screen):
     """The first level: places to go first, the two rows of covers under them."""
 
@@ -678,7 +859,8 @@ class RootScreen(Screen):
 
         self.counts = {}
         self.tile_views = []
-        self.nav("all", ("msg_filled_data_music", "msg_played"), "Все песни", owner.open_all)
+        self.search_pill(self.content, "Искать в медиатеке", owner.open_search)
+        self.nav("all",("msg_filled_data_music", "msg_played"), "Все песни", owner.open_all)
         self.nav("favorites", ("media_like",), "Любимые", owner.open_favorites)
         self.nav(None, ("msg_stats",), "Популярные", owner.open_popular)
         self.tiles()
@@ -692,37 +874,12 @@ class RootScreen(Screen):
         self.button.setBackground(owner.rounded(owner.color("accent"), _dp(22)))
         for tile in self.tile_views:
             tile.setBackground(owner.rounded(owner.color("surfaceContainer"), _dp(16)))
+        self.paint_pills()
 
     def nav(self, key, icons, title, action):
-        owner = self.owner
-        Params = jclass("android.widget.LinearLayout$LayoutParams")
-        ImageView = jclass("android.widget.ImageView")
-        row = jclass("android.widget.LinearLayout")(owner.context)
-        row.setOrientation(0)
-        row.setGravity(16)
-        row.setPadding(_dp(20), 0, _dp(16), 0)
-        row.setBackground(owner.selector(0))
-        icon = ImageView(owner.context)
-        owner.set_icon(icon, icons)
-        self.tint_icon(icon, "icon")
-        row.addView(icon, owner.params(24, 24))
-        name = self.label(16, "text")
-        name.setText(title)
-        name_at = Params(0, -2, 1.0)
-        name_at.setMarginStart(_dp(16))
-        row.addView(name, name_at)
-        count = self.label(14, "textSecondary")
-        row.addView(count)
+        count = self.nav_row(self.content, icons, title, action)
         if key is not None:
             self.counts[key] = count
-        arrow = ImageView(owner.context)
-        owner.set_icon(arrow, ("msg_arrowright",))
-        self.tint_icon(arrow, "textSecondary")
-        arrow_at = owner.params(24, 24)
-        arrow_at.setMarginStart(_dp(4))
-        row.addView(arrow, arrow_at)
-        self.click(row, action)
-        self.content.addView(row, Params(-1, _dp(56)))
 
     def tiles(self):
         owner = self.owner
@@ -838,7 +995,12 @@ class RootScreen(Screen):
 
 
 class LibraryView:
-    """The media library tab of one open player: a stack of screens above the bottom panel."""
+    """The media library tab of one open player: a stack of screens above the bottom panel.
+
+    The Mornye tab is the same kind of stack: it overrides the first screen and what showing it starts.
+    """
+
+    OWNS_COVERS = True  # the covers' single "ready" callback belongs to the library
 
     def __init__(self, player, context):
         self.player = player
@@ -861,7 +1023,8 @@ class LibraryView:
         self.root.setClickable(True)
         self.root.setVisibility(8)
         player.layout.addOwnView(self.root)
-        self.data.covers.on_ready = self.cover_ready
+        if self.OWNS_COVERS:
+            self.data.covers.on_ready = self.cover_ready
 
     # -- small helpers --------------------------------------------------------
 
@@ -1107,9 +1270,15 @@ class LibraryView:
                 self.colors = self.plugin.sheet_fields.get(self.player.sheet, "colors")
             self.root.setBackgroundColor(tab_scrim(self.colors))
             self.root.setPadding(0, self.plugin.layout_fields.int(self.player.layout, "contentTop"), 0, 0)
-            self.push(RootScreen(self))
+            self.push(self.first_screen())
         elif self.colors_dirty:
             self.apply_colors()
+        self.shown()
+
+    def first_screen(self):
+        return RootScreen(self)
+
+    def shown(self):
         self.data.scan()
         self.data_changed()
 
@@ -1117,6 +1286,10 @@ class LibraryView:
         self.visible = False
         self.root.animate().cancel()
         self.root.setVisibility(8)
+        for screen in self.stack:
+            close = getattr(screen, "close_keyboard", None)
+            if close is not None:
+                close()
 
     def dispose(self):
         """The player closed: every screen lets go of its listeners, so all of it can be collected."""
@@ -1162,6 +1335,9 @@ class LibraryView:
             self.plugin.report("library colors", e)
 
     # -- opening things --------------------------------------------------------
+
+    def open_search(self):
+        self.push(SearchScreen(self))
 
     def open_all(self):
         self.push(SongsScreen(self, "Все песни", lambda: self.data.tracks, "all", "title"))
