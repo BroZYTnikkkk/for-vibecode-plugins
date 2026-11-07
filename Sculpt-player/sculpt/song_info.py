@@ -419,8 +419,8 @@ class SongInfo:
         builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(self.context)
         builder.setTitle("Информация о песне")
         builder.setView(scroll)
-        builder.setNeutralButton("Редактировать теги", DialogButton(
-            lambda: self.plugin.bulletin(self.player.sheet, "info", "Редактор тегов появится в следующих обновлениях.")))
+        if self.library_path:
+            builder.setNeutralButton("Редактировать теги", DialogButton(lambda: self.player.edit_tags(self.library_path)))
         builder.setPositiveButton("Готово", DialogButton(None))
         self.dialog = builder.create()
         self.dialog.setOnDismissListener(Dismissed(self.release))

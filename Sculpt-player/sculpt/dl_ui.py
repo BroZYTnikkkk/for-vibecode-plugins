@@ -413,13 +413,13 @@ class DownloadSheet:
         self.chips.removeAllViews()
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         LinearLayout = jclass("android.widget.LinearLayout")
-        width = owner.context.getResources().getDisplayMetrics().widthPixels - _dp(32)
+        width = int(owner.context.getResources().getDisplayMetrics().widthPixels) - _dp(32)
         spec = jclass("android.view.View$MeasureSpec").makeMeasureSpec(0, 0)
         line, used = None, 0
         for service in self.services:
             chip = self.chip(service)
             chip.measure(spec, spec)
-            need = chip.getMeasuredWidth() + _dp(8)
+            need = int(chip.getMeasuredWidth()) + _dp(8)
             if line is None or used + need > width:
                 line = LinearLayout(owner.context)
                 line.setOrientation(0)

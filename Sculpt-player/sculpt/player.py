@@ -190,6 +190,11 @@ class Player:
         self.show_tab(PANEL_LIBRARY)
         self.library.open_group(kind, item)
 
+    def edit_tags(self, path):
+        """The tag editor, in the library tab: it is the library's songs whose tags it writes."""
+        self.show_tab(PANEL_LIBRARY)
+        self.library.edit_tags(path)
+
     def queue_visible(self):
         return self.queue_screen is not None and self.queue_screen.visible
 

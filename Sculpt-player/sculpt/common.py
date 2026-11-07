@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.19.0"
+VERSION = "0.20.3"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"

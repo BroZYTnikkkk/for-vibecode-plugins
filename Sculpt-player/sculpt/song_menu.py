@@ -53,8 +53,7 @@ class SongMenu:
         stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
         menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
                  "Не останавливаться после этой песни" if stopping else "Остановиться после этой песни", later(self.stop_after))
-        menu.add(self.icon("msg_edit"), "Редактировать теги", later(
-            lambda: self.screen.say("Редактор тегов появится вместе с поиском метаданных.")))
+        menu.add(self.icon("menu_tag_edit", "msg_edit"), "Изменить теги", later(self.edit_tags))
         menu.add(self.icon("msg_share"), "Поделиться", later(self.share))
         menu.add(self.icon("msg_delete"), "Удалить навсегда", later(self.delete))
         self.player.show_menu(menu)
@@ -132,6 +131,12 @@ class SongMenu:
         from .song_info import SongInfo
         fallback = {"title": self.row.title, "artist": self.row.artist, "album": self.row.album, "seconds": self.row.seconds}
         SongInfo(self.player, self.file(), self.row.path, fallback).show()
+
+    def edit_tags(self):
+        if self.row.path is None:
+            self.screen.say("Теги можно записать только в песню с телефона.")
+            return
+        self.player.edit_tags(self.row.path)
 
     def remove(self):
         screen = self.screen

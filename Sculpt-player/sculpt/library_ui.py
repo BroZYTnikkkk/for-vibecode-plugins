@@ -1203,6 +1203,8 @@ class LibraryView:
         menu = self.make_menu(anchor)
         later = self.player.start_menu()
         menu.add(self.resource("msg_info"), "Информация о песне", later(lambda: self.menu_action(menu, self.song_info, track)))
+        menu.add(self.resource("menu_tag_edit") or self.resource("msg_edit"), "Изменить теги",
+                 later(lambda: self.menu_action(menu, self.edit_tags, track["path"])))
         menu.add(self.resource("msg_played"), "Играть следующей", later(lambda: self.menu_action(menu, self.queue_next, track)))
         menu.add(self.resource("player_new_queue"), "В конец очереди", later(lambda: self.menu_action(menu, self.queue_last, track)))
         favorite = self.data.is_favorite(path)
@@ -1217,6 +1219,10 @@ class LibraryView:
             action(*args)
         except Exception as e:
             self.plugin.report("menu", e)
+
+    def edit_tags(self, path):
+        from .tag_ui import TagScreen
+        self.push(TagScreen(self, path))
 
     def song_info(self, track):
         from .song_info import SongInfo

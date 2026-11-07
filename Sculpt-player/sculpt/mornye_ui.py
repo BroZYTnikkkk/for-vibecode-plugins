@@ -44,12 +44,11 @@ class MornyeRoot(Screen):
 
         self.search_pill(content, "Найти песню для скачивания", owner.open_download_search)
         self.nav_row(content, ("msg_download",), "Загрузки", owner.open_downloads)
-        self.nav_row(content, ("menu_tag_edit", "msg_edit"), "Метаданные песен", owner.open_metadata)
         self.nav_row(content, ("msg_info",), "О Mornye", owner.open_about)
 
         note = self.label(13, "textSecondary")
         note.setSingleLine(False)
-        note.setText("Скачивание, поиск метаданных и расширения пришли сюда из Mornye, музыкального плеера zarzet.")
+        note.setText("Скачивание, расширения и поиск тегов («Изменить теги» в меню песни) пришли сюда из Mornye, музыкального плеера zarzet.")
         note.setPadding(_dp(20), _dp(16), _dp(20), 0)
         content.addView(note, Params(-1, -2))
 
@@ -192,9 +191,9 @@ class MornyeView(LibraryView):
     def open_download_settings(self):
         self.push(DownloadSettingsScreen(self))
 
-    def open_metadata(self):
-        self.push(BlankScreen(self, "Метаданные песен", "Здесь можно будет найти название, автора, альбом и обложку для песни "
-                                                        "и записать их в файл после проверки «было → станет»."))
+    def edit_tags(self, path):
+        from .tag_ui import TagScreen
+        self.push(TagScreen(self, path))
 
     def open_about(self):
         self.push(AboutScreen(self))
