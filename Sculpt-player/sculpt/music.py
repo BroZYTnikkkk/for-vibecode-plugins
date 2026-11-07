@@ -311,15 +311,18 @@ class MusicData:
 
         def work():
             try:
+                # what is known already: tags fixed before are not read from the files again
+                known = self.by_path
                 if not self.loaded:
                     saved = self._load("library.json", [])
                     if saved:
+                        known = {t["path"]: t for t in saved}
                         run_on_ui_thread(lambda: self._publish(saved))
                 if not self.has_permission():
                     _log("scan: no permission to read music")
                     return
                 started = time.monotonic()
-                tracks = self._query()
+                tracks = self._query(known)
                 _log("scan: %d songs in %.0f ms, mangled tags: %s" % (
                     len(tracks), (time.monotonic() - started) * 1000, self.fixes or "none"))
                 self._save("library.json", tracks)
@@ -353,8 +356,7 @@ class MusicData:
         if player is not None and player.library is not None:
             player.library.data_changed()
 
-    def _query(self):
-        old = self.by_path
+    def _query(self, old):
         self.fixes = {}
         Media = jclass("android.provider.MediaStore$Audio$Media")
         strings = jclass("java.lang.String")
@@ -660,6 +662,7 @@ class MusicData:
             if offset + QUEUE_CHUNK < len(queue):
                 run_on_queue(lambda: self._build_rest(generation, queue, offset + QUEUE_CHUNK, first_id))
         except Exception as e:
+            _log("queue part %d failed to build: %s" % (offset, e))
             failure = e
             run_on_ui_thread(lambda: self.plugin.report("queue", failure))
 
@@ -670,12 +673,16 @@ class MusicData:
         so later songs (larger ids) go in front and the current position moves by as many.
         """
         if generation != self.queue_generation:
+            _log("queue part dropped: a newer queue started")
             return
         try:
             controller = jclass(MEDIA_CONTROLLER).getInstance()
             table = self.plugin.media_fields.get(controller, "playlistMap")
-            if table is None or not table.containsKey(JInteger.valueOf(first_id)):
-                return  # the queue was replaced from somewhere else in the meantime
+            if table is None or not table.containsKey(JInteger(first_id)):
+                # the queue was replaced from somewhere else in the meantime
+                _log("queue part dropped: song %d is no longer queued (map %s)" % (
+                    first_id, "missing" if table is None else table.size()))
+                return
             config, playlist, active = self._active_list(controller)
             Collections = jclass("java.util.Collections")
             newest_first = jclass("java.util.ArrayList")(items)
@@ -695,8 +702,10 @@ class MusicData:
                 self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + count)
             for i in range(count):
                 message = items.get(i)
-                table.put(JInteger.valueOf(message.getId()), message)
+                table.put(JInteger(message.getId()), message)
+            _log("queue part: +%d songs, %d queued" % (count, playlist.size()))
         except Exception as e:
+            _log("queue part failed: %s" % e)
             self.plugin.report("queue", e)
 
     def _active_list(self, controller):
@@ -710,7 +719,7 @@ class MusicData:
             playlist.add(message)
         table = self.plugin.media_fields.get(controller, "playlistMap")
         if table is not None:
-            table.put(JInteger.valueOf(message.getId()), message)
+            table.put(JInteger(message.getId()), message)
 
     def play_next(self, track):
         controller = jclass("org.telegram.messenger.MediaController").getInstance()

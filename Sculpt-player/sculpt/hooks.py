@@ -205,14 +205,47 @@ class SettingsClickHook(_Hook):
 
 
 class BackHook(_Hook):
-    """MusicPlayerSheet.onBackPressed: inside the media library, back goes up one level at a time."""
+    """MusicPlayerSheet.onBackPressed: inside the media library, back goes up one level at a time; from the
+    queue tab it goes to the player tab, the way it leaves the library, instead of closing the player."""
 
     def before_hooked_method(self, param):
         try:
             player = self.plugin.player
-            if player is not None and player.library_visible():
-                player.library.back()
+            if player is not None and player.wants_back():
+                player.go_back()
                 param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class PredictiveBackHook(_Hook):
+    """BottomSheet's OnBackAnimationCallback. With predictive back on (Android 13+), the back gesture and key
+    reach this callback, whose onBackInvoked dismisses the sheet without asking onBackPressed: the player's own
+    way back out of lyrics and queue, and the library's, never run. While the player has somewhere to go back
+    to, the closing preview is skipped and the back is a step back, cancelled the way BottomSheet cancels it
+    when its delegate refuses to be dismissed."""
+
+    def __init__(self, plugin, name, kind):
+        super().__init__(plugin, name)
+        self.kind = kind
+        self.outer = None
+
+    def sheet(self, callback):
+        if self.outer is None:
+            field = callback.getClass().getDeclaredField("this$0")
+            field.setAccessible(True)
+            self.outer = field
+        return self.outer.get(callback)
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is None or not player.sheet.equals(self.sheet(param.thisObject)) or not player.wants_back():
+                return
+            if self.kind == "invoked":
+                param.thisObject.onBackCancelled()
+                player.go_back()
+            param.setResult(None)
         except Exception as e:
             self.fail(e)
 
@@ -269,6 +302,18 @@ class DetachHook(_Hook):
     def after_hooked_method(self, param):
         try:
             self.plugin.close_player(param.thisObject)
+        except Exception as e:
+            self.fail(e)
+
+
+class ModeHook(_Hook):
+    """MusicPlayerSheet.setMode(mode, animated): the queue is a tab now, so the tabs follow the mode."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.sheet.equals(param.thisObject):
+                player.mode_changed(int(param.args[0]))
         except Exception as e:
             self.fail(e)
 

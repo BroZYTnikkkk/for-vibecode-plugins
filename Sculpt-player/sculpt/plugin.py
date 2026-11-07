@@ -10,7 +10,7 @@ from ui.settings import Divider
 from .common import CHECKS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
 from .music import ListenTimer, MusicData, local_path
 from .player import Player
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -62,8 +62,10 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
             self.install(sheet, "updateHeader", (), HeaderHook(self, "updateHeader"))
+            self.install(sheet, "setMode", (i, b), ModeHook(self, "setMode"))
             self.install(layout, "onDetachedFromWindow", (), DetachHook(self, "onDetachedFromWindow"))
             self.install(sheet, "onBackPressed", (), BackHook(self, "onBackPressed"))
+            self.install_predictive_back()
             self.install(sheet, "isSwipeDismissArea", (f, f), SwipeAreaHook(self, "isSwipeDismissArea"))
             message = _java_class(MESSAGE_OBJECT)
             self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
@@ -95,6 +97,32 @@ class SculptPlayerPlugin(BasePlugin):
         self.player = None
         if self.listen is not None:
             self.listen.stopped = True
+
+    def install_predictive_back(self):
+        """BottomSheet's back callback is an anonymous class: the one that implements OnBackAnimationCallback.
+        Phones before Android 13 have no such callback, and back goes through onBackPressed there."""
+        try:
+            wanted = _java_class("android.window.OnBackAnimationCallback")
+            event = _java_class("android.window.BackEvent")
+        except Exception:
+            return
+        for number in range(1, 40):
+            try:
+                cls = _java_class("org.telegram.ui.ActionBar.BottomSheet$%d" % number)
+            except Exception:
+                continue
+            if not wanted.isAssignableFrom(cls):
+                continue
+            try:
+                self.install(cls, "onBackInvoked", (), PredictiveBackHook(self, "onBackInvoked", "invoked"))
+                self.install(cls, "onBackStarted", (event,), PredictiveBackHook(self, "onBackStarted", "started"))
+                self.install(cls, "onBackProgressed", (event,), PredictiveBackHook(self, "onBackProgressed", "progressed"))
+                _log("predictive back: %s" % cls.getName())
+            except Exception as e:
+                # without these the player still works; back just closes it from any tab
+                _log("predictive back: %s" % e)
+            return
+        _log("predictive back: no callback class found")
 
     def install(self, cls, name, types, handler):
         method = cls.getDeclaredMethod(name, *types)

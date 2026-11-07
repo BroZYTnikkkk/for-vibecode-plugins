@@ -2,8 +2,9 @@
 
 from android_utils import OnClickListener
 from java import jclass
+from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_QUEUE, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
@@ -73,6 +74,9 @@ class Player:
 
         self.apply_wave()
         self.build_panel(context)
+        # the player may reopen in the queue it was left in
+        if self.mode() == MODE_QUEUE:
+            self.active_tab = PANEL_QUEUE
         self.visualizer = Visualizer(self.plugin, self)
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
@@ -92,7 +96,7 @@ class Player:
         self.moreButton.bringToFront()
 
     def tab_pressed(self, index):
-        if index in (PANEL_ACTIVE, PANEL_LIBRARY):
+        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY):
             self.show_tab(index)
 
     def show_tab(self, index):
@@ -105,11 +109,59 @@ class Player:
                 self.library.set_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
                 self.layout.requestLayout()
             self.library.show()
-        elif self.library is not None:
-            self.library.hide()
-            self.layout.postInvalidateOnAnimation()
+        else:
+            if self.library is not None and self.library.visible:
+                self.library.hide()
+                self.layout.postInvalidateOnAnimation()
+            # the active tab is set first, so the mode hook finds them already agreeing
+            if index == PANEL_QUEUE:
+                self.set_mode(MODE_QUEUE)
+            elif self.mode() == MODE_QUEUE:
+                self.set_mode(MODE_PLAYER)
         self.paint_tabs(self.plugin.sheet_fields.get(self.sheet, "colors"))
         self.place_indicator()
+
+    def mode(self):
+        return self.plugin.sheet_fields.int(self.sheet, "mode")
+
+    def wants_back(self):
+        """Whether back has a step to take inside the player before it closes."""
+        return self.library_visible() or self.active_tab == PANEL_QUEUE or self.mode() != MODE_PLAYER
+
+    def go_back(self):
+        """One step back: up the library, out of the queue's search, out of the queue or the lyrics."""
+        if self.library_visible():
+            self.library.back()
+            return
+        queue = self.plugin.sheet_fields.get(self.sheet, "queueView")
+        if self.mode() == MODE_QUEUE and queue is not None and queue.isSearchFocused():
+            queue.clearSearch()
+        elif self.active_tab == PANEL_QUEUE:
+            self.show_tab(PANEL_ACTIVE)
+        else:
+            self.set_mode(MODE_PLAYER)
+
+    def set_mode(self, mode):
+        """The player's own switch, without saving it as the mode the next opening starts in."""
+        method = self.plugin.sheet_method("setMode", JInteger.TYPE, JBoolean.TYPE)
+        method.invoke(self.sheet, JInteger(mode), JBoolean(True))
+
+    def mode_changed(self, mode):
+        """After MusicPlayerSheet.setMode: back, the lyrics button or a swipe may leave the queue on their own."""
+        if self.indicator is None:
+            return
+        if mode == MODE_QUEUE:
+            wanted = PANEL_QUEUE
+        elif self.active_tab == PANEL_QUEUE:
+            wanted = PANEL_ACTIVE
+        else:
+            return
+        if wanted != self.active_tab:
+            self.active_tab = wanted
+            if self.library is not None and self.library.visible:
+                self.library.hide()
+            self.paint_tabs(self.plugin.sheet_fields.get(self.sheet, "colors"))
+            self.place_indicator()
 
     def paint_tabs(self, colors):
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
@@ -398,7 +450,8 @@ class Player:
 
     def step(self):
         pane = self.plugin.layout_fields.int(self.layout, "paneWidth")
-        # seven buttons in the row: heart, plus, lyrics, queue, then speed, repeat and shuffle at the other end
+        # the row is laid out for seven buttons (heart, plus, lyrics, a free place, speed, repeat, shuffle), so
+        # the spacing stays the one it had with the queue button, which is a tab now
         return min(_dp(STEP), (pane - 2 * _dp(MARGIN) - _dp(BUTTON)) // 6)
 
     def place_mode_buttons(self):
@@ -406,10 +459,10 @@ class Player:
         left = f.int(self.layout, "paneLeft") + _dp(MARGIN)
         top = f.int(self.layout, "toolbarTop")
         size = _dp(BUTTON)
-        step = self.step()
-        for index, button in ((2, self.lyricsButton), (3, self.queueButton)):
-            x = left + index * step
-            button.layout(x, top, x + size, top + size)
+        x = left + 2 * self.step()
+        self.lyricsButton.layout(x, top, x + size, top + size)
+        # the queue is the first tab of the bottom panel now
+        self.queueButton.layout(0, 0, 0, 0)
 
     def place(self):
         f = self.plugin.layout_fields

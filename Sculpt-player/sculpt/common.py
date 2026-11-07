@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.9.1"
+VERSION = "0.9.3"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -48,8 +48,10 @@ PANEL_TABS = (
     ("Плейлисты", ("files_music", "filled_widget_music")),
     ("Поиск", ("outline_search_1_24", "msg_search")),
 )
+PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
+MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode
 HEADER_H = 56.0  # the player's own header, same as PlayerLayout's
 
 ID_VIS_TOP, ID_VIS_BOTTOM, ID_FLAT_SEEK = 9101, 9102, 9103
