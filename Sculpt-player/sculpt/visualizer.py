@@ -298,6 +298,7 @@ class Visualizer:
             return  # hidden under the media library or the queue: nothing to draw, and no reason to keep redrawing
         started = time.monotonic()
         show_top, show_bottom, density, color_mode, height_index, style, cover_radius = self._config(started)
+        self.top_extent = 0.0
         if not show_top and not show_bottom:
             return
         player = self.player
@@ -374,7 +375,8 @@ class Visualizer:
         self.moving = self._advance(count, self.spectrum.poll(playing), layered)
         wanted = _dp(VIS_HEIGHT_DP[height_index])
         full_top = top - inset
-        above = max(0.0, min(wanted, full_top - (f.int(lay, "headerBottom") + _dp(4)))) if show_top else 0.0
+        ceiling = f.int(lay, "headerBottom") + _dp(4)
+        above = max(0.0, min(wanted, full_top - ceiling)) if show_top else 0.0
         below = max(0.0, min(wanted, f.int(lay, "titleTop") - _dp(4) - (full_top + full_size))) if show_bottom else 0.0
         self._shader(full_left, full_size, full_top, above, below)
 
@@ -382,7 +384,7 @@ class Visualizer:
         half = step / 2.0
         rows = []
         if show_top:
-            room = top - (f.int(lay, "headerBottom") + _dp(4))
+            room = top - ceiling
             rows.append((top, -1.0, max(0.0, min(wanted, room))))
         if show_bottom:
             room = f.int(lay, "titleTop") - _dp(4) - (top + size)
@@ -423,3 +425,4 @@ class Visualizer:
             batches.append((color, float(width), float(width - 2.0 * radius), float(2.0 * radius), jarray(jfloat)(body),
                             jarray(jfloat)(tips) if style == 0 else None, jarray(jfloat)(corners) if style == 0 else None, alpha))
         self.batches = batches
+        self.top_extent = float(rows[0][2]) if show_top and rows else 0.0

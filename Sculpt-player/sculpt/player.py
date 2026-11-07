@@ -1,15 +1,16 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
 from android_utils import OnClickListener
-from java import jclass
+from java import jarray, jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_QUEUE, PANEL_SETTINGS, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
+from .peeks import Peeks
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
-from .mornye_ui import MornyeView
+from .mornye_ui import MornyeView, SearchView
 from .settings_ui import SettingsView
 
 
@@ -32,6 +33,7 @@ class Player:
         self.equalizer = None
         self.listeners = []
         self.visualizer = None
+        self.peeks = None
         self.album_checked = 0.0
         self.tabs = []
         self.panel_top = 0
@@ -41,6 +43,8 @@ class Player:
         self.context = None
         self.active_tab = PANEL_ACTIVE
         self.library = None
+        self.search_tab = None
+        self.search_shape = None
         self.mornye = None
         self.settings = None
         self.like = None
@@ -49,9 +53,25 @@ class Player:
         self.queue_screen = None
         self.menu_runs = []
 
+    # the tabs made of a stack of screens: panel index, attribute, class
+    STACK_KINDS = ((PANEL_LIBRARY, "library", LibraryView), (PANEL_SEARCH, "search_tab", SearchView),
+                   (PANEL_MORNYE, "mornye", MornyeView), (PANEL_SETTINGS, "settings", SettingsView))
+
     def stacks(self):
-        """The tabs made of a stack of screens, in the order of their panel indexes: library, Mornye."""
-        return ((PANEL_LIBRARY, self.library), (PANEL_MORNYE, self.mornye), (PANEL_SETTINGS, self.settings))
+        """The tabs made of a stack of screens, with their panel indexes: library, search, Mornye, settings."""
+        return tuple((index, getattr(self, name)) for index, name, _ in self.STACK_KINDS)
+
+    def ensure_stack(self, index, colors):
+        for panel, name, kind in self.STACK_KINDS:
+            if panel == index:
+                stack = getattr(self, name)
+                if stack is None:
+                    stack = kind(self, self.context)
+                    stack.set_colors(colors)
+                    setattr(self, name, stack)
+                    self.layout.requestLayout()
+                return stack
+        return None
 
     def visible_stack(self):
         for _, stack in self.stacks():
@@ -96,6 +116,7 @@ class Player:
             # the player's own queue mode is the Queue tab's job now
             self.set_mode(MODE_PLAYER)
         self.visualizer = Visualizer(self.plugin, self)
+        self.peeks = Peeks(self.plugin, self)
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
         self.update_album()
@@ -105,17 +126,39 @@ class Player:
         self.divider = View(context)
         self.layout.addOwnView(self.divider)
         for index, (title, icons) in enumerate(PANEL_TABS):
-            # the others are blanks for now: only the icon and the name, shown as a tooltip on a long press
             tab = self._button(context, icons, title, lambda i=index: self.tab_pressed(i))
             tab.setTooltipText(title)
             self.tabs.append(tab)
+        # the search tab stands out: its icon sits on a pill of the accent color
+        Drawable = jclass("android.graphics.drawable.Drawable")
+        self.search_shape = jclass("android.graphics.drawable.GradientDrawable")()
+        self.search_shape.setCornerRadius(float(_dp(18)))
+        pill = jclass("android.graphics.drawable.LayerDrawable")(jarray(Drawable)([self.search_shape]))
+        pill.setLayerSize(0, _dp(52), _dp(36))
+        pill.setLayerGravity(0, 17)  # Gravity.CENTER
+        self.tabs[PANEL_SEARCH].setBackground(pill)
         self.indicator = View(context)
         self.layout.addOwnView(self.indicator)
         self.moreButton.bringToFront()
 
     def tab_pressed(self, index):
-        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY, PANEL_MORNYE, PANEL_SETTINGS):
+        if index == PANEL_PLAYLISTS:
+            return  # a blank for now
+        if index == self.active_tab:
+            self.tab_again(index)
+        else:
             self.show_tab(index)
+
+    def tab_again(self, index):
+        """A press on the tab that is open: back to its first screen, the way apps' bottom bars do it."""
+        for panel, stack in self.stacks():
+            if panel == index and stack is not None:
+                stack.to_root()
+                return
+        if index == PANEL_ACTIVE and self.mode() != MODE_PLAYER:
+            self.set_mode(MODE_PLAYER)
+        elif index == PANEL_QUEUE and self.queue_visible() and self.queue_screen.query:
+            self.queue_screen.search.setText("")
 
     def show_tab(self, index):
         if index == self.active_tab:
@@ -129,24 +172,9 @@ class Player:
         if index != PANEL_QUEUE and self.queue_visible():
             self.queue_screen.hide()
             self.layout.postInvalidateOnAnimation()
-        if index == PANEL_LIBRARY:
-            if self.library is None:
-                self.library = LibraryView(self, self.context)
-                self.library.set_colors(colors)
-                self.layout.requestLayout()
-            self.library.show()
-        elif index == PANEL_MORNYE:
-            if self.mornye is None:
-                self.mornye = MornyeView(self, self.context)
-                self.mornye.set_colors(colors)
-                self.layout.requestLayout()
-            self.mornye.show()
-        elif index == PANEL_SETTINGS:
-            if self.settings is None:
-                self.settings = SettingsView(self, self.context)
-                self.settings.set_colors(colors)
-                self.layout.requestLayout()
-            self.settings.show()
+        stack = self.ensure_stack(index, colors)
+        if stack is not None:
+            stack.show()
         elif index == PANEL_QUEUE:
             if self.queue_screen is None:
                 self.queue_screen = QueueScreen(self, self.context)
@@ -154,7 +182,7 @@ class Player:
             self.queue_screen.show()
         if self.mode() == MODE_QUEUE:
             self.set_mode(MODE_PLAYER)
-        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE, PANEL_MORNYE, PANEL_SETTINGS))
+        self.cover_player(index in PANEL_STACKS or index == PANEL_QUEUE)
         self.paint_tabs(colors)
         self.place_indicator()
 
@@ -165,7 +193,7 @@ class Player:
         tab's root takes the touches, so nothing hidden can be pressed.
         """
         keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator]}
-        for screen in (self.library, self.mornye, self.settings, self.queue_screen):
+        for screen in [stack for _, stack in self.stacks()] + [self.queue_screen]:
             if screen is not None:
                 keep.add(screen.root.hashCode())
         value = 0.0 if hidden else 1.0
@@ -173,17 +201,16 @@ class Player:
             child = self.layout.getChildAt(i)
             if child.hashCode() not in keep:
                 child.setTransitionAlpha(value)
+        # the moving background stops under a tab and starts again over the player (RhythmHook)
+        try:
+            self.plugin.sheet_method("updateRhythm").invoke(self.sheet)
+        except Exception as e:
+            self.plugin.report("updateRhythm", e)
 
     def open_group(self, kind, name):
         """From the song info: that author, album or genre, opened in the library."""
-        from .music import sort_text, split_artists
-        groups = self.plugin.music.groups().get(kind, [])
-        item = None
-        for wanted in [name] + (split_artists(name) if kind == "artists" else []):
-            key = sort_text(wanted)
-            item = next((g for g in groups if sort_text(g["name"]) == key), None)
-            if item is not None:
-                break
+        from .music import find_group
+        item = find_group(self.plugin.music, kind, name)
         if item is None:
             self.plugin.bulletin(self.sheet, "info", "В медиатеке нет «%s»." % name)
             return
@@ -233,7 +260,15 @@ class Player:
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
         mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
         for index, tab in enumerate(self.tabs):
+            if index == PANEL_SEARCH:
+                continue
             tab.setColorFilter(PorterDuffColorFilter(colors.accent if index == self.active_tab else colors.icon, mode))
+        if self.search_shape is not None:
+            ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+            accent = colors.accent
+            self.search_shape.setColor(accent)
+            on_accent = -16777216 if ColorUtils.calculateLuminance(accent) > 0.5 else -1  # black or white
+            self.tabs[PANEL_SEARCH].setColorFilter(PorterDuffColorFilter(on_accent, mode))
 
     def place_indicator(self):
         f = self.plugin.layout_fields
@@ -329,16 +364,15 @@ class Player:
         if self.queue_screen is not None:
             self.queue_screen.dispose()
             self.queue_screen = None
-        if self.library is not None:
-            self.library.dispose()
-            self.library = None
-        if self.mornye is not None:
-            self.mornye.dispose()
-            self.mornye = None
-        if self.settings is not None:
-            self.settings.dispose()
-            self.settings = None
+        for _, name, _ in self.STACK_KINDS:
+            stack = getattr(self, name)
+            if stack is not None:
+                stack.dispose()
+                setattr(self, name, None)
         self.visualizer = None
+        if self.peeks is not None:
+            self.peeks.dispose()
+            self.peeks = None
         self.menu_runs = []
 
     def run_later(self, action):

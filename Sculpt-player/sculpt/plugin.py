@@ -13,7 +13,7 @@ from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -69,6 +69,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(layout, "onDraw", (_java_class("android.graphics.Canvas"),), DrawHook(self, "onDraw"))
             self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
+            self.install(cover, "setCover", (_java_class(MESSAGE_OBJECT), b, i), CoverSwapHook(self, "coverSetCover"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
             self.install(sheet, "updateHeader", (), HeaderHook(self, "updateHeader"))
             self.install(sheet, "setMode", (i, b), ModeHook(self, "setMode"))
@@ -76,6 +77,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(sheet, "onBackPressed", (), BackHook(self, "onBackPressed"))
             self.install_predictive_back()
             self.install(sheet, "isSwipeDismissArea", (f, f), SwipeAreaHook(self, "isSwipeDismissArea"))
+            self.install(sheet, "getNeighborMessage", (i,), NeighborHook(self, "getNeighborMessage"))
             message = _java_class(MESSAGE_OBJECT)
             self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
             self.install(_java_class(PLAYER_COVERS), "needsArtwork", (message,), NeedsArtworkHook(self, "needsArtwork"))
@@ -255,6 +257,26 @@ class SculptPlayerPlugin(BasePlugin):
             self.stop_after = None
             run_on_ui_thread(lambda: controller.pauseMessage(controller.getPlayingMessageObject()))
         self.last_song = now
+        self.warm_neighbors()
+
+    def warm_neighbors(self):
+        """The covers a swipe would show, read from the files now: the next and the previous song, mixed or not."""
+        player = self.player
+        if player is None:
+            return
+        try:
+            delegate = self.cover_fields.get(player.coverView, "delegate")
+            if delegate is None:
+                return
+            paths = []
+            for side in (1, -1):
+                path = local_path(delegate.getNeighbor(side))
+                if path is not None:
+                    paths.append(path)
+            if paths:
+                self.music.covers.warm(paths)
+        except Exception as e:
+            self.report("warm_neighbors", e)
 
     def refresh_cover(self, path):
         player = self.player
@@ -350,6 +372,10 @@ class SculptPlayerPlugin(BasePlugin):
         player.apply_wave()
         player.layout.requestLayout()
         player.layout.invalidate()
+        try:
+            self.sheet_method("updateRhythm").invoke(player.sheet)  # the glow under the tabs follows its switch
+        except Exception as e:
+            self.report("updateRhythm", e)
 
     def _slider(self, item_id, labels, key, default):
         plugin = self

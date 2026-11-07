@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.20.3"
+VERSION = "0.24.7"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -45,6 +45,7 @@ PANEL_TABS = (
     ("Очередь", ("player_new_queue",)),
     ("Плеер", ("tab_music", "msg_filled_data_music", "msg_played")),
     ("Медиатека", ("msg_folders", "msg2_folder")),
+    ("Поиск", ("outline_search_1_24", "msg_search")),
     ("Плейлисты", ("files_music", "filled_widget_music")),
     ("Mornye", ("menu_download_round", "msg_download")),
     ("Настройки", ("msg_settings",)),
@@ -52,9 +53,12 @@ PANEL_TABS = (
 PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
-PANEL_MORNYE = 4  # downloads, metadata and extensions from Mornye; search of one's own songs is in the library
-PANEL_SETTINGS = 5  # the gear in the panel's last place, where the player's ⋯ was; the ⋯ is beside the title now
-PANEL_STACKS = (PANEL_LIBRARY, PANEL_MORNYE, PANEL_SETTINGS)  # tabs that are a stack of screens
+PANEL_SEARCH = 3  # in the middle of the panel and filled with the accent: songs to download, Mornye's search
+PANEL_PLAYLISTS = 4  # a blank for now
+PANEL_MORNYE = 5  # downloads and extensions from Mornye; search of one's own songs is in the library
+PANEL_SETTINGS = 6  # the gear in the panel's last place, where the player's ⋯ was; the ⋯ is beside the title now
+PANEL_STACKS = (PANEL_LIBRARY, PANEL_SEARCH, PANEL_MORNYE, PANEL_SETTINGS)  # tabs that are a stack of screens
+SEARCH_HISTORY = 8  # recent download searches kept on the Search tab
 ID_OPEN_SETTINGS = 9110  # the link from exteraGram's player settings sheet to this plugin's settings
 MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode
 QUEUES_MAX = 10  # queues kept at once; the oldest goes first

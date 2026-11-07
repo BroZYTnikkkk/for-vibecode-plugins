@@ -62,6 +62,10 @@ class LookScreen(ExtScreen):
         self.choice("vis_color_mode", "Цвет", VIS_COLORS, 0)
         self.section(self.body, "Обложка")
         self.choice("cover_radius", "Скругление углов", RADIUS_LABELS, 1)
+        self.section(self.body, "Фон")
+        self.toggle("glow_under_tabs", "Живое свечение под вкладками",
+                    "Фон плеера продолжает двигаться под Медиатекой, Поиском и другими вкладками. "
+                    "Выключи, если телефон греется: тогда свечение под вкладками замирает.")
         self.section(self.body, "Прогресс")
         self.toggle("flat_seek", "Ровная линия", "Выключено: волна, как в обычном плеере exteraGram.")
 

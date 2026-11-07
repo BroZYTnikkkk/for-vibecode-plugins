@@ -55,6 +55,17 @@ def sort_text(text):
     return re.sub(r"^\W+", "", (text or "").casefold()).replace("ё", "е")
 
 
+def find_group(music, kind, name):
+    """The library's author, album or genre called this; an author also by any one of several names."""
+    groups = music.groups().get(kind, [])
+    for wanted in [name] + (split_artists(name) if kind == "artists" else []):
+        key = sort_text(wanted)
+        item = next((g for g in groups if sort_text(g["name"]) == key), None)
+        if item is not None:
+            return item
+    return None
+
+
 def first_letter(text):
     key = sort_text(text)
     return key[0].upper() if key and key[0].isalnum() else "#"
@@ -100,22 +111,40 @@ class CoverCache:
         self.on_ready = None
         # called on the covers' thread for every cover read from a file, whoever asked for it
         self.on_extracted = None
+        # path -> jpeg path or None, for the files whose cover is read: a scrolling list asks this for every row
+        self.known = {}
+        self.names = {}  # path -> the cache file's base name
 
     def _name(self, path):
+        # the song's mtime is read once: a stat on /storage goes through FUSE and costs a list row its frame
+        name = self.names.get(path)
+        if name is not None:
+            return name
         try:
             mtime = int(os.path.getmtime(path))
         except OSError:
             return None
-        return os.path.join(self.dir, hashlib.sha1(("%s|%d" % (path, mtime)).encode("utf-8")).hexdigest())
+        name = os.path.join(self.dir, hashlib.sha1(("%s|%d" % (path, mtime)).encode("utf-8")).hexdigest())
+        self.names[path] = name
+        return name
+
+    def forget(self, path):
+        """The file changed here (its tags or cover were written): its cover is read again."""
+        self.known.pop(path, None)
+        self.names.pop(path, None)
 
     def cached(self, path):
         """(known, jpeg path or None): known is False while the file has not been read yet."""
+        if path in self.known:
+            return True, self.known[path]
         base = self._name(path)
         if base is None:
             return True, None
         if os.path.exists(base + ".jpg"):
+            self.known[path] = base + ".jpg"
             return True, base + ".jpg"
         if os.path.exists(base + ".none"):
+            self.known[path] = None
             return True, None
         return False, None
 

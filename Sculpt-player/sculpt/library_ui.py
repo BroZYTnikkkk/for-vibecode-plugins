@@ -1,5 +1,6 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
+import random
 import re
 import time
 
@@ -168,7 +169,7 @@ class ListScrolled(dynamic_proxy(jclass("android.widget.AbsListView$OnScrollList
         self.screen = screen
 
     def onScrollStateChanged(self, view, state):
-        pass
+        self.screen.scroll_state_changed(state)
 
     def onScroll(self, view, first, visible, total):
         self.screen.list_scrolled(first, visible, total)
@@ -401,6 +402,8 @@ class ListScreen(Screen):
         self.track_view = None
         self.thumb = None
         self.bubble = None
+        self.scrolling = False
+        self.change_waiting = False
 
     def build(self, trailing=None, empty_text=""):
         owner = self.owner
@@ -410,6 +413,9 @@ class ListScreen(Screen):
         page = jclass("android.widget.LinearLayout")(context)
         page.setOrientation(1)
         page.addView(self.header(False, trailing))
+        bar = self.toolbar()
+        if bar is not None:
+            page.addView(bar)
         body = jclass("android.widget.FrameLayout")(context)
         page.addView(body, Linear(-1, 0, 1.0))
         self.view = page
@@ -461,6 +467,9 @@ class ListScreen(Screen):
         self.paint_slider()
         self.refresh()
 
+    def toolbar(self):
+        return None
+
     def paint_slider(self):
         owner = self.owner
         self.thumb.setBackground(owner.rounded(owner.color("accent"), _dp(2)))
@@ -493,6 +502,20 @@ class ListScreen(Screen):
         self.thumb.setVisibility(show)
         self.track_view.setVisibility(show)
         self.adapter.changed()
+
+    def scroll_state_changed(self, state):
+        """0 is idle: a rebind put off while the finger or the fling moved the list happens now."""
+        self.scrolling = state != 0
+        if not self.scrolling and self.change_waiting:
+            self.change_waiting = False
+            self.adapter.changed()
+
+    def changed_when_still(self):
+        """Rebinding every row in the middle of a fling costs frames: it waits for the list to stop."""
+        if self.scrolling:
+            self.change_waiting = True
+        else:
+            self.adapter.changed()
 
     def list_scrolled(self, first, visible, total):
         room = total - visible
@@ -537,10 +560,20 @@ class ListScreen(Screen):
 
 
 class SongsScreen(ListScreen):
-    """A list of songs. Any of them starts the whole list from itself."""
+    """A list of songs. Any of them starts the whole list from itself. Over the list: a search that narrows
+    it and "Shuffle", which starts a random song of it."""
+
+    FILTERED = True  # the library's own search screen has its own field instead
 
     def __init__(self, owner, title, source, list_id=None, default_sort="title", empty_text="", list_header=None, fav_dates=False):
         super().__init__(owner, title, "", list_header)
+        self.filter_query = ""
+        self.filter_field = None
+        self.filter_watcher = None
+        self.filter_clear = None
+        self.filter_pill = None
+        self.shuffle_pill = None
+        self.empty_text = empty_text
         self.source = source
         self.list_id = list_id
         self.default_sort = default_sort
@@ -551,6 +584,128 @@ class SongsScreen(ListScreen):
         if list_id is not None:
             trailing = self.icon_button(("msg_filter",), "Сортировка", self.show_sort)
         self.build(trailing, empty_text)
+
+    def toolbar(self):
+        if not self.FILTERED:
+            return None
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        bar = jclass("android.widget.LinearLayout")(owner.context)
+        bar.setOrientation(0)
+        bar.setGravity(16)
+        bar.setPadding(_dp(16), _dp(2), _dp(16), _dp(8))
+
+        pill = jclass("android.widget.LinearLayout")(owner.context)
+        pill.setOrientation(0)
+        pill.setGravity(16)
+        pill.setPadding(_dp(14), 0, _dp(4), 0)
+        icon = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(icon, ("outline_search_1_24", "msg_search"))
+        self.tint_icon(icon, "textSecondary")
+        pill.addView(icon, owner.params(20, 20))
+        field = jclass("android.widget.EditText")(owner.context)
+        field.setHint("Искать в списке")
+        field.setTextSize(1, 15.0)
+        field.setSingleLine(True)
+        field.setBackground(None)
+        field.setPadding(_dp(10), 0, _dp(4), 0)
+        field.setImeOptions(6)  # EditorInfo.IME_ACTION_DONE: the list narrows as one types
+        self.filter_field = field
+        self.paint_filter()
+        self.filter_watcher = TextChanged(lambda text: self.guarded(self.filter_changed, text))
+        field.addTextChangedListener(self.filter_watcher)
+        pill.addView(field, Params(0, -1, 1.0))
+        self.filter_clear = self.icon_button(("msg_close", "ic_close_white"), "Очистить поиск", self.clear_filter)
+        self.filter_clear.setVisibility(8)
+        pill.addView(self.filter_clear, owner.params(36, 36))
+        self.filter_pill = pill
+        bar.addView(pill, Params(0, _dp(44), 1.0))
+
+        shuffle = jclass("android.widget.LinearLayout")(owner.context)
+        shuffle.setOrientation(0)
+        shuffle.setGravity(17)
+        shuffle.setPadding(_dp(14), 0, _dp(16), 0)
+        mark = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(mark, ("player_new_shuffle", "player_shuffle", "msg_shuffle"))
+        self.tint_icon(mark, "accent")
+        shuffle.addView(mark, owner.params(20, 20))
+        word = self.label(15, "accent", True)
+        word.setText("Перемешать")
+        at = Params(-2, -2)
+        at.setMarginStart(_dp(6))
+        shuffle.addView(word, at)
+        shuffle.setContentDescription("Перемешать: включить случайную песню из этого списка")
+        self.click(shuffle, self.shuffle)
+        self.shuffle_pill = shuffle
+        place = Params(-2, _dp(44))
+        place.setMarginStart(_dp(8))
+        bar.addView(shuffle, place)
+        self.paint_bar()
+        return bar
+
+    def paint_filter(self):
+        self.filter_field.setTextColor(self.owner.color("text"))
+        self.filter_field.setHintTextColor(self.owner.color("textSecondary"))
+
+    def paint_bar(self):
+        owner = self.owner
+        self.filter_pill.setBackground(owner.rounded(owner.color("surfaceContainer"), _dp(22)))
+        tint = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(owner.color("accent"), 40)
+        self.shuffle_pill.setBackground(owner.rounded(tint, _dp(22)))
+
+    def colors_changed(self):
+        super().colors_changed()
+        if self.filter_field is not None:
+            self.paint_filter()
+            self.paint_bar()
+
+    def filter_changed(self, text):
+        query = text.strip()
+        self.filter_clear.setVisibility(0 if text else 8)
+        if query == self.filter_query:
+            return
+        self.filter_query = query
+        self.refresh()
+        self.list.setSelection(0)
+
+    def clear_filter(self):
+        if self.filter_field is not None:
+            self.filter_field.setText("")
+        self.close_keyboard()
+
+    def filtered(self, tracks):
+        query = self.filter_query.casefold()
+        if not query:
+            return tracks
+        return [t for t in tracks if query in t["title"].casefold() or query in t["artist"].casefold()
+                or query in (t.get("album") or "").casefold()]
+
+    def shuffle(self):
+        """A random song of this list (of what the search left); the player's shuffle mode decides the rest."""
+        if not self.tracks:
+            self.owner.plugin.bulletin(self.owner.player.sheet, "info", "В этом списке нет песен.")
+            return
+        self.close_keyboard()
+        self.owner.play(self.tracks, random.randrange(len(self.tracks)), self.title_text)
+
+    def close_keyboard(self):
+        if self.filter_field is not None:
+            try:
+                jclass("org.telegram.messenger.AndroidUtilities").hideKeyboard(self.filter_field)
+                self.filter_field.clearFocus()
+            except Exception:
+                pass
+
+    def dispose(self):
+        if self.filter_watcher is not None:
+            self.close_keyboard()
+            self.filter_watcher.action = None
+            try:
+                self.filter_field.removeTextChangedListener(self.filter_watcher)
+            except Exception:
+                pass
+            self.filter_watcher = None
+        super().dispose()
 
     def read_sort(self):
         if self.list_id is None:
@@ -604,11 +759,21 @@ class SongsScreen(ListScreen):
         return sort_text(track["title"])
 
     def refresh(self):
-        tracks = list(self.source())
+        everything = list(self.source())
+        tracks = self.filtered(everything) if self.FILTERED else everything
         if self.sort_mode is not None:
             tracks.sort(key=self.sort_key, reverse=self.reverse)
         self.tracks = tracks
-        self.set_subtitle(songs_label(len(tracks)) if tracks else "")
+        if self.FILTERED and self.filter_query:
+            self.set_subtitle("%d из %s" % (len(tracks), songs_label(len(everything))))
+            if self.empty is not None:
+                self.empty.setText("Ничего не нашлось по «%s» в этом списке." % self.filter_query)
+        else:
+            self.set_subtitle(songs_label(len(tracks)) if tracks else "")
+            if self.empty is not None and self.FILTERED:
+                self.empty.setText(self.empty_text)
+        if self.shuffle_pill is not None:
+            self.shuffle_pill.setVisibility(0 if tracks else 8)
         self.data_refreshed()
 
     def count(self):
@@ -649,6 +814,7 @@ class SongsScreen(ListScreen):
         return convert
 
     def row_clicked(self, index, view):
+        self.close_keyboard()
         self.owner.play(self.tracks, index, self.title_text)
 
     def row_long_clicked(self, index, view):
@@ -721,6 +887,7 @@ class SearchScreen(SongsScreen):
     """Songs of the library by name, author or album; each letter narrows the list."""
 
     HINT = "Начни вводить название песни, автора или альбом."
+    FILTERED = False
 
     def __init__(self, owner):
         self.query = ""
@@ -1017,6 +1184,10 @@ class LibraryView:
         self.visible = False
         self.ready_paths = set()
         self.ready_posted = False
+        self.color_cache = {}
+        self.media = jclass("org.telegram.messenger.MediaController")
+        self.playing_at = 0.0
+        self.playing_cached = None
         self.bold = jclass("org.telegram.messenger.AndroidUtilities").bold()
         self.regular = jclass("android.graphics.Typeface").DEFAULT
         self.root = jclass("android.widget.FrameLayout")(context)
@@ -1029,7 +1200,12 @@ class LibraryView:
     # -- small helpers --------------------------------------------------------
 
     def color(self, role):
-        return getattr(self.colors, role)
+        # PlayerColors is a Java object: each field read goes through reflection, so a value is read once per change
+        value = self.color_cache.get(role)
+        if value is None:
+            value = getattr(self.colors, role)
+            self.color_cache[role] = value
+        return value
 
     def selector(self, radius):
         color = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(self.colors.text, 24)
@@ -1119,7 +1295,8 @@ class LibraryView:
                     if jpg is not None:
                         image.setImage(jpg, "%d_%d" % (size, size), None)
             if paths and self.stack and isinstance(self.stack[-1], GroupsScreen):
-                self.stack[-1].adapter.changed()
+                # a group whose first songs had no cover picks another one: its row is bound again
+                self.stack[-1].changed_when_still()
         except Exception as e:
             self.plugin.report("covers", e)
 
@@ -1136,7 +1313,12 @@ class LibraryView:
         return unknown[0] if unknown else None
 
     def playing_path(self):
-        return local_path(jclass("org.telegram.messenger.MediaController").getInstance().getPlayingMessageObject())
+        """Asked by every row a list binds: one answer per moment is enough."""
+        now = time.monotonic()
+        if now - self.playing_at > 0.2:
+            self.playing_at = now
+            self.playing_cached = local_path(self.media.getInstance().getPlayingMessageObject())
+        return self.playing_cached
 
     # -- rows -----------------------------------------------------------------
 
@@ -1257,6 +1439,10 @@ class LibraryView:
         view.animate().alpha(1.0).translationX(0.0).setDuration(180).setInterpolator(interpolator).start()
 
     def back(self):
+        top = self.stack[-1] if self.stack else None
+        if top is not None and getattr(top, "filter_query", ""):
+            top.clear_filter()
+            return
         if len(self.stack) > 1:
             gone = self.stack.pop()
             self.root.removeView(gone.view)
@@ -1269,6 +1455,27 @@ class LibraryView:
         else:
             self.player.show_tab(PANEL_ACTIVE)
 
+    def to_root(self):
+        """Straight back to the first screen, as a second press on the tab asks; already there, the screen
+        takes the press itself (the search opens its keyboard)."""
+        if len(self.stack) <= 1:
+            again = getattr(self.stack[0], "tab_again", None) if self.stack else None
+            if again is not None:
+                self.stack[0].guarded(again)
+            return
+        while len(self.stack) > 1:
+            gone = self.stack.pop()
+            self.root.removeView(gone.view)
+            gone.dispose()
+        top = self.stack[0]
+        self.root.addView(top.view, jclass("android.widget.FrameLayout$LayoutParams")(-1, -1))
+        view = top.view
+        view.setAlpha(0.0)
+        view.setTranslationX(float(-_dp(24)))
+        interpolator = jclass("android.view.animation.DecelerateInterpolator")()
+        view.animate().alpha(1.0).translationX(0.0).setDuration(180).setInterpolator(interpolator).start()
+        top.guarded(top.refresh)
+
     def close_player(self):
         self.player.collapseButton.performClick()
 
@@ -1280,6 +1487,7 @@ class LibraryView:
         if not self.stack:
             if self.colors is None:
                 self.colors = self.plugin.sheet_fields.get(self.player.sheet, "colors")
+                self.color_cache = {}
             self.root.setBackgroundColor(tab_scrim(self.colors))
             self.root.setPadding(0, self.plugin.layout_fields.int(self.player.layout, "contentTop"), 0, 0)
             self.push(self.first_screen())
@@ -1323,6 +1531,7 @@ class LibraryView:
 
     def set_colors(self, colors):
         self.colors = colors
+        self.color_cache = {}
         if not self.stack:
             return
         if not self.visible:

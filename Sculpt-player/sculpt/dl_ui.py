@@ -4,11 +4,12 @@
 
 """The Mornye tab's search for songs to download, albums and authors from a service, the downloads, their settings."""
 
+import json
 import re
 
 from java import dynamic_proxy, jclass
 
-from .common import _dp, _log, advanced
+from .common import SEARCH_HISTORY, _dp, _log, advanced
 from .extensions import QUALITIES, STAGES, describe
 from .ext_ui import ExtScreen
 from .library_ui import TextChanged
@@ -150,8 +151,9 @@ class RemoteRows(ExtScreen):
             view.setBackground(owner.rounded(tint, _dp(4)))
         return view
 
-    def track_row(self, container, item):
-        """Cover, title, author with badges; a tap downloads it (or plays it if it is here), ⋯ for the rest."""
+    def track_row(self, container, item, second=None, number=None):
+        """Cover (or the number on an album), title, author (or what `second` says) with badges; a tap
+        downloads it, or plays it if it is here; ⋯ for the rest."""
         owner = self.owner
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         LinearLayout = jclass("android.widget.LinearLayout")
@@ -161,7 +163,13 @@ class RemoteRows(ExtScreen):
         row.setGravity(16)
         row.setPadding(_dp(12), _dp(8), _dp(4), _dp(8))
         row.setMinimumHeight(_dp(64))
-        row.addView(self.remote_image(item), owner.params(48, 48))
+        if number is not None:
+            place_number = self.label(16, "textSecondary")
+            place_number.setText(str(number))
+            place_number.setGravity(17)
+            row.addView(place_number, owner.params(36, 48))
+        else:
+            row.addView(self.remote_image(item), owner.params(48, 48))
         column = LinearLayout(owner.context)
         column.setOrientation(1)
         name = self.label(16, "text")
@@ -171,7 +179,7 @@ class RemoteRows(ExtScreen):
         line.setOrientation(0)
         line.setGravity(16)
         artist = self.label(13, "textSecondary")
-        artist.setText(item.get("artists") or "")
+        artist.setText(second if second is not None else (item.get("artists") or ""))
         line.addView(artist, Params(-2, -2, 0.0))
         if item.get("explicit") is True or str(item.get("explicit")).lower() in ("1", "true"):
             at = Params(-2, -2)
@@ -552,9 +560,11 @@ class DownloadSheet:
 
 class DownloadSearchScreen(RemoteRows):
     """Mornye's search: a title, a field with the service picker and a clear button, filter chips with "All",
-    results in sections on plates."""
+    results in sections on plates. As the Search tab's first screen it has no back arrow and, before a search,
+    shows the recent searches and a place for the mixes that come later."""
 
-    def __init__(self, owner):
+    def __init__(self, owner, root=False):
+        self.root_tab = root
         self.field = None
         self.action = None
         self.watcher = None
@@ -582,11 +592,12 @@ class DownloadSearchScreen(RemoteRows):
         row.setOrientation(0)
         row.setGravity(16)
         row.setPadding(_dp(8), _dp(8), _dp(8), _dp(4))
-        row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+        if not self.root_tab:
+            row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
         self.title_view = self.label(30, "text", True)
         self.title_view.setText("Поиск")
         at = jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0)
-        at.setMarginStart(_dp(8))
+        at.setMarginStart(_dp(12 if self.root_tab else 8))
         row.addView(self.title_view, at)
         self.subtitle_view = owner.text_view(13)
         return row
@@ -682,7 +693,60 @@ class DownloadSearchScreen(RemoteRows):
             return
         self.draw_filters()
         self.draw()
+        if not self.root_tab:
+            self.open_keyboard()  # a tab is opened to look around too: there the keyboard waits for a tap
+
+    def refresh(self):
+        """An extension was installed or removed: the search tab picks the services up again."""
+        if self.root_tab and self.results is None:
+            self.run(self.load_providers, self.providers_loaded)
+
+    def tab_again(self):
+        """A second press on the Search tab: ready for a new query."""
+        if self.field is None:
+            return
+        self.field.selectAll()
         self.open_keyboard()
+
+    # -- recent searches, kept in the plugin's settings
+
+    def history(self):
+        try:
+            value = json.loads(self.owner.plugin.get_setting("search_history", "[]") or "[]")
+            return [str(q) for q in value if isinstance(q, str) and q.strip()][:SEARCH_HISTORY]
+        except Exception:
+            return []
+
+    def remember(self, query):
+        queries = [query] + [q for q in self.history() if q.lower() != query.lower()]
+        self.owner.plugin.set_setting("search_history", json.dumps(queries[:SEARCH_HISTORY], ensure_ascii=False))
+
+    def forget_all(self):
+        self.owner.plugin.set_setting("search_history", "[]")
+        self.draw()
+
+    def search_again(self, query):
+        self.field.setText(query)
+        self.field.setSelection(len(query))
+        self.search()
+
+    def draw_start(self):
+        """Before a search: what was looked for lately, and the mixes that are a plan for now."""
+        queries = self.history()
+        if queries:
+            plate = self.card(self.body, "Недавние")
+            for query in queries:
+                self.item_row(plate, query, None, lambda q=query: self.search_again(q), icons=("msg_recent", "msg_clock", "msg_search"))
+            clear = self.pill("Очистить недавние", False, self.forget_all)
+            place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
+            place.setMargins(_dp(20), _dp(12), 0, 0)
+            self.body.addView(clear, place)
+        else:
+            self.note(self.body, "Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист.", size=15)
+        plate = self.card(self.body, "Миксы и подборки")
+        self.note(plate, "Появятся позже: подборки по жанрам и миксы из того, что ты слушаешь.", size=15, top=12)
+        spacer = jclass("android.view.View")(self.owner.context)
+        plate.addView(spacer, jclass("android.widget.LinearLayout$LayoutParams")(-1, _dp(12)))
 
     def current(self):
         return next((p for p in self.providers if p["id"] == self.provider), None)
@@ -753,6 +817,8 @@ class DownloadSearchScreen(RemoteRows):
             return
         self.query = query
         self.close_keyboard()
+        if self.root_tab and not URL.match(query):
+            self.remember(query)
         self.results = "loading"
         self.draw()
         provider, filter_id, music = self.provider, self.filter, self.owner.data
@@ -791,7 +857,10 @@ class DownloadSearchScreen(RemoteRows):
         self.clear_body()
         result = self.results
         if result is None:
-            self.note(self.body, "Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист.", size=15)
+            if self.root_tab:
+                self.draw_start()
+            else:
+                self.note(self.body, "Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист.", size=15)
             return
         if result == "loading":
             self.note(self.body, "Ищу «%s»…" % self.query, size=15)
@@ -856,73 +925,6 @@ class DownloadSearchScreen(RemoteRows):
             except Exception:
                 pass
         super().dispose()
-
-
-class RemoteScreen(RemoteRows):
-    """An album, a playlist or an author from a service: its songs, a button to download them all."""
-
-    METHODS = {"album": "getAlbum", "playlist": "getPlaylist", "artist": "getArtist"}
-
-    def __init__(self, owner, kind, ext, item_id, preview, loaded=None):
-        preview = preview or {}
-        super().__init__(owner, preview.get("name") or KINDS.get(kind, ""), KINDS.get(kind, ""))
-        self.kind, self.ext, self.item_id = kind, ext, item_id
-        self.page()
-        self.start_body()
-        if loaded is not None and (loaded.get("tracks") or loaded.get("top_tracks") or loaded.get("releases")):
-            self.show(loaded)
-            return
-        self.note(self.body, "Загружаю…", size=15)
-        method = self.METHODS.get(kind)
-
-        def failed(text):
-            self.clear_body()
-            self.note(self.body, "Не получилось открыть. %s" % text, size=15)
-
-        self.run(lambda m: m.provider_call(ext, method, [item_id], 45000), self.show, failed)
-
-    def show(self, data):
-        self.clear_body()
-        if not isinstance(data, dict):
-            self.note(self.body, "Сервис ничего не вернул.", size=15)
-            return
-        kind = self.kind
-        tracks = list(data.get("top_tracks") or []) if kind == "artist" else list(data.get("tracks") or [])
-        for track in tracks:
-            if isinstance(track, dict):
-                if not track.get("cover_url") and data.get("cover_url"):
-                    track["cover_url"] = data["cover_url"]
-                track.setdefault("provider_id", self.ext)
-        mark_local(self.owner.data, tracks)
-        if data.get("name"):
-            self.title_view.setText(data["name"])
-        parts = [KINDS.get(kind, "")]
-        if kind != "artist":
-            if data.get("artists"):
-                parts.append(data["artists"])
-            if data.get("release_date"):
-                parts.append(str(data["release_date"])[:4])
-            if tracks:
-                parts.append(tracks_label(len(tracks)))
-        self.set_subtitle(" · ".join(p for p in parts if p))
-        if tracks:
-            button = self.pill("Скачать популярное" if kind == "artist" else "Скачать всё", True, lambda: self.download(tracks, False))
-            place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
-            place.setMargins(_dp(20), _dp(8), 0, _dp(8))
-            self.body.addView(button, place)
-            if kind == "artist":
-                self.section(self.body, "Популярное")
-            self.item_rows(self.body, tracks)
-        releases = list(data.get("releases") or data.get("albums") or []) if kind == "artist" else []
-        if releases:
-            self.section(self.body, "Релизы")
-            for release in releases:
-                if isinstance(release, dict):
-                    release.setdefault("item_type", "album")
-                    release.setdefault("provider_id", self.ext)
-            self.item_rows(self.body, releases)
-        if not tracks and not releases:
-            self.note(self.body, "Здесь пусто.", size=15)
 
 
 class DownloadsScreen(ExtScreen):

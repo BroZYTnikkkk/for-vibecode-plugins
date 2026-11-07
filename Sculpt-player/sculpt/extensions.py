@@ -305,8 +305,10 @@ class Extensions:
             name = manifest.display_name if manifest is not None else ext
             BulletinHelper.show_success("Расширение «%s» установлено. Оно во вкладке Mornye плеера." % name)
             player = self.plugin.player
-            if player is not None and player.mornye is not None:
-                player.mornye.data_changed()
+            if player is not None:
+                for _, stack in player.stacks():
+                    if stack is not None:
+                        stack.data_changed()
 
         self.work(lambda manager: manager.install_file(path), installed,
                   lambda text: BulletinHelper.show_error("Расширение не установлено. " + text))

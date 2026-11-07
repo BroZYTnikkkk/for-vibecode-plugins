@@ -4,9 +4,10 @@
 from java import jclass
 
 from .common import _dp
-from .dl_ui import DownloadSearchScreen, DownloadSettingsScreen, DownloadsScreen, RemoteScreen
+from .dl_ui import DownloadSearchScreen, DownloadSettingsScreen, DownloadsScreen
 from .ext_ui import CatalogScreen, ExtensionScreen, ExtensionsScreen, ReposScreen
-from .library_ui import BlankScreen, LibraryView, Screen
+from .library_ui import LibraryView, Screen
+from .remote_ui import RemoteScreen
 
 MORNYE_LINKS = (
     ("Mornye на GitHub", "https://github.com/mornyeapp/Mornye"),
@@ -42,13 +43,13 @@ class MornyeRoot(Screen):
         page.addView(scroll, Params(-1, 0, 1.0))
         self.view = page
 
-        self.search_pill(content, "Найти песню для скачивания", owner.open_download_search)
         self.nav_row(content, ("msg_download",), "Загрузки", owner.open_downloads)
         self.nav_row(content, ("msg_info",), "О Mornye", owner.open_about)
 
         note = self.label(13, "textSecondary")
         note.setSingleLine(False)
-        note.setText("Скачивание, расширения и поиск тегов («Изменить теги» в меню песни) пришли сюда из Mornye, музыкального плеера zarzet.")
+        note.setText("Скачивание, расширения и поиск тегов пришли сюда из Mornye, музыкального плеера zarzet. "
+                     "Песни для скачивания ищи во вкладке «Поиск» в центре панели, теги — в «Изменить теги» в меню песни.")
         note.setPadding(_dp(20), _dp(16), _dp(20), 0)
         content.addView(note, Params(-1, -2))
 
@@ -203,3 +204,13 @@ class MornyeView(LibraryView):
         if url.startswith("https://t.me/"):
             self.close_player()
         jclass("org.telegram.messenger.browser.Browser").openUrl(self.context, url)
+
+
+class SearchView(MornyeView):
+    """The Search tab: Mornye's search for songs to download as its first screen, albums and authors above it."""
+
+    def first_screen(self):
+        return DownloadSearchScreen(self, root=True)
+
+    def open_download_search(self):
+        self.to_root()

@@ -342,6 +342,7 @@ class TagScreen(RemoteRows):
             cover = tags.fetch_cover(cover_url) if cover_url else None
             try:
                 tags.save(path, changed, cover)
+                self.owner.data.covers.forget(path)
             except PermissionError:
                 return "permission"
             return "saved"

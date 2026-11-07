@@ -142,7 +142,11 @@ class DrawHook(_Hook):
         try:
             player = self.plugin.player_for(param.thisObject)
             if player is not None and player.visualizer is not None:
-                player.visualizer.draw(param.args[0])
+                canvas = param.args[0]
+                visualizer = player.visualizer
+                visualizer.draw(canvas)
+                if player.peeks is not None and not (player.library_visible() or player.queue_visible()):
+                    player.peeks.draw(canvas, visualizer.colors)
                 # the file's tags arrive after bindMessage, with nothing to tell when
                 now = time.monotonic()
                 if now - player.album_checked > 1.0:
@@ -152,15 +156,72 @@ class DrawHook(_Hook):
             self.fail(e)
 
 
+class CoverSwapHook(_Hook):
+    """PlayerCoverView.setCover(message, animated, direction): after a swipe the cover view makes the neighbor's
+    slot the current one and loads nothing if that slot already holds this very song. The neighbor was loaded for
+    the swipe, from a preview or a small copy, maybe before the file's cover was read: the playing song then kept
+    that, or an empty cover. Here the playing song is loaded again, in full, as for any other start."""
+
+    def __init__(self, plugin, name):
+        super().__init__(plugin, name)
+        self.swapped = False
+
+    def before_hooked_method(self, param):
+        try:
+            cover = param.thisObject
+            f = self.plugin.cover_fields
+            waiting = f.int(cover, "awaitingDirection")
+            neighbor = f.int(cover, "neighbor")
+            self.swapped = (waiting != 0 and neighbor >= 0 and f.int(cover, "neighborDirection") == waiting
+                            and f.get(cover, "messages")[neighbor] == param.args[0])
+        except Exception as e:
+            self.swapped = False
+            self.fail(e)
+
+    def after_hooked_method(self, param):
+        try:
+            if self.swapped:
+                self.swapped = False
+                param.thisObject.refreshCover()
+        except Exception as e:
+            self.fail(e)
+
+
+class NeighborHook(_Hook):
+    """MusicPlayerSheet.getNeighborMessage(direction): exteraGram gives no neighbor while the queue plays mixed, so
+    a swipe showed an empty cover. The mixed queue has one too: the song MediaController would play next."""
+
+    def before_hooked_method(self, param):
+        try:
+            if jclass("org.telegram.messenger.SharedConfig").shuffleMusic:
+                from .peeks import shuffled_neighbor
+                param.setResult(shuffled_neighbor(self.plugin.media_fields, int(param.args[0])))
+        except Exception as e:
+            self.fail(e)
+
+
 class RhythmHook(_Hook):
-    """updateRhythm: the analyzer also runs for the visualizer, even with the rhythm background off."""
+    """updateRhythm: the analyzer also runs for the visualizer, even with the rhythm background off.
+
+    Under a tab only the glow shows. It keeps moving unless the "living glow" setting is off: the moving
+    background redraws the whole screen 120 times a second even while a list stands still, which warms the phone."""
 
     def after_hooked_method(self, param):
         try:
             player = self.plugin.player
-            if player is None or not (self.plugin.get_setting("vis_top", True) or self.plugin.get_setting("vis_bottom", True)):
+            if player is None:
                 return
             sheet = param.thisObject
+            covered = player.library_visible() or player.queue_visible()
+            if covered and not self.plugin.get_setting("glow_under_tabs", True):
+                jclass(RHYTHM_TAP).setEnabled(False)
+                background = self.plugin.sheet_fields.get(sheet, "rhythmBackground")
+                if background is not None:
+                    background.setAnimating(False)
+                    background.setParticlesEnabled(False)
+                return
+            if not (self.plugin.get_setting("vis_top", True) or self.plugin.get_setting("vis_bottom", True)):
+                return
             shown = sheet.isShowing() and not sheet.isDismissed() and player.layout.getWindowVisibility() == 0
             jclass(RHYTHM_TAP).setEnabled(bool(shown))
         except Exception as e:
