@@ -7,7 +7,7 @@
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass, jint
 
-from .common import _dp
+from .common import _dp, advanced
 from .extensions import describe, type_names
 from .library_ui import Screen, TextChanged
 
@@ -259,8 +259,11 @@ class ExtensionsScreen(ExtScreen):
         super().__init__(owner, "Расширения")
         self.page()
         self.nav_row(self.content, ("msg_plugins", "msg_bots"), "Каталог расширений", owner.open_catalog)
-        self.repo_count = self.nav_row(self.content, ("msg_link", "msg_link2"), "Репозитории", owner.open_repos)
-        self.nav_row(self.content, ("msg_settings",), "Скачивание и приоритеты", owner.open_download_settings)
+        # where extensions come from is for the curious: the official catalog is enough for everyone else
+        self.repo_count = None
+        if advanced(owner.plugin):
+            self.repo_count = self.nav_row(self.content, ("msg_link", "msg_link2"), "Репозитории", owner.open_repos)
+        self.nav_row(self.content, ("msg_settings",), "Скачивание", owner.open_download_settings)
         self.section(self.content, "Установленные")
         self.start_body()
         self.note(self.content, "Расширение можно установить и из файла .sflx в любом чате: зажми сообщение с файлом "
@@ -274,7 +277,8 @@ class ExtensionsScreen(ExtScreen):
     def show(self, data):
         items, repos = data
         self.clear_body()
-        self.repo_count.setText(str(len(repos)))
+        if self.repo_count is not None:
+            self.repo_count.setText(str(len(repos)))
         self.set_subtitle(str(len(items)) if items else "")
         if not items:
             self.note(self.body, "Пока ничего не установлено. В каталоге есть расширения, которые ищут и скачивают песни: "
@@ -299,7 +303,7 @@ class CatalogScreen(ExtScreen):
 
     def __init__(self, owner):
         super().__init__(owner, "Каталог")
-        self.page(self.icon_button(("msg_link", "msg_link2"), "Репозитории", owner.open_repos))
+        self.page(self.icon_button(("msg_link", "msg_link2"), "Репозитории", owner.open_repos) if advanced(owner.plugin) else None)
         self.busy = set()
         self.items = []
         self.errors = []
@@ -519,7 +523,7 @@ class ExtensionScreen(ExtScreen):
         self.section(self.body, "Удаление")
         self.item_row(self.body, "Удалить расширение", "Вместе с его настройками и данными на телефоне.",
                       self.confirm_remove, icons=("msg_delete",))
-        if data["logs"]:
+        if data["logs"] and advanced(self.owner.plugin):
             self.section(self.body, "Журнал")
             log = self.note(self.body, "\n".join("%s %s" % (level, text) for level, text in data["logs"]), size=12, top=0)
             log.setTypeface(jclass("android.graphics.Typeface").MONOSPACE)

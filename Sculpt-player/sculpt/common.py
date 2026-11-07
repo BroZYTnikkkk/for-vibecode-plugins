@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.18.0"
+VERSION = "0.19.0"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -243,6 +243,11 @@ def sculpt_class(class_name):
 
 def _dp(value):
     return int(jclass("org.telegram.messenger.AndroidUtilities").dp(float(value)))
+
+
+def advanced(plugin):
+    """Whether the details of sound and the tools for the curious are shown (Settings → Sound)."""
+    return bool(plugin.get_setting("advanced_mode", False))
 
 
 def tab_scrim(colors):

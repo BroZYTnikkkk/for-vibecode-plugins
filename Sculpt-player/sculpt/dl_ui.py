@@ -8,7 +8,7 @@ import re
 
 from java import dynamic_proxy, jclass
 
-from .common import _dp, _log
+from .common import _dp, _log, advanced
 from .extensions import QUALITIES, STAGES, describe
 from .ext_ui import ExtScreen
 from .library_ui import TextChanged
@@ -177,7 +177,7 @@ class RemoteRows(ExtScreen):
             at = Params(-2, -2)
             at.setMarginStart(_dp(6))
             line.addView(self.badge("E", "textSecondary", True), at)
-        if item.get("audio_quality"):
+        if item.get("audio_quality") and advanced(owner.plugin):
             at = Params(-2, -2)
             at.setMarginStart(_dp(6))
             line.addView(self.badge(str(item["audio_quality"]), "accent"), at)
@@ -205,8 +205,10 @@ class RemoteRows(ExtScreen):
     def track_pressed(self, item):
         if item.get("local_path"):
             self.play_local(item)
-        else:
+        elif self.owner.plugin.get_setting("download_direct", False):
             self.download([item], False)
+        else:
+            self.pick_service(item)
 
     def play_local(self, item):
         track = self.owner.data.by_path.get(item["local_path"])
@@ -222,8 +224,8 @@ class RemoteRows(ExtScreen):
         icon = owner.resource
         if item.get("local_path"):
             menu.add(icon("msg_played"), "Слушать с телефона", later(lambda: (menu.dismiss(), self.play_local(item))))
-        menu.add(icon("msg_download"), "Скачать", later(lambda: (menu.dismiss(), self.download([item], False))))
-        menu.add(icon("msg_download"), "Скачать в другом качестве", later(lambda: (menu.dismiss(), self.pick_service(item))))
+        menu.add(icon("msg_download"), "Скачать из…", later(lambda: (menu.dismiss(), self.pick_service(item))))
+        menu.add(icon("msg_download"), "Скачать основным сервисом", later(lambda: (menu.dismiss(), self.download([item], False))))
         menu.add(icon("msg_played"), "Скачать и слушать", later(lambda: (menu.dismiss(), self.download([item], True))))
         if item.get("album_id"):
             menu.add(icon("msg_media"), "Открыть альбом", later(lambda: (menu.dismiss(), owner.open_remote(
@@ -256,6 +258,31 @@ class RemoteRows(ExtScreen):
                 self.say("В очереди на скачивание: %s" % tracks_label(count))
 
         self.run(task, done)
+
+
+BEST_ORDER = ("HI_RES_LOSSLESS", "HI_RES", "LOSSLESS")
+SIMPLE_QUALITIES = (("LOSSLESS", "Лучшее"), ("HIGH", "Экономное, меньше места"))
+
+
+def simple_qualities(options):
+    """A service's qualities in two plain words: the best it has, and the lightest that still sounds good."""
+    lossless = [q for q in options if q.get("kind") == "lossless"]
+    lossy = [q for q in options if q.get("kind") == "lossy"]
+    best = None
+    for wanted in BEST_ORDER:
+        best = next((q for q in lossless if str(q.get("id") or "").upper() == wanted), None)
+        if best is not None:
+            break
+    best = best or (lossless[0] if lossless else (options[0] if options else None))
+    result = []
+    if best is not None:
+        result.append({"id": best.get("id"), "simple": True, "label": "Лучшее качество",
+                       "description": "Самый чистый звук. Файл больше: обычно 20–40 МБ на песню."})
+    economy = next((q for q in lossy if q is not best), None)
+    if economy is not None:
+        result.append({"id": economy.get("id"), "simple": True, "label": "Экономное",
+                       "description": "Меньше места: обычно 5–10 МБ на песню. На слух почти не отличить."})
+    return result
 
 
 class OnClick(dynamic_proxy(jclass("android.view.View$OnClickListener"))):
@@ -302,7 +329,7 @@ class DownloadSheet:
                 man = manager.manifest(ext)
                 raw = man.raw if isinstance(man.raw, dict) else {}
                 services.append({"id": ext, "name": man.display_name, "icon": manager.icon_path(ext),
-                                 "qualities": list(man.quality_options),
+                                 "qualities": [dict(q, kind=man.quality_kind(q)) for q in man.quality_options],
                                  "health": bool(raw.get("serviceHealth") or raw.get("service_health"))})
             return services, manager.default_service()
 
@@ -461,12 +488,17 @@ class DownloadSheet:
         self.qualities.removeAllViews()
         service = next((s for s in self.services if s["id"] == self.chosen), None)
         options = list(service["qualities"]) if service else []
+        if not advanced(owner.plugin):
+            options = simple_qualities(options)
         if not options:
             options = [{"id": "", "label": "Лучшее доступное", "description": "Сервис сам выберет качество"}]
         for option in options:
             qid = str(option.get("id") or "")
-            label, description = QUALITY_NAMES.get(qid.upper(), (str(option.get("label") or qid), ""))
-            description = str(option.get("description") or "") or description
+            if option.get("simple"):
+                label, description = option["label"], option["description"]
+            else:
+                label, description = QUALITY_NAMES.get(qid.upper(), (str(option.get("label") or qid), ""))
+                description = str(option.get("description") or "") or description
             row = jclass("android.widget.LinearLayout")(owner.context)
             row.setOrientation(0)
             row.setGravity(16)
@@ -1044,7 +1076,7 @@ class DownloadSettingsScreen(ExtScreen):
     """Which service downloads, in what quality, what comes next when it fails, and whose metadata wins."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Настройки скачивания")
+        super().__init__(owner, "Скачивание")
         self.page()
         self.start_body()
         self.note(self.body, "Загружаю…")
@@ -1067,12 +1099,23 @@ class DownloadSettingsScreen(ExtScreen):
         def name(ext):
             return names.get(ext, ext)
 
+        plugin = self.owner.plugin
+        full = advanced(plugin)
         self.choice("Основной сервис скачивания", name(data["service"]) if data["service"] else "Нет включённых",
                     [(ext, name(ext)) for ext in data["download"]], data["service"], lambda v: self.save("default_service", v))
-        self.choice("Качество", dict(QUALITIES).get(data["quality"], data["quality"]), list(QUALITIES), data["quality"],
-                    lambda v: self.save("quality", v))
+        qualities = list(QUALITIES) if full else list(SIMPLE_QUALITIES)
+        current = dict(qualities).get(data["quality"]) or ("Лучшее" if data["quality"] in BEST_ORDER else "Экономное")
+        self.choice("Качество", current, qualities, data["quality"], lambda v: self.save("quality", v))
+        direct = self.switch(plugin.get_setting("download_direct", False),
+                             lambda on: plugin.set_setting("download_direct", bool(on)), "Качать сразу основным сервисом")
+        self.item_row(self.body, "Качать сразу основным сервисом",
+                      "Нажатие на песню в поиске скачивает её без вопроса «Скачать из».", trailing=direct)
         switch = self.switch(data["fallback"], lambda on: self.save("auto_fallback", on), "Запасные сервисы")
         self.item_row(self.body, "Запасные сервисы", "Если основной сервис не нашёл песню, пробовать следующие по порядку.", trailing=switch)
+        if not full:
+            self.note(self.body, "Сервис поиска, порядок сервисов и приоритет метаданных — в расширенном режиме: Настройки → Звук.",
+                      size=13, top=16)
+            return
         searchers = [("", "Автоматически")] + [(ext, name(ext)) for ext in data["searchers"]]
         self.choice("Сервис поиска", name(data["search"]) if data["search"] else "Автоматически", searchers, data["search"],
                     lambda v: self.save("search_provider", v))

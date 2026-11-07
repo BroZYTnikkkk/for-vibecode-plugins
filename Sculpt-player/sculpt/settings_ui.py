@@ -6,7 +6,7 @@ Only sections with something in them are listed; playback and sound join when th
 
 from java import jclass
 
-from .common import RADIUS_LABELS, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _dp
+from .common import RADIUS_LABELS, advanced, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _dp
 from .ext_ui import ExtScreen
 from .library_ui import Screen
 from .mornye_ui import MornyeView
@@ -30,12 +30,13 @@ class SettingsRoot(Screen):
         page.addView(scroll, Params(-1, 0, 1.0))
         self.view = page
         self.nav_row(content, ("msg_photo_settings", "msg_settings"), "Вид плеера", owner.open_look)
+        self.nav_row(content, ("msg_voice_headphones", "filled_sound_on"), "Звук", owner.open_sound)
         self.nav_row(content, ("msg_download",), "Скачивание", owner.open_download_settings)
         self.nav_row(content, ("msg_plugins", "msg_bots"), "Расширения", owner.open_extensions)
         self.nav_row(content, ("msg_info",), "О Mornye", owner.open_about)
         note = self.label(13, "textSecondary")
         note.setSingleLine(False)
-        note.setText("Воспроизведение и звук появятся здесь вместе с таймером сна, кроссфейдом и эквалайзером.")
+        note.setText("Воспроизведение появится здесь вместе с таймером сна и кроссфейдом.")
         note.setPadding(_dp(20), _dp(16), _dp(20), 0)
         content.addView(note, Params(-1, -2))
 
@@ -89,6 +90,25 @@ class LookScreen(ExtScreen):
         self.plugin.settings_changed()
 
 
+class SoundScreen(ExtScreen):
+    """Sound: for now the switch that shows the details of sound to those who want them."""
+
+    def __init__(self, owner):
+        super().__init__(owner, "Звук")
+        self.plugin = owner.plugin
+        self.page()
+        switch = self.switch(advanced(self.plugin), self.changed, "Расширенный режим")
+        self.item_row(self.content, "Расширенный режим",
+                      "Показывает форматы и качество (FLAC, Hi-Res, битность, частота), порядок сервисов и источников "
+                      "метаданных, репозитории и журналы расширений. Без него всё названо простыми словами.",
+                      trailing=switch)
+        self.note(self.content, "Эквалайзер и громкость пока — кнопками в самом плеере, по краям от кнопок управления.", top=16)
+
+    def changed(self, on):
+        self.plugin.set_setting("advanced_mode", bool(on))
+        self.say("Расширенный режим включён" if on else "Расширенный режим выключен")
+
+
 class SettingsView(MornyeView):
     """The settings tab: Mornye's own screens (downloads, extensions, about) under one root with the player's."""
 
@@ -97,3 +117,6 @@ class SettingsView(MornyeView):
 
     def open_look(self):
         self.push(LookScreen(self))
+
+    def open_sound(self):
+        self.push(SoundScreen(self))
