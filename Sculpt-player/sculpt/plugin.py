@@ -7,7 +7,7 @@ from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger,
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider
 
-from .common import CHECKS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
+from .common import CHECKS, ID_OPEN_SETTINGS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
 from .music import ListenTimer, MusicData, local_path
 from .library_ui import Run
 from .player import Player
@@ -368,40 +368,19 @@ class SculptPlayerPlugin(BasePlugin):
         return UItem.asSlideView(item_id, jarray(jclass("java.lang.String"))(labels), self.get_setting(key, default), callback)
 
     def fill_settings(self, items):
+        """exteraGram's player settings sheet: this plugin's settings moved to its own tab; a link leads there."""
         UItem = jclass("org.telegram.ui.Components.UItem")
-        self.callbacks = []
+        items.add(UItem.asHeader("Sculpt Player"))
+        items.add(UItem.asButton(ID_OPEN_SETTINGS, "Настройки Sculpt Player"))
+        items.add(UItem.asShadow("Вид плеера, скачивание и расширения — во вкладке ⚙ в нижней панели плеера."))
 
-        def check(item_id, text, subtext):
-            return UItem.asCheck(item_id, text, subtext, True).setChecked(self.get_setting(CHECKS[item_id], True))
-
-        for item in (
-            UItem.asHeader("Визуализатор"),
-            check(ID_VIS_TOP, "Над обложкой", "Столбики растут вверх от края обложки."),
-            check(ID_VIS_BOTTOM, "Под обложкой", "Столбики растут вниз от края обложки."),
-            UItem.asShadow(None),
-            UItem.asHeader("Столбики"),
-            self._slider(ID_VIS_STYLE, VIS_STYLES, "vis_style", 0),
-            UItem.asShadow(None),
-            UItem.asHeader("Высота столбиков"),
-            self._slider(ID_VIS_HEIGHT, VIS_HEIGHTS, "vis_height", 1),
-            UItem.asShadow(None),
-            UItem.asHeader("Количество столбиков"),
-            self._slider(ID_VIS_DENSITY, VIS_DENSITIES, "vis_density", 1),
-            UItem.asShadow(None),
-            UItem.asHeader("Цвет столбиков"),
-            self._slider(ID_VIS_COLORS, VIS_COLORS, "vis_color_mode", 0),
-            UItem.asShadow(None),
-            UItem.asHeader("Скругление обложки"),
-            self._slider(ID_COVER_RADIUS, RADIUS_LABELS, "cover_radius", 1),
-            UItem.asShadow(None),
-            UItem.asHeader("Прогресс"),
-            check(ID_FLAT_SEEK, "Ровная линия", "Выключено: волна, как в обычном плеере exteraGram."),
-            UItem.asShadow(None),
-        ):
-            items.add(item)
+    def open_settings_tab(self):
+        from .common import PANEL_SETTINGS
+        if self.player is not None:
+            self.player.show_tab(PANEL_SETTINGS)
 
     def create_settings(self):
         return [
-            Divider(text="Все настройки теперь в самом плеере: «⋮» → настройки плеера. "
+            Divider(text="Все настройки теперь в самом плеере: ⚙ в нижней панели. "
                          "Пока плагин включён, в exteraGram работает новый плеер, даже если его переключатель выключен."),
         ]

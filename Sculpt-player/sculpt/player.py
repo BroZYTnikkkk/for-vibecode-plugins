@@ -4,12 +4,13 @@ from android_utils import OnClickListener
 from java import jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_QUEUE, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_QUEUE, PANEL_SETTINGS, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
 from .mornye_ui import MornyeView
+from .settings_ui import SettingsView
 
 
 class Player:
@@ -41,6 +42,7 @@ class Player:
         self.active_tab = PANEL_ACTIVE
         self.library = None
         self.mornye = None
+        self.settings = None
         self.like = None
         self.add = None
         self.add_ring = None
@@ -49,7 +51,7 @@ class Player:
 
     def stacks(self):
         """The tabs made of a stack of screens, in the order of their panel indexes: library, Mornye."""
-        return ((PANEL_LIBRARY, self.library), (PANEL_MORNYE, self.mornye))
+        return ((PANEL_LIBRARY, self.library), (PANEL_MORNYE, self.mornye), (PANEL_SETTINGS, self.settings))
 
     def visible_stack(self):
         for _, stack in self.stacks():
@@ -112,7 +114,7 @@ class Player:
         self.moreButton.bringToFront()
 
     def tab_pressed(self, index):
-        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY, PANEL_MORNYE):
+        if index in (PANEL_QUEUE, PANEL_ACTIVE, PANEL_LIBRARY, PANEL_MORNYE, PANEL_SETTINGS):
             self.show_tab(index)
 
     def show_tab(self, index):
@@ -139,6 +141,12 @@ class Player:
                 self.mornye.set_colors(colors)
                 self.layout.requestLayout()
             self.mornye.show()
+        elif index == PANEL_SETTINGS:
+            if self.settings is None:
+                self.settings = SettingsView(self, self.context)
+                self.settings.set_colors(colors)
+                self.layout.requestLayout()
+            self.settings.show()
         elif index == PANEL_QUEUE:
             if self.queue_screen is None:
                 self.queue_screen = QueueScreen(self, self.context)
@@ -146,7 +154,7 @@ class Player:
             self.queue_screen.show()
         if self.mode() == MODE_QUEUE:
             self.set_mode(MODE_PLAYER)
-        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE, PANEL_MORNYE))
+        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE, PANEL_MORNYE, PANEL_SETTINGS))
         self.paint_tabs(colors)
         self.place_indicator()
 
@@ -156,8 +164,8 @@ class Player:
         Transition alpha multiplies the alpha the player animates on its own, so neither undoes the other. The
         tab's root takes the touches, so nothing hidden can be pressed.
         """
-        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator, self.moreButton]}
-        for screen in (self.library, self.mornye, self.queue_screen):
+        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator]}
+        for screen in (self.library, self.mornye, self.settings, self.queue_screen):
             if screen is not None:
                 keep.add(screen.root.hashCode())
         value = 0.0 if hidden else 1.0
@@ -224,7 +232,7 @@ class Player:
 
     def place_indicator(self):
         f = self.plugin.layout_fields
-        slot = f.int(self.layout, "paneWidth") // (len(self.tabs) + 1)
+        slot = f.int(self.layout, "paneWidth") // len(self.tabs)
         left = f.int(self.layout, "paneLeft") + self.active_tab * slot
         self.indicator.layout(left, self.panel_top, left + self.indicator.getMeasuredWidth(), self.panel_top + self.indicator.getMeasuredHeight())
 
@@ -322,6 +330,9 @@ class Player:
         if self.mornye is not None:
             self.mornye.dispose()
             self.mornye = None
+        if self.settings is not None:
+            self.settings.dispose()
+            self.settings = None
         self.visualizer = None
         self.menu_runs = []
 
@@ -363,7 +374,7 @@ class Player:
         if hidden == self.panel_hidden or self.divider is None:
             return
         self.panel_hidden = hidden
-        for view in self.tabs + [self.divider, self.indicator, self.moreButton]:
+        for view in self.tabs + [self.divider, self.indicator]:
             view.setAlpha(0.0 if hidden else 1.0)
             view.setEnabled(not hidden)
 
@@ -435,11 +446,14 @@ class Player:
         """
         sf, f = self.plugin.sheet_fields, self.plugin.layout_fields
         progress = max(sf.float(self.sheet, "modeProgress"), sf.float(self.sheet, "canvasTitleProgress"))
+        # the ⋯ beside the title gives way to the small cover's text
+        self.moreButton.setAlpha(max(0.0, 1.0 - 2.0 * progress))
+        self.moreButton.setEnabled(progress < 0.5)
         if progress <= 0.0:
             return
         lay = self.layout
         pane_left = f.int(lay, "paneLeft")
-        left = pane_left + _dp(MARGIN)
+        left = pane_left + _dp(MARGIN) + _dp(BUTTON)
         shift = (f.int(lay, "compactCoverSize") + _dp(16)) * progress
         width = f.int(lay, "textWidth") - round(shift)
         wanted = (pane_left + f.int(lay, "paneWidth") + pane_left + _dp(10)) / 2.0
@@ -485,7 +499,9 @@ class Player:
         f = self.plugin.layout_fields
         lay = self.layout
         pane = f.int(lay, "paneWidth")
-        text = pane - 2 * _dp(MARGIN)
+        full = pane - 2 * _dp(MARGIN)
+        # the title block leaves room for the ⋯ on its right, and as much on its left, so it stays centered
+        text = full - 2 * _dp(BUTTON)
         f.set_int(lay, "textWidth", text)
         spec = jclass("android.view.View$MeasureSpec")
         exact = spec.EXACTLY
@@ -496,13 +512,13 @@ class Player:
         measure(self.titleView, text, _dp(TITLE_H))
         measure(self.artistView, text + 2 * _dp(6), _dp(TITLE_H))
         measure(self.album, text, _dp(ALBUM_H))
-        measure(self.seekBar, text - 2 * _dp(TIME_WIDTH + 4), _dp(SEEK_H))
+        measure(self.seekBar, full - 2 * _dp(TIME_WIDTH + 4), _dp(SEEK_H))
         measure(self.timeView, _dp(TIME_WIDTH), _dp(18))
         measure(self.durationView, _dp(TIME_WIDTH), _dp(18))
         for button in (self.like, self.add, self.lyricsButton, self.queueButton, self.moreButton, self.speedButton,
                        self.repeatButton, self.shuffleButton, self.volume, self.equalizer):
             measure(button, _dp(BUTTON), _dp(BUTTON))
-        slot = pane // (len(self.tabs) + 1)
+        slot = pane // len(self.tabs)
         for tab in self.tabs:
             measure(tab, slot, _dp(PANEL_H))
         measure(self.divider, pane, max(1, _dp(1) // 2))
@@ -544,9 +560,12 @@ class Player:
         def put(view, x, y):
             view.layout(x, y, x + view.getMeasuredWidth(), y + view.getMeasuredHeight())
 
-        put(self.titleView, left, title_top)
-        put(self.artistView, left - _dp(6), title_top + _dp(ARTIST_OFFSET))
-        put(self.album, left, title_top + _dp(ALBUM_OFFSET))
+        inset = _dp(BUTTON)
+        put(self.titleView, left + inset, title_top)
+        put(self.artistView, left + inset - _dp(6), title_top + _dp(ARTIST_OFFSET))
+        put(self.album, left + inset, title_top + _dp(ALBUM_OFFSET))
+        # Musicolet's place for the song's ⋯: beside the title and the author
+        put(self.moreButton, right - size, title_top + (_dp(ARTIST_OFFSET) + _dp(TITLE_H) - size) // 2)
 
         step = self.step()
         # the player's own heart adds to the Telegram profile; here that is a line in the plus's menu
@@ -568,12 +587,11 @@ class Player:
         put(self.controlsView, left + size + _dp(8), transport_top)
 
         pane_left = f.int(lay, "paneLeft")
-        slot = f.int(lay, "paneWidth") // (len(self.tabs) + 1)
+        slot = f.int(lay, "paneWidth") // len(self.tabs)
         put(self.divider, pane_left, self.panel_top)
         for index, tab in enumerate(self.tabs):
             put(tab, pane_left + index * slot, self.panel_top)
         self.place_indicator()
-        put(self.moreButton, pane_left + len(self.tabs) * slot + (slot - size) // 2, self.panel_top + (_dp(PANEL_H) - size) // 2)
         for _, stack in self.stacks():
             if stack is not None:
                 put(stack.root, pane_left, 0)

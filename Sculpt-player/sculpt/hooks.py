@@ -6,7 +6,7 @@ from base_plugin import MethodHook
 from java import jclass
 from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
-from .common import CHECKS, RHYTHM_TAP, _dp
+from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp
 from .music import local_path
 
 
@@ -195,7 +195,13 @@ class SettingsClickHook(_Hook):
 
     def before_hooked_method(self, param):
         try:
-            key = CHECKS.get(int(param.args[0].id))
+            item_id = int(param.args[0].id)
+            if item_id == ID_OPEN_SETTINGS:
+                param.thisObject.dismiss()
+                self.plugin.open_settings_tab()
+                param.setResult(None)
+                return
+            key = CHECKS.get(item_id)
             if key is None:
                 return
             value = not self.plugin.get_setting(key, True)
