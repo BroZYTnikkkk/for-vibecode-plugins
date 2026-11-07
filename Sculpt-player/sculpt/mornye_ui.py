@@ -4,6 +4,7 @@
 from java import jclass
 
 from .common import _dp
+from .dl_ui import DownloadSearchScreen, DownloadSettingsScreen, DownloadsScreen, RemoteScreen
 from .ext_ui import CatalogScreen, ExtensionScreen, ExtensionsScreen, ReposScreen
 from .library_ui import BlankScreen, LibraryView, Screen
 
@@ -177,12 +178,19 @@ class MornyeView(LibraryView):
         self.push(ExtensionScreen(self, ext))
 
     def open_download_search(self):
-        self.push(BlankScreen(self, "Поиск песен", "Поиск песен для скачивания появится в следующем обновлении. "
-                                                   "Он идёт через расширения: их уже можно установить кнопкой справа вверху."))
+        self.push(DownloadSearchScreen(self))
+
+    def open_remote(self, kind, ext, item_id, preview=None, loaded=None):
+        if not ext or not item_id:
+            self.plugin.bulletin(self.player.sheet, "info", "Сервис не дал ссылку на это.")
+            return
+        self.push(RemoteScreen(self, kind, ext, item_id, preview, loaded))
 
     def open_downloads(self):
-        self.push(BlankScreen(self, "Загрузки", "Здесь будут песни, которые ты скачиваешь, с ходом загрузки. "
-                                                "Готовые попадут в папку Music/Mornye и сразу в медиатеку."))
+        self.push(DownloadsScreen(self))
+
+    def open_download_settings(self):
+        self.push(DownloadSettingsScreen(self))
 
     def open_metadata(self):
         self.push(BlankScreen(self, "Метаданные песен", "Здесь можно будет найти название, автора, альбом и обложку для песни "

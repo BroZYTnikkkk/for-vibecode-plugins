@@ -239,6 +239,8 @@ class MusicData:
         self.by_path = {}
         self.loaded = False
         self.scanning = False
+        self.rescan = False
+        self.after_scan = []
         self.grouped = None
         self.favorites = self._load("favorites.json", {})
         self.history = self._load("history.json", [])
@@ -305,11 +307,19 @@ class MusicData:
 
     # -- scanning -----------------------------------------------------------
 
-    def scan(self):
-        """The saved list first, so the screen fills at once, then a fresh look at the phone in the background."""
+    def scan(self, then=None):
+        """The saved list first, so the screen fills at once, then a fresh look at the phone in the background.
+
+        then() runs on the UI thread once a look that started after this call is done: a downloaded song is in
+        the list by then. A call during a scan asks for one more scan after it."""
+        if then is not None:
+            self.after_scan.append(then)
         if self.scanning:
+            if then is not None:
+                self.rescan = True
             return
         self.scanning = True
+        waiting, self.after_scan = self.after_scan, []
 
         def work():
             try:
@@ -335,13 +345,21 @@ class MusicData:
                 run_on_ui_thread(lambda: self.plugin.report("scan", failure))
             finally:
                 self.scanning = False
-                run_on_ui_thread(self._finished)
+                run_on_ui_thread(lambda: self._finished(waiting))
 
         run_on_queue(work)
 
-    def _finished(self):
+    def _finished(self, waiting=()):
         self.loaded = True
         self._notify()
+        for then in waiting:
+            try:
+                then()
+            except Exception as e:
+                self.plugin.report("after scan", e)
+        if self.rescan:
+            self.rescan = False
+            self.scan()
 
     def _publish(self, tracks):
         same = tracks == self.tracks

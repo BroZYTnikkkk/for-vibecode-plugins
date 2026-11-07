@@ -260,6 +260,7 @@ class ExtensionsScreen(ExtScreen):
         self.page()
         self.nav_row(self.content, ("msg_plugins", "msg_bots"), "Каталог расширений", owner.open_catalog)
         self.repo_count = self.nav_row(self.content, ("msg_link", "msg_link2"), "Репозитории", owner.open_repos)
+        self.nav_row(self.content, ("msg_settings",), "Скачивание и приоритеты", owner.open_download_settings)
         self.section(self.content, "Установленные")
         self.start_body()
         self.note(self.content, "Расширение можно установить и из файла .sflx в любом чате: зажми сообщение с файлом "
@@ -485,7 +486,7 @@ class ExtensionScreen(ExtScreen):
                 return None
             return {"name": man.display_name, "version": man.version, "description": man.description,
                     "homepage": man.homepage, "types": list(man.types), "settings": list(man.settings),
-                    "values": manager.settings(ext), "enabled": manager.is_enabled(ext),
+                    "values": manager.settings(ext), "enabled": manager.is_enabled(ext), "signed": bool(man.signed_session),
                     "error": manager.state["errors"].get(ext, ""),
                     "logs": [(e[1], e[3]) for e in list(manager.logs) if e[2] == ext][-30:]}
 
@@ -505,6 +506,10 @@ class ExtensionScreen(ExtScreen):
                           lambda: self.owner.open_link(data["homepage"]), icons=("msg_link", "msg_link2"))
         switch = self.switch(data["enabled"], self.toggle, "Расширение включено")
         self.item_row(self.body, "Включено", "Выключенное расширение не ищет и не скачивает.", trailing=switch)
+        if data["signed"]:
+            self.item_row(self.body, "Проверка сессии", "Сервис иногда просит подтвердить, что качает человек. "
+                                                         "Откроется его страница; после проверки загрузки пойдут снова.",
+                          lambda: self.check(data["name"]), icons=("msg_permissions", "msg_secret", "msg_info"))
         if data["error"]:
             self.note(self.body, "Последняя ошибка: %s" % data["error"], "accent")
         if data["settings"]:
@@ -522,6 +527,10 @@ class ExtensionScreen(ExtScreen):
 
     def toggle(self, on):
         self.run(lambda m: m.set_enabled(self.ext, on), lambda _: None, lambda text: (self.say(text), self.refresh()))
+
+    def check(self, name):
+        from .verify import verify
+        verify(self.owner.plugin, self.ext, name, self.say)
 
     # -- settings, the way Mornye's own screen shows them
 
