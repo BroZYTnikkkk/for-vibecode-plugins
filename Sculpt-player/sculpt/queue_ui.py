@@ -13,7 +13,7 @@ from android_utils import OnClickListener, run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import MARGIN, MEDIA_CONTROLLER, _dp, _log, sculpt_class
+from .common import MARGIN, MEDIA_CONTROLLER, _dp, _log, sculpt_class, tab_scrim
 from .music import local_path
 
 ROW, MENU, MOVED = 1, 2, 3  # sculpt.QueueList's events
@@ -271,7 +271,7 @@ class QueueScreen:
         if colors is None:
             return
         self.colors = colors
-        self.root.setBackgroundColor(colors.background)
+        self.root.setBackgroundColor(tab_scrim(colors))
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
         mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
         for view in (self.chevron, self.close, self.play_button, self.sort_button, self.save_button, self.more_button,

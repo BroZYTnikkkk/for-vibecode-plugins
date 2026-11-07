@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.11.5"
+VERSION = "0.12.0"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -53,6 +53,9 @@ PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
 MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode
 QUEUES_MAX = 10  # queues kept at once; the oldest goes first
+# The tabs lie over the player's own animated glow (RhythmBackground): the player's background color at this
+# alpha (of 255) under them keeps their text readable and lets the glow and its rhythm show through.
+TAB_SCRIM = 150
 HEADER_H = 56.0  # the player's own header, same as PlayerLayout's
 
 ID_VIS_TOP, ID_VIS_BOTTOM, ID_FLAT_SEEK = 9101, 9102, 9103
@@ -235,6 +238,11 @@ def sculpt_class(class_name):
 
 def _dp(value):
     return int(jclass("org.telegram.messenger.AndroidUtilities").dp(float(value)))
+
+
+def tab_scrim(colors):
+    """The background of a tab: the player's own color, see-through enough for the glow under it."""
+    return jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(colors.background, TAB_SCRIM)
 
 
 class Fields:

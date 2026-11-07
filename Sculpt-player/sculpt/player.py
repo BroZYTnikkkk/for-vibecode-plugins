@@ -126,8 +126,25 @@ class Player:
             self.queue_screen.show()
         if self.mode() == MODE_QUEUE:
             self.set_mode(MODE_PLAYER)
+        self.cover_player(index in (PANEL_LIBRARY, PANEL_QUEUE))
         self.paint_tabs(colors)
         self.place_indicator()
+
+    def cover_player(self, hidden):
+        """A tab over the player: the player's own views step aside, its glow (drawn under all of them) stays.
+
+        Transition alpha multiplies the alpha the player animates on its own, so neither undoes the other. The
+        tab's root takes the touches, so nothing hidden can be pressed.
+        """
+        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator, self.moreButton]}
+        for screen in (self.library, self.queue_screen):
+            if screen is not None:
+                keep.add(screen.root.hashCode())
+        value = 0.0 if hidden else 1.0
+        for i in range(self.layout.getChildCount()):
+            child = self.layout.getChildAt(i)
+            if child.hashCode() not in keep:
+                child.setTransitionAlpha(value)
 
     def queue_visible(self):
         return self.queue_screen is not None and self.queue_screen.visible

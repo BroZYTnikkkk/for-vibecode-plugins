@@ -5,7 +5,7 @@ import time
 from android_utils import OnClickListener, run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 
-from .common import COLORS_SECONDS, COVERS_DELIVERY_MS, GROUP_COVER_TRIES, NO_TRACK_NUMBER, PANEL_ACTIVE, PERMISSION_POLLS, PERMISSION_REQUEST, PREVIEW_MAX, SORT_MODES, THUMB_AREA, THUMB_H, THUMB_MIN_ROWS, TILE_RADIUS, TILE_SIZE, _dp
+from .common import COLORS_SECONDS, COVERS_DELIVERY_MS, GROUP_COVER_TRIES, NO_TRACK_NUMBER, PANEL_ACTIVE, PERMISSION_POLLS, PERMISSION_REQUEST, PREVIEW_MAX, SORT_MODES, THUMB_AREA, THUMB_H, THUMB_MIN_ROWS, TILE_RADIUS, TILE_SIZE, _dp, tab_scrim
 from .music import first_letter, format_time, local_path, songs_label, sort_text, track_number
 
 
@@ -1105,7 +1105,7 @@ class LibraryView:
         if not self.stack:
             if self.colors is None:
                 self.colors = self.plugin.sheet_fields.get(self.player.sheet, "colors")
-            self.root.setBackgroundColor(self.colors.background)
+            self.root.setBackgroundColor(tab_scrim(self.colors))
             self.root.setPadding(0, self.plugin.layout_fields.int(self.player.layout, "contentTop"), 0, 0)
             self.push(RootScreen(self))
         elif self.colors_dirty:
@@ -1155,7 +1155,7 @@ class LibraryView:
         self.colors_dirty = False
         self.colors_at = time.monotonic()
         try:
-            self.root.setBackgroundColor(self.colors.background)
+            self.root.setBackgroundColor(tab_scrim(self.colors))
             for screen in self.stack:
                 screen.retint()
         except Exception as e:
