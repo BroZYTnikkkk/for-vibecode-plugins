@@ -13,7 +13,7 @@ from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -70,6 +70,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
             self.install(cover, "setCover", (_java_class(MESSAGE_OBJECT), b, i), CoverSwapHook(self, "coverSetCover"))
+            self.install(cover, "dispatchTouchEvent", (_java_class("android.view.MotionEvent"),), CoverTouchHook(self, "coverTouch"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
             self.install(sheet, "updateHeader", (), HeaderHook(self, "updateHeader"))
             self.install(sheet, "setMode", (i, b), ModeHook(self, "setMode"))

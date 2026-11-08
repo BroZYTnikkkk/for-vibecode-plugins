@@ -101,7 +101,8 @@ class Peeks:
         half = self.text.measureText(self.shown) / 2.0
         center = max(pane_left + margin + half, min(pane_left + pane_width - margin - half, center))
         alpha = (1.0 - mode) * min(1.0, abs(offset) / (page * 0.25))
-        self.text.setColor(colors.text)
-        self.text.setAlpha(int(230 * alpha))
+        color = int(colors.text)
+        # setARGB: a Python int would pick Paint.setColor(long), which reads it as a packed color with a color space
+        self.text.setARGB(int(230 * alpha), (color >> 16) & 255, (color >> 8) & 255, color & 255)
         canvas.drawText(self.shown, center, top - _dp(10) - self.text.descent(), self.text)
         lay.postInvalidateOnAnimation()

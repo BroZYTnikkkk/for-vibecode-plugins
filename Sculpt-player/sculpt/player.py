@@ -7,6 +7,7 @@ from java.lang import Boolean as JBoolean, Integer as JInteger
 from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .peeks import Peeks
+from .player_taps import Taps
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
@@ -34,6 +35,7 @@ class Player:
         self.listeners = []
         self.visualizer = None
         self.peeks = None
+        self.taps = None
         self.album_checked = 0.0
         self.tabs = []
         self.panel_top = 0
@@ -117,6 +119,8 @@ class Player:
             self.set_mode(MODE_PLAYER)
         self.visualizer = Visualizer(self.plugin, self)
         self.peeks = Peeks(self.plugin, self)
+        self.taps = Taps(self.plugin, self)
+        self.taps.attach()
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
         self.update_album()
@@ -373,6 +377,9 @@ class Player:
         if self.peeks is not None:
             self.peeks.dispose()
             self.peeks = None
+        if self.taps is not None:
+            self.taps.detach()
+            self.taps = None
         self.menu_runs = []
 
     def run_later(self, action):

@@ -187,6 +187,19 @@ class CoverSwapHook(_Hook):
             self.fail(e)
 
 
+class CoverTouchHook(_Hook):
+    """PlayerCoverView.dispatchTouchEvent: the cover's touches also go to the player's taps (a tap, a long press);
+    the cover view itself handles them as before, so a swipe is still a swipe."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.taps is not None and param.thisObject.hashCode() == player.coverView.hashCode():
+                player.taps.cover_touch(param.thisObject, param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+
 class NeighborHook(_Hook):
     """MusicPlayerSheet.getNeighborMessage(direction): exteraGram gives no neighbor while the queue plays mixed, so
     a swipe showed an empty cover. The mixed queue has one too: the song MediaController would play next."""
