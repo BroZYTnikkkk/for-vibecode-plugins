@@ -7,7 +7,7 @@ into the page, the name over its lower edge, round buttons, then the songs and t
 
 import random
 
-from java import jarray, jclass, jfloat, jint
+from java import dynamic_proxy, jarray, jclass, jfloat, jint
 
 from .common import _dp, advanced
 from .dl_ui import KINDS, RemoteRows, mark_local, tracks_label
@@ -87,6 +87,16 @@ def total_minutes(tracks):
     return "%d мин" % minutes
 
 
+class Scrolled(dynamic_proxy(jclass("android.view.View$OnScrollChangeListener"))):
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+
+    def onScrollChange(self, view, x, y, old_x, old_y):
+        if self.screen is not None:
+            self.screen.guarded(self.screen.scrolled, y)
+
+
 class RemoteScreen(RemoteRows):
     """An album, a playlist or an author from a service."""
 
@@ -128,6 +138,21 @@ class RemoteScreen(RemoteRows):
         self.content.setPadding(0, 0, 0, _dp(24))
         scroll.addView(self.content)
         page.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        # Mornye's bar: once the picture has gone up, a bar with the name comes in under the back button, so the
+        # button never hangs over the covers of the rows
+        self.bar = jclass("android.widget.LinearLayout")(owner.context)
+        self.bar.setOrientation(0)
+        self.bar.setGravity(16)
+        self.bar.setPadding(_dp(68), 0, _dp(16), 0)
+        self.bar_title = self.label(18, "text", True)
+        self.bar.addView(self.bar_title, jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0))
+        self.bar.setAlpha(0.0)
+        self.paint_bar()
+        page.addView(self.bar, FrameLayout.LayoutParams(-1, _dp(60)))
+        self.scroll_listener = Scrolled(self)
+        scroll.setOnScrollChangeListener(self.scroll_listener)
+        self.scroll = scroll
+        self.hero_height = 0
         back = jclass("android.widget.ImageView")(owner.context)
         owner.set_icon(back, ("ic_ab_back",))
         back.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
@@ -143,6 +168,31 @@ class RemoteScreen(RemoteRows):
         self.title_view = owner.text_view(13)
         self.subtitle_view = owner.text_view(13)
 
+    def paint_bar(self):
+        colors = self.owner.colors
+        if colors is not None:
+            self.bar.setBackgroundColor(jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(colors.background, 245))
+
+    def colors_changed(self):
+        self.paint_bar()
+
+    def scrolled(self, y):
+        """The bar shows over the last part of the picture's way up and stays while the page is scrolled."""
+        start = max(0, self.hero_height - _dp(140))
+        alpha = max(0.0, min(1.0, (y - start) / float(_dp(60))))
+        if abs(self.bar.getAlpha() - alpha) > 0.01:
+            self.bar.setAlpha(alpha)
+
+    def dispose(self):
+        if self.scroll_listener is not None:
+            self.scroll_listener.screen = None
+            try:
+                self.scroll.setOnScrollChangeListener(None)
+            except Exception:
+                pass
+            self.scroll_listener = None
+        super().dispose()
+
     def pane_width(self):
         owner = self.owner
         try:
@@ -156,6 +206,7 @@ class RemoteScreen(RemoteRows):
         owner = self.owner
         width = self.pane_width()
         height = int(width * ratio)
+        self.hero_height = height
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         if not url:
             icon = jclass("android.widget.ImageView")(owner.context)
@@ -276,6 +327,7 @@ class RemoteScreen(RemoteRows):
             artist = self.kind == "artist"
             self.hero(image_url(data), 1.05 if artist else 1.0, artist)
             name = data.get("name") or self.title_text
+            self.bar_title.setText(name)
             title = self.centered(32 if artist else 26, "text", name, True, -64)
             title.setShadowLayer(float(_dp(12)), 0.0, 0.0, jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(-16777216, 120))
             if artist:

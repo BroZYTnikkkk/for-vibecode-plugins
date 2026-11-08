@@ -191,6 +191,43 @@ class ExtScreen(Screen):
         container.addView(row, Params(-1, -2))
         return row, name, second
 
+    def fold_header(self, container, icons, title, subtitle, action):
+        """The head of a folding block, the way "Search the internet" looks: an icon, the name with a line under it,
+        an arrow that turns when it opens. Returns (head, arrow)."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        head = jclass("android.widget.LinearLayout")(owner.context)
+        head.setOrientation(0)
+        head.setGravity(16)
+        head.setPadding(_dp(20), _dp(12), _dp(16), _dp(12))
+        head.setBackground(owner.rounded(owner.color("surfaceContainer"), _dp(20)))
+        icon = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(icon, icons)
+        self.tint_icon(icon, "accent")
+        head.addView(icon, owner.params(22, 22))
+        column = jclass("android.widget.LinearLayout")(owner.context)
+        column.setOrientation(1)
+        name = self.label(16, "text", True)
+        name.setText(title)
+        column.addView(name)
+        if subtitle:
+            second = self.label(13, "textSecondary")
+            second.setText(subtitle)
+            column.addView(second)
+        at = Params(0, -2, 1.0)
+        at.setMarginStart(_dp(12))
+        head.addView(column, at)
+        arrow = jclass("android.widget.ImageView")(owner.context)
+        owner.set_icon(arrow, ("arrow_more", "msg_arrow_more"))
+        self.tint_icon(arrow, "textSecondary")
+        head.addView(arrow, owner.params(20, 20))
+        head.setContentDescription("%s, развернуть" % title)
+        self.click(head, action)
+        place = Params(-1, -2)
+        place.setMargins(_dp(12), _dp(12), _dp(12), _dp(4))
+        container.addView(head, place)
+        return head, arrow
+
     def switch(self, checked, action, description):
         owner = self.owner
         view = jclass("android.widget.Switch")(owner.context)

@@ -1,14 +1,14 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
-"""Song info the way Musicolet shows it: the file, its tags, its sound, its history; authors, albums and genres
-open in the library."""
+"""A song's page: the cover and the names, what matters on a plate, the file, the rest of the tags, the sound and
+the history folded under "Details"; authors, albums and genres open in the library."""
 
 import os
 import re
 import threading
 import time
 
-from android_utils import OnClickListener, copy_to_clipboard, run_on_ui_thread
+from android_utils import copy_to_clipboard, run_on_ui_thread
 from java import dynamic_proxy, jclass
 
 from .common import _dp, _log
@@ -19,7 +19,8 @@ except Exception:
     mutagen = None
 
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
-TAG_KEYS = ("title", "album", "artist", "albumartist", "composer", "genre", "tracknumber", "discnumber", "date")
+TAG_KEYS = ("title", "album", "artist", "albumartist", "composer", "genre", "tracknumber", "discnumber", "date",
+            "isrc", "lyricist", "organization", "copyright", "bpm")
 SYNCED = re.compile(r"\[\d{1,3}:\d{2}")
 STORAGE = "/storage/emulated/0"
 FORMATS = {"MP3": "MP3", "FLAC": "FLAC", "MP4": "M4A", "OggVorbis": "Ogg", "OggOpus": "Opus", "WAVE": "WAV", "AIFF": "AIFF"}
@@ -214,261 +215,329 @@ def size_label(size):
 
 
 class SongInfo:
+    """The song's page in a window over the player, whatever tab is open under it."""
+
     def __init__(self, player, path, library_path=None, fallback=None):
         self.player = player
-        self.plugin = player.plugin
-        self.context = player.context
         self.path = path
         self.library_path = library_path
         self.fallback = fallback or {}
+        self.screen = None
         self.dialog = None
-        self.listeners = []
-        self.plays_view = None
-        self.last_view = None
-        Theme = jclass("org.telegram.ui.ActionBar.Theme")
-        self.text_color = Theme.getColor(Theme.key_dialogTextBlack)
-        self.second_color = Theme.getColor(Theme.key_dialogTextGray3)
-        self.link_color = Theme.getColor(Theme.key_dialogTextLink)
-        self.line_color = Theme.getColor(Theme.key_divider)
 
     def show(self):
-        def work():
-            try:
-                data = read_file(self.path) if self.path else None
-            except Exception as e:
-                _log("song info: %s" % e)
-                data = None
-            run_on_ui_thread(lambda: self.build(data))
-
-        threading.Thread(target=work, name="sculpt-info", daemon=True).start()
-
-    # -- building
-
-    def text(self, size, color, bold=False):
-        view = jclass("android.widget.TextView")(self.context)
-        view.setTextSize(1, float(size))
-        view.setTextColor(color)
-        if bold:
-            view.setTypeface(jclass("org.telegram.messenger.AndroidUtilities").bold())
-        return view
-
-    def click(self, view, action):
-        view.setOnClickListener(OnClickListener(lambda _: self.guarded(action)))
-        view.setBackground(jclass("org.telegram.ui.ActionBar.Theme").getSelectorDrawable(False))
-        self.listeners.append(view)
-
-    def guarded(self, action):
-        try:
-            action()
-        except Exception as e:
-            self.plugin.report("song info", e)
-
-    def field(self, column, label, value, link=None, empty="не указано"):
-        """A name over its value; a field that leads somewhere has an arrow after its name and opens on a tap."""
-        Params = jclass("android.widget.LinearLayout$LayoutParams")
-        block = jclass("android.widget.LinearLayout")(self.context)
-        block.setOrientation(1)
-        block.setPadding(0, _dp(8), 0, _dp(8))
-        head = jclass("android.widget.LinearLayout")(self.context)
-        head.setOrientation(0)
-        head.setGravity(16)
-        name = self.text(15, self.text_color, True)
-        name.setText(label)
-        head.addView(name)
-        shown = str(value) if value else ""
-        if link is not None and shown:
-            arrow = jclass("android.widget.ImageView")(self.context)
-            resources = self.context.getResources()
-            package = self.context.getPackageName()
-            for icon in ("msg_openin", "msg_link2", "msg_arrowright"):
-                resource = resources.getIdentifier(icon, "drawable", package)
-                if resource:
-                    arrow.setImageResource(resource)
-                    break
-            arrow.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(self.link_color, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
-            at = Params(_dp(18), _dp(18))
-            at.setMarginStart(_dp(8))
-            head.addView(arrow, at)
-            self.click(block, link)
-            block.setContentDescription("%s: %s, открыть" % (label, shown))
-        block.addView(head)
-        body = self.text(15, self.second_color)
-        body.setText(shown or empty)
-        if not shown:
-            body.setAlpha(0.6)
-        block.addView(body)
-        column.addView(block, Params(-1, -2))
-        return body
-
-    def line(self, column):
-        view = jclass("android.view.View")(self.context)
-        view.setBackgroundColor(self.line_color)
-        place = jclass("android.widget.LinearLayout$LayoutParams")(-1, max(1, _dp(1)))
-        place.setMargins(0, _dp(8), 0, _dp(8))
-        column.addView(view, place)
-
-    def build(self, data):
-        try:
-            self.build_dialog(data)
-        except Exception as e:
-            self.plugin.report("song info", e)
-
-    def build_dialog(self, data):
-        Params = jclass("android.widget.LinearLayout$LayoutParams")
-        column = jclass("android.widget.LinearLayout")(self.context)
-        column.setOrientation(1)
-        column.setPadding(_dp(24), _dp(4), _dp(24), _dp(8))
-        tags = data["tags"] if data else {}
-        fallback = self.fallback
-        music = self.plugin.music
-        track = music.by_path.get(self.library_path, {}) if self.library_path else {}
-        library = self.library_path is not None
-
-        # the file: its cover, its name, where it lies
-        if self.path:
-            head = jclass("android.widget.LinearLayout")(self.context)
-            head.setOrientation(0)
-            head.setGravity(16)
-            cover = self.cover()
-            if cover is not None:
-                head.addView(cover, Params(_dp(64), _dp(64)))
-            names = jclass("android.widget.LinearLayout")(self.context)
-            names.setOrientation(1)
-            label = self.text(15, self.text_color, True)
-            label.setText("Имя файла")
-            names.addView(label)
-            value = self.text(14, self.second_color)
-            value.setText(os.path.basename(self.path))
-            names.addView(value)
-            at = Params(0, -2, 1.0)
-            if cover is not None:
-                at.setMarginStart(_dp(14))
-            head.addView(names, at)
-            column.addView(head, Params(-1, -2))
-            self.field(column, "Местоположение", place_label(self.path), self.copy_path)
-            self.line(column)
-        else:
-            note = self.text(14, self.second_color)
-            note.setText("Песня из чата ещё не скачана, поэтому о самом файле пока ничего не известно.")
-            column.addView(note)
-
-        # what the tags say
-        title = tags.get("title") or fallback.get("title")
-        artist = tags.get("artist") or fallback.get("artist")
-        album = tags.get("album") or fallback.get("album")
-        album_artist = tags.get("albumartist") or track.get("album_artist")
-        genre = tags.get("genre") or track.get("genre")
-        self.field(column, "Название", title)
-        self.field(column, "Альбом", album, (lambda: self.open_group("albums", album)) if library else None)
-        self.field(column, "Исполнитель", artist, (lambda: self.open_group("artists", artist)) if library else None)
-        self.field(column, "Исполнитель альбома", album_artist, (lambda: self.open_group("artists", album_artist)) if library else None)
-        self.field(column, "Композитор", tags.get("composer"))
-        self.field(column, "Жанр", genre, (lambda: self.open_group("genres", genre)) if library else None)
-        lyrics = data["lyrics"] if data else ""
-        if lyrics:
-            lines = len([line for line in lyrics.splitlines() if line.strip()])
-            kind = "синхронизированный" if SYNCED.search(lyrics) else "обычный"
-            self.field(column, "Встроенный текст", "есть, %s, строк: %d" % (kind, lines) if lines > 1 else "есть, %s" % kind)
-        else:
-            self.field(column, "Встроенный текст", "", empty="нет в файле")
-        self.field(column, "Номер дорожки", number_label(tags.get("tracknumber") or track.get("track")))
-        self.field(column, "Номер диска", number_label(tags.get("discnumber")))
-        self.field(column, "Год", year_label(tags.get("date")))
-        comment = data["comment"] if data else ""
-        link = comment if comment.startswith(("http://", "https://")) else None
-        body = self.field(column, "Комментарий", comment, (lambda: self.open_link(link)) if link else None)
-        if comment and not link:
-            body.setTextIsSelectable(True)
-
-        # how it sounds
-        if data:
-            self.line(column)
-            seconds = data["length"] or fallback.get("seconds") or track.get("duration") or 0
-            self.field(column, "Длительность", clock(seconds) if seconds else "")
-            if data["bitrate"]:
-                self.field(column, "Битрейт", "~%d кбит/с" % round(data["bitrate"] / 1000.0))
-            if data["sample_rate"]:
-                self.field(column, "Частота дискретизации", "%d Гц" % data["sample_rate"])
-            if data["bits"]:
-                self.field(column, "Битность", "%d бит" % data["bits"])
-            self.field(column, "Формат", data["format"])
-            if data["codec"]:
-                self.field(column, "Кодирование", data["codec"])
-            if data["channels"]:
-                self.field(column, "Каналы", {1: "1, моно", 2: "2, стерео"}.get(data["channels"], str(data["channels"])))
-            if data["size"]:
-                self.field(column, "Размер", size_label(data["size"]))
-
-        # its history in the library
-        if library:
-            self.line(column)
-            self.field(column, "Добавлена в медиатеку", date_label(track.get("added")))
-            self.field(column, "Изменена", date_label((data or {}).get("mtime") or track.get("mtime")))
-            self.last_view = self.field(column, "Последний раз играла", date_label(music.last_played(self.library_path)), empty="ещё не играла")
-            count = music.play_count(self.library_path)
-            self.plays_view = self.field(column, "Сколько раз играла", times_label(count) if count else "", empty="ни разу")
-            clear = self.text(14, self.link_color, True)
-            clear.setText("ОЧИСТИТЬ ИСТОРИЮ ВОСПРОИЗВЕДЕНИЯ")
-            clear.setPadding(0, _dp(12), 0, _dp(12))
-            clear.setContentDescription("Очистить историю воспроизведения этой песни")
-            self.click(clear, self.clear_history)
-            column.addView(clear, Params(-2, -2))
-
-        scroll = jclass("android.widget.ScrollView")(self.context)
-        scroll.addView(column)
-        builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(self.context)
-        builder.setTitle("Информация о песне")
-        builder.setView(scroll)
-        if self.library_path:
-            builder.setNeutralButton("Редактировать теги", DialogButton(lambda: self.player.edit_tags(self.library_path)))
-        builder.setPositiveButton("Готово", DialogButton(None))
-        self.dialog = builder.create()
-        self.dialog.setOnDismissListener(Dismissed(self.release))
-        self.dialog.show()
-
-    def cover(self):
-        known, jpg = self.plugin.music.covers.cached(self.path)
-        if jpg is None:
-            return None
-        bitmap = jclass("android.graphics.BitmapFactory").decodeFile(jpg)
-        if bitmap is None:
-            return None
-        image = jclass("org.telegram.ui.Components.BackupImageView")(self.context)
-        image.setRoundRadius(_dp(8))
-        image.setImageBitmap(bitmap)
-        return image
-
-    # -- actions
-
-    def copy_path(self):
-        copy_to_clipboard(self.path)
-        self.plugin.bulletin(self.player.sheet, "info", "Путь к файлу скопирован")
-
-    def open_link(self, url):
-        self.close()
-        jclass("org.telegram.messenger.browser.Browser").openUrl(self.context, url)
-
-    def open_group(self, kind, name):
-        self.close()
-        self.player.open_group(kind, name)
-
-    def clear_history(self):
-        self.plugin.music.clear_history(self.library_path)
-        for view, text in ((self.plays_view, "ни разу"), (self.last_view, "ещё не играла")):
-            if view is not None:
-                view.setText(text)
-                view.setAlpha(0.6)
-        self.plugin.bulletin(self.player.sheet, "ic_delete", "История воспроизведения песни очищена")
+        from .common import PANEL_LIBRARY
+        player = self.player
+        context = player.context
+        # the page's helpers (colors, icons, rounded shapes) are the library's; the library itself stays as it is
+        owner = player.ensure_stack(PANEL_LIBRARY, player.plugin.sheet_fields.get(player.sheet, "colors"))
+        self.screen = SongInfoScreen(owner, self.path, self.library_path, self.fallback, self.close)
+        FrameLayout = jclass("android.widget.FrameLayout")
+        panel = FrameLayout(context)
+        solid = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(owner.color("background"), 255)
+        panel.setBackground(owner.rounded(solid, _dp(28)))
+        panel.setClipToOutline(True)
+        panel.addView(self.screen.view, FrameLayout.LayoutParams(-1, -1))
+        dialog = jclass("android.app.Dialog")(context)
+        dialog.requestWindowFeature(1)  # Window.FEATURE_NO_TITLE
+        dialog.setContentView(panel)
+        dialog.setCanceledOnTouchOutside(True)
+        dialog.setOnDismissListener(Dismissed(self.release))
+        self.dialog = dialog
+        dialog.show()
+        metrics = context.getResources().getDisplayMetrics()
+        window = dialog.getWindow()
+        window.setBackgroundDrawable(jclass("android.graphics.drawable.ColorDrawable")(0))
+        window.setLayout(int(metrics.widthPixels) - 2 * _dp(24), int(int(metrics.heightPixels) * 0.76))
+        window.setDimAmount(0.6)
 
     def close(self):
         if self.dialog is not None:
             self.dialog.dismiss()
 
     def release(self):
-        for view in self.listeners:
-            try:
-                view.setOnClickListener(None)
-            except Exception:
-                pass
-        self.listeners = []
+        if self.screen is not None:
+            self.screen.dispose()
+        self.screen = None
         self.dialog = None
+
+
+def _info_base():
+    from .dl_ui import RemoteRows
+    return RemoteRows
+
+
+class SongInfoScreen(_info_base()):
+    """A song's page in the plugin's own style: the cover and the names on top, what matters on a plate, the rest
+    folded under "Details"."""
+
+    def __init__(self, owner, path, library_path, fallback, close):
+        super().__init__(owner, "О песне")
+        self.close_window = close
+        self.path = path
+        self.library_path = library_path
+        self.fallback = fallback
+        self.data = None
+        self.details = None
+        self.details_row = None
+        self.plays_view = None
+        self.last_view = None
+        self.page()
+        self.start_body()
+        self.note(self.body, "Читаю файл…", size=15, top=16)
+        if not path:
+            self.draw(None)
+            return
+
+        def work():
+            try:
+                data = read_file(path)
+            except Exception as e:
+                _log("song info: %s" % e)
+                data = None
+            run_on_ui_thread(lambda: self.alive and self.guarded(self.draw, data))
+
+        threading.Thread(target=work, name="sculpt-info", daemon=True).start()
+
+    def header(self, large=False, trailing=None):
+        """The usual header; its arrow closes the window, there is no screen under it to go back to."""
+        owner = self.owner
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
+        row.addView(self.icon_button(("ic_ab_back",), "Закрыть", self.close_window), owner.params(40, 40))
+        self.title_view = self.label(20, "text", True)
+        self.title_view.setText(self.title_text)
+        place = jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0)
+        place.setMarginStart(_dp(8))
+        row.addView(self.title_view, place)
+        self.subtitle_view = owner.text_view(13)
+        return row
+
+    def say(self, text, animation="info"):
+        """A bulletin would show in the player, under this window."""
+        jclass("android.widget.Toast").makeText(self.owner.context, text, 0).show()
+
+    # -- building blocks
+
+    def value_row(self, plate, label, value, action=None, empty="не указано"):
+        """A name over its value, on a plate; a row that leads somewhere has an arrow and opens on a tap."""
+        owner = self.owner
+        trailing = None
+        if action is not None and value:
+            trailing = jclass("android.widget.ImageView")(owner.context)
+            owner.set_icon(trailing, ("msg_arrowright",))
+            self.tint_icon(trailing, "textSecondary")
+        row, name, second = self.item_row(plate, value or empty, label, action if value else None,
+                                          trailing=trailing, title_role="text" if value else "textSecondary")
+        name.setSingleLine(False)
+        name.setMaxLines(4)
+        if second is not None:
+            # the label above, the value under it reads better: here the label is the small line
+            column = name.getParent()
+            column.removeView(second)
+            column.addView(second, 0)
+        row.setContentDescription("%s: %s" % (label, value or empty))
+        return name
+
+    def plate(self, title=None):
+        return self.card(self.body, title)
+
+    # -- the page
+
+    def draw(self, data):
+        self.data = data
+        self.clear_body()
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        tags = data["tags"] if data else {}
+        fallback = self.fallback
+        music = owner.plugin.music
+        track = music.by_path.get(self.library_path, {}) if self.library_path else {}
+        library = self.library_path is not None
+        title = tags.get("title") or fallback.get("title") or ""
+        artist = tags.get("artist") or fallback.get("artist") or ""
+        album = tags.get("album") or fallback.get("album") or ""
+        genre = tags.get("genre") or track.get("genre") or ""
+        year = year_label(tags.get("date"))
+
+        # the cover and the names
+        cover = self.cover_image()
+        if cover is not None:
+            place = owner.params(200, 200)
+            place.gravity = 1
+            place.topMargin = _dp(8)
+            self.body.addView(cover, place)
+        name = self.label(24, "text", True)
+        name.setText(title or "Без названия")
+        name.setGravity(17)
+        name.setSingleLine(False)
+        name.setMaxLines(3)
+        place = Params(-1, -2)
+        place.setMargins(_dp(24), _dp(16), _dp(24), 0)
+        self.body.addView(name, place)
+        if artist:
+            who = self.label(17, "accent")
+            who.setText(artist)
+            who.setGravity(17)
+            if library:
+                self.click(who, self.open_group, "artists", artist)
+            place = Params(-1, -2)
+            place.setMargins(_dp(24), _dp(4), _dp(24), 0)
+            self.body.addView(who, place)
+        where = " · ".join(p for p in (album, year) if p)
+        if where:
+            line = self.label(14, "textSecondary")
+            line.setText(where)
+            line.setGravity(17)
+            if library and album:
+                self.click(line, self.open_group, "albums", album)
+            place = Params(-1, -2)
+            place.setMargins(_dp(24), _dp(2), _dp(24), 0)
+            self.body.addView(line, place)
+        if library:
+            edit = self.pill("Изменить теги", True, self.edit_tags)
+            place = Params(-2, -2)
+            place.gravity = 1
+            place.setMargins(0, _dp(16), 0, 0)
+            self.body.addView(edit, place)
+        if not self.path:
+            self.note(self.body, "Песня из чата ещё не скачана, поэтому о самом файле пока ничего не известно.", size=14, top=16)
+
+        # what matters
+        main = self.plate("Основное")
+        self.value_row(main, "Жанр", genre, (lambda: self.open_group("genres", genre)) if library else None)
+        if data:
+            seconds = data["length"] or fallback.get("seconds") or track.get("duration") or 0
+            self.value_row(main, "Длительность", clock(seconds) if seconds else "")
+            self.value_row(main, "Формат", sound_label(data))
+        if library:
+            count = music.play_count(self.library_path)
+            self.plays_view = self.value_row(main, "Сколько раз играла", times_label(count) if count else "", empty="ни разу")
+            self.last_view = self.value_row(main, "Последний раз", date_label(music.last_played(self.library_path)), empty="ещё не играла")
+
+        # the rest, folded
+        self.details_row, _, _ = self.item_row(self.body, "Подробнее", "Файл, номера, ISRC, лейбл, звук, история",
+                                               self.toggle_details, icons=("arrow_more", "msg_arrow_more"))
+        self.details = jclass("android.widget.LinearLayout")(owner.context)
+        self.details.setOrientation(1)
+        self.details.setVisibility(8)
+        self.body.addView(self.details, Params(-1, -2))
+        body, self.body = self.body, self.details
+        try:
+            self.draw_details(data, tags, track, library)
+        finally:
+            self.body = body
+        spacer = jclass("android.view.View")(owner.context)
+        self.body.addView(spacer, Params(-1, _dp(24)))
+
+    def draw_details(self, data, tags, track, library):
+        if self.path:
+            files = self.plate("Файл")
+            self.value_row(files, "Имя файла", os.path.basename(self.path), self.copy_path)
+            self.value_row(files, "Папка", place_label(self.path), self.copy_path)
+            if data and data["size"]:
+                self.value_row(files, "Размер", size_label(data["size"]))
+        more = self.plate("Теги")
+        album_artist = tags.get("albumartist") or track.get("album_artist") or ""
+        self.value_row(more, "Исполнитель альбома", album_artist,
+                       (lambda: self.open_group("artists", album_artist)) if library else None)
+        self.value_row(more, "Номер дорожки", number_label(tags.get("tracknumber") or track.get("track")))
+        self.value_row(more, "Номер диска", number_label(tags.get("discnumber")))
+        for key, label in (("isrc", "ISRC"), ("composer", "Композитор"), ("lyricist", "Автор слов"),
+                           ("organization", "Лейбл"), ("copyright", "Копирайт"), ("bpm", "BPM")):
+            if tags.get(key):
+                self.value_row(more, label, tags.get(key))
+        lyrics = data["lyrics"] if data else ""
+        if lyrics:
+            lines = len([line for line in lyrics.splitlines() if line.strip()])
+            kind = "синхронизированный" if SYNCED.search(lyrics) else "обычный"
+            self.value_row(more, "Текст в файле", "есть, %s, строк: %d" % (kind, lines) if lines > 1 else "есть, %s" % kind)
+        else:
+            self.value_row(more, "Текст в файле", "", empty="нет")
+        comment = data["comment"] if data else ""
+        if comment:
+            link = comment if comment.startswith(("http://", "https://")) else None
+            shown = self.value_row(more, "Комментарий", comment, (lambda: self.open_link(link)) if link else None)
+            if not link:
+                shown.setTextIsSelectable(True)
+        if data:
+            sound = self.plate("Звук")
+            if data["bitrate"]:
+                self.value_row(sound, "Битрейт", "~%d кбит/с" % round(data["bitrate"] / 1000.0))
+            if data["sample_rate"]:
+                self.value_row(sound, "Частота дискретизации", "%d Гц" % data["sample_rate"])
+            if data["bits"]:
+                self.value_row(sound, "Битность", "%d бит" % data["bits"])
+            if data["codec"]:
+                self.value_row(sound, "Кодирование", data["codec"])
+            if data["channels"]:
+                self.value_row(sound, "Каналы", {1: "1, моно", 2: "2, стерео"}.get(data["channels"], str(data["channels"])))
+        if library:
+            history = self.plate("В медиатеке")
+            self.value_row(history, "Добавлена", date_label(track.get("added")))
+            self.value_row(history, "Изменена", date_label((data or {}).get("mtime") or track.get("mtime")))
+            clear = self.pill("Очистить историю воспроизведения", False, self.clear_history)
+            place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
+            place.setMargins(_dp(20), _dp(12), 0, 0)
+            self.body.addView(clear, place)
+
+    def toggle_details(self):
+        shown = self.details.getVisibility() == 0
+        self.details.setVisibility(8 if shown else 0)
+        self.details_row.getChildAt(0).setRotation(0.0 if shown else 180.0)
+        self.details_row.setContentDescription("Подробнее, %s" % ("развернуть" if shown else "свернуть"))
+
+    def cover_image(self):
+        known, jpg = self.owner.plugin.music.covers.cached(self.path) if self.path else (True, None)
+        if jpg is None:
+            return None
+        image = jclass("org.telegram.ui.Components.BackupImageView")(self.owner.context)
+        image.setRoundRadius(_dp(16))
+        image.setImage(jpg, "200_200", None)
+        return image
+
+    # -- actions
+
+    def edit_tags(self):
+        player, path = self.owner.player, self.library_path
+        self.close_window()
+        player.edit_tags(path)
+
+    def copy_path(self):
+        copy_to_clipboard(self.path)
+        self.say("Путь к файлу скопирован")
+
+    def open_link(self, url):
+        context = self.owner.context
+        self.close_window()
+        jclass("org.telegram.messenger.browser.Browser").openUrl(context, url)
+
+    def open_group(self, kind, name):
+        player = self.owner.player
+        self.close_window()
+        player.open_group(kind, name)
+
+    def clear_history(self):
+        music = self.owner.plugin.music
+        music.clear_history(self.library_path)
+        for view, text in ((self.plays_view, "ни разу"), (self.last_view, "ещё не играла")):
+            if view is not None:
+                view.setText(text)
+        self.say("История воспроизведения песни очищена", "ic_delete")
+
+    def refresh(self):
+        pass
+
+
+def sound_label(data):
+    """One line for the sound: the format, then its depth and rate when the file has them."""
+    parts = [data.get("format") or ""]
+    if data.get("bits"):
+        parts.append("%d бит" % data["bits"])
+    if data.get("sample_rate"):
+        parts.append(("%.1f кГц" % (data["sample_rate"] / 1000.0)).replace(".0 ", " ").replace(".", ","))
+    if not data.get("bits") and data.get("bitrate"):
+        parts.append("~%d кбит/с" % round(data["bitrate"] / 1000.0))
+    return " · ".join(p for p in parts if p)

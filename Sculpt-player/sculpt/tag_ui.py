@@ -256,33 +256,50 @@ class TagScreen(RemoteRows):
 
     # -- the fields
 
+    def add_field(self, container, key, label):
+        """A tag's name, what it was, and the field that holds what it becomes."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        title = self.label(14, "text", True)
+        title.setText(label)
+        place = Params(-1, -2)
+        place.setMargins(_dp(20), _dp(12), _dp(20), 0)
+        container.addView(title, place)
+        was = self.label(12, "textSecondary")
+        before = self.before.get(key) or ""
+        was.setText("было: %s" % ((before[:60] + "…") if len(before) > 60 else (before or "пусто")))
+        place = Params(-1, -2)
+        place.setMargins(_dp(20), 0, _dp(20), 0)
+        container.addView(was, place)
+        field = jclass("android.widget.EditText")(owner.context)
+        field.setText(before)
+        field.setTextSize(1, 16.0)
+        if key in tags.MULTILINE:
+            field.setSingleLine(False)
+            field.setMaxLines(8)
+        else:
+            field.setSingleLine(True)
+        field.setTextColor(owner.color("text"))
+        field.setHintTextColor(owner.color("textSecondary"))
+        field.setHint(label)
+        field.setContentDescription(label)
+        place = Params(-1, -2)
+        place.setMargins(_dp(16), 0, _dp(16), 0)
+        container.addView(field, place)
+        self.fields[key] = field
+
+    def toggle_advanced(self):
+        shown = self.advanced_box.getVisibility() == 0
+        self.advanced_box.setVisibility(8 if shown else 0)
+        self.advanced_arrow.setRotation(0.0 if shown else 180.0)
+        self.advanced_row.setContentDescription("Расширенные теги, %s" % ("развернуть" if shown else "свернуть"))
+
     def build_fields(self):
         owner = self.owner
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         self.section(self.body, "Теги")
-        for key, label in tags.FIELDS:
-            title = self.label(14, "text", True)
-            title.setText(label)
-            place = Params(-1, -2)
-            place.setMargins(_dp(20), _dp(12), _dp(20), 0)
-            self.body.addView(title, place)
-            was = self.label(12, "textSecondary")
-            was.setText("было: %s" % (self.before.get(key) or "пусто"))
-            place = Params(-1, -2)
-            place.setMargins(_dp(20), 0, _dp(20), 0)
-            self.body.addView(was, place)
-            field = jclass("android.widget.EditText")(owner.context)
-            field.setText(self.before.get(key) or "")
-            field.setTextSize(1, 16.0)
-            field.setSingleLine(True)
-            field.setTextColor(owner.color("text"))
-            field.setHintTextColor(owner.color("textSecondary"))
-            field.setHint(label)
-            field.setContentDescription(label)
-            place = Params(-1, -2)
-            place.setMargins(_dp(16), 0, _dp(16), 0)
-            self.body.addView(field, place)
-            self.fields[key] = field
+        for key, label in tags.MAIN_FIELDS:
+            self.add_field(self.body, key, label)
         self.section(self.body, "Обложка")
         self.cover_row = jclass("android.widget.LinearLayout")(owner.context)
         self.cover_row.setOrientation(0)
@@ -290,6 +307,17 @@ class TagScreen(RemoteRows):
         self.cover_row.setPadding(_dp(20), _dp(4), _dp(16), _dp(4))
         self.body.addView(self.cover_row, Params(-1, -2))
         self.paint_cover()
+        # the rest of the tags, folded: most songs need only the main ones
+        self.advanced_box = jclass("android.widget.LinearLayout")(owner.context)
+        self.advanced_box.setOrientation(1)
+        self.advanced_box.setVisibility(8)
+        filled = [label for key, label in tags.ADVANCED_FIELDS if self.before.get(key)]
+        hint = ("заполнено: %d из %d" % (len(filled), len(tags.ADVANCED_FIELDS))) if filled else "Номера, ISRC, композитор, лейбл, текст и другое"
+        self.advanced_row, self.advanced_arrow = self.fold_header(self.body, ("menu_tag_edit", "msg_edit"),
+                                                                  "Расширенные теги", hint, self.toggle_advanced)
+        for key, label in tags.ADVANCED_FIELDS:
+            self.add_field(self.advanced_box, key, label)
+        self.body.addView(self.advanced_box, Params(-1, -2))
         save = self.pill("Сохранить", True, self.save)
         save.setContentDescription("Записать теги в файл")
         place = Params(-1, _dp(48))

@@ -16,8 +16,56 @@ try:
 except Exception:
     mutagen = None
 
-FIELDS = (("title", "Название"), ("artist", "Исполнитель"), ("album", "Альбом"), ("albumartist", "Исполнитель альбома"),
-          ("date", "Год"), ("genre", "Жанр"), ("tracknumber", "Номер дорожки"), ("discnumber", "Номер диска"), ("isrc", "ISRC"))
+MAIN_FIELDS = (("title", "Название"), ("artist", "Исполнитель"), ("album", "Альбом"), ("date", "Год"), ("genre", "Жанр"))
+ADVANCED_FIELDS = (("albumartist", "Исполнитель альбома"), ("tracknumber", "Номер дорожки"), ("discnumber", "Номер диска"),
+                   ("isrc", "ISRC"), ("composer", "Композитор"), ("lyricist", "Автор слов"), ("organization", "Лейбл"),
+                   ("copyright", "Копирайт"), ("bpm", "BPM"), ("comment", "Комментарий"), ("lyrics", "Текст песни"))
+FIELDS = MAIN_FIELDS + ADVANCED_FIELDS
+MULTILINE = ("comment", "lyrics")
+
+
+def _register_keys():
+    """mutagen's easy tags have no comment or lyrics for MP3, and no lyrics or composer for M4A: they are added
+    here, each in the frame or atom players read."""
+    try:
+        from mutagen.easyid3 import EasyID3
+        from mutagen.id3 import COMM, USLT
+
+        def frame_get(kind):
+            def get(id3, key):
+                return [str(frame) for frame in id3.getall(kind)][:1]
+            return get
+
+        def frame_delete(kind):
+            def delete(id3, key):
+                id3.delall(kind)
+            return delete
+
+        def comm_set(id3, key, value):
+            id3.delall("COMM")
+            id3.add(COMM(encoding=3, lang="eng", desc="", text=value))
+
+        def uslt_set(id3, key, value):
+            id3.delall("USLT")
+            id3.add(USLT(encoding=3, lang="eng", desc="", text=value[0] if value else ""))
+
+        if "comment" not in EasyID3.valid_keys:
+            EasyID3.RegisterKey("comment", frame_get("COMM"), comm_set, frame_delete("COMM"))
+        if "lyrics" not in EasyID3.valid_keys:
+            EasyID3.RegisterKey("lyrics", frame_get("USLT"), uslt_set, frame_delete("USLT"))
+    except Exception as e:
+        _log("tags: mp3 keys: %s" % e)
+    try:
+        from mutagen.easymp4 import EasyMP4Tags
+        for key, atom in (("lyrics", "\xa9lyr"), ("composer", "\xa9wrt")):
+            if key not in EasyMP4Tags.Get:
+                EasyMP4Tags.RegisterTextKey(key, atom)
+    except Exception as e:
+        _log("tags: m4a keys: %s" % e)
+
+
+if mutagen is not None:
+    _register_keys()
 WRITE_REQUEST = 7301
 
 
@@ -48,7 +96,9 @@ def from_item(item):
     values = {"title": item.get("name") or "", "artist": item.get("artists") or "", "album": item.get("album_name") or "",
               "albumartist": item.get("album_artist") or "", "date": date[:10], "genre": item.get("genre") or "",
               "tracknumber": ("%s/%s" % (track, total) if track and total else str(track or "")),
-              "discnumber": str(item.get("disc_number") or ""), "isrc": item.get("isrc") or ""}
+              "discnumber": str(item.get("disc_number") or ""), "isrc": item.get("isrc") or "",
+              "composer": item.get("composer") or "", "organization": item.get("label") or "",
+              "copyright": item.get("copyright") or ""}
     return {key: str(value).strip() for key, value in values.items()}
 
 

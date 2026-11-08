@@ -1,6 +1,6 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
-from android_utils import OnClickListener
+from android_utils import OnClickListener, run_on_ui_thread
 from java import jarray, jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
@@ -121,6 +121,8 @@ class Player:
         self.peeks = Peeks(self.plugin, self)
         self.taps = Taps(self.plugin, self)
         self.taps.attach()
+        # the covers a first swipe shows are read now too: after Telegram restarts, no song starts to do it
+        run_on_ui_thread(lambda: self.plugin.warm_neighbors(), 600)
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
         self.update_album()
@@ -475,11 +477,20 @@ class Player:
             return
         album = None
         try:
-            info = jclass("org.telegram.messenger.MediaController").getInstance().getAudioInfo()
-            album = info.getAlbum() if info is not None else None
+            controller = jclass("org.telegram.messenger.MediaController").getInstance()
+            # a song from the phone: the library's album, read with its odd letters intact (Telegram's own tag
+            # reader turns letters outside the basic plane into "?")
+            track = self.plugin.music.by_path.get(local_path(controller.getPlayingMessageObject()))
+            if track is not None:
+                album = track.get("album") or None
+            else:
+                info = controller.getAudioInfo()
+                album = info.getAlbum() if info is not None else None
         except Exception:
             pass
         text = str(album) if album else ""
+        if "??" in text or text.count("?") >= 3:
+            text = ""  # question marks for letters say nothing: no album line rather than that
         if str(self.album.getText()) != text:
             self.album.setText(text)
         self.recenter()

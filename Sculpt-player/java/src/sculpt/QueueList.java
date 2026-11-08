@@ -162,6 +162,16 @@ public class QueueList extends RecyclerView {
     // -- data ----------------------------------------------------------------------------
 
     public void setRows(String[] titles, String[] artists, String[] albums, String[] times, String[] covers, int current) {
+        // the same rows again (a song started, a part of the queue arrived with nothing new on screen): only the
+        // playing mark moves, so the list does not rebind and blink
+        if (java.util.Arrays.equals(this.titles, titles) && java.util.Arrays.equals(this.artists, artists)
+                && java.util.Arrays.equals(this.albums, albums) && java.util.Arrays.equals(this.times, times)
+                && java.util.Arrays.equals(this.covers, covers)) {
+            if (current != this.current) {
+                setCurrent(current);
+            }
+            return;
+        }
         this.titles = titles;
         this.artists = artists;
         this.albums = albums;
@@ -207,6 +217,9 @@ public class QueueList extends RecyclerView {
     }
 
     public void setDragEnabled(boolean enabled) {
+        if (dragEnabled == enabled) {
+            return;
+        }
         dragEnabled = enabled;
         adapter.notifyDataSetChanged();
     }
@@ -270,6 +283,9 @@ public class QueueList extends RecyclerView {
     }
 
     private void loadCover(final ImageView view, final String path) {
+        if (path != null && path.equals(view.getTag()) && view.getDrawable() != null) {
+            return;  // already shows this cover: a rebind leaves it be instead of clearing it first
+        }
         view.setTag(path);
         if (path == null) {
             view.setImageDrawable(null);
