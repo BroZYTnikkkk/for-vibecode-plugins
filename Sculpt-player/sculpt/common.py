@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.27.0"
+VERSION = "0.28.5"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -40,6 +40,7 @@ TRANSPORT_H = 72.0  # PlayerControlsView.getHeightDp()
 SEEK_H = 68.0  # WavySeekBar draws its line 52 dp from the top, the rest is room for the drag bubble
 SEEK_LINE = 52.0
 PANEL_H = 56.0
+LYRICS_SHIFT = 62.0  # how far the title drops with the lyrics open, into the place of the icon row
 # the bottom panel, left to right; ⋮ is the player's own button and takes the last slot
 PANEL_TABS = (
     ("Очередь", ("player_new_queue",)),

@@ -415,7 +415,8 @@ class QueueScreen:
         shown_current = self.order.index(current) if current in self.order else -1
         self.call("setRows", jarray(String)([r.title for r in rows]), jarray(String)([r.artist for r in rows]),
                   jarray(String)([r.album for r in rows]), jarray(String)([clock(r.seconds) for r in rows]),
-                  jarray(String)(cover_paths), JInteger(shown_current))
+                  jarray(String)(cover_paths), JInteger(shown_current),
+                  jarray(jclass("java.lang.Object"))([r.message if r.path is None else None for r in rows]))
         self.call("setDragEnabled", JBoolean(not self.query))
         missing = [r.path for r, c in zip(rows, cover_paths) if r.path and c is None]
         if missing:

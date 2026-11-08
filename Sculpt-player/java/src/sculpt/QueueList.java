@@ -29,6 +29,11 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.exteragram.messenger.player.PlayerCovers;
+
+import org.telegram.messenger.ImageReceiver;
+import org.telegram.messenger.MessageObject;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -64,6 +69,7 @@ public class QueueList extends RecyclerView {
     private String[] albums = new String[0];
     private String[] times = new String[0];
     private String[] covers = new String[0];
+    private Object[] messages = new Object[0];  // a chat's song has no file to read a cover from: its message has it
     private int current = -1;
     private boolean dragEnabled = true;
     private int dragFrom = -1;
@@ -97,10 +103,10 @@ public class QueueList extends RecyclerView {
         return null;
     }
 
-    public static void rows(ViewGroup holder, String[] titles, String[] artists, String[] albums, String[] times, String[] covers, int current) {
+    public static void rows(ViewGroup holder, String[] titles, String[] artists, String[] albums, String[] times, String[] covers, int current, Object[] messages) {
         QueueList list = in(holder);
         if (list != null) {
-            list.setRows(titles, artists, albums, times, covers, current);
+            list.setRows(titles, artists, albums, times, covers, current, messages);
         }
     }
 
@@ -161,12 +167,12 @@ public class QueueList extends RecyclerView {
 
     // -- data ----------------------------------------------------------------------------
 
-    public void setRows(String[] titles, String[] artists, String[] albums, String[] times, String[] covers, int current) {
+    public void setRows(String[] titles, String[] artists, String[] albums, String[] times, String[] covers, int current, Object[] messages) {
         // the same rows again (a song started, a part of the queue arrived with nothing new on screen): only the
         // playing mark moves, so the list does not rebind and blink
         if (java.util.Arrays.equals(this.titles, titles) && java.util.Arrays.equals(this.artists, artists)
                 && java.util.Arrays.equals(this.albums, albums) && java.util.Arrays.equals(this.times, times)
-                && java.util.Arrays.equals(this.covers, covers)) {
+                && java.util.Arrays.equals(this.covers, covers) && java.util.Arrays.equals(this.messages, messages)) {
             if (current != this.current) {
                 setCurrent(current);
             }
@@ -177,6 +183,7 @@ public class QueueList extends RecyclerView {
         this.albums = albums;
         this.times = times;
         this.covers = covers;
+        this.messages = messages;
         this.current = current;
         adapter.notifyDataSetChanged();
     }
@@ -208,6 +215,10 @@ public class QueueList extends RecyclerView {
         albums = without(albums, position);
         times = without(times, position);
         covers = without(covers, position);
+        Object[] kept = new Object[messages.length - 1];
+        System.arraycopy(messages, 0, kept, 0, position);
+        System.arraycopy(messages, position + 1, kept, position, messages.length - position - 1);
+        messages = kept;
         if (current == position) {
             current = -1;
         } else if (current > position) {
@@ -252,8 +263,8 @@ public class QueueList extends RecyclerView {
         return out;
     }
 
-    private static void move(String[] items, int from, int to) {
-        String item = items[from];
+    private static void move(Object[] items, int from, int to) {
+        Object item = items[from];
         if (from < to) {
             System.arraycopy(items, from + 1, items, from, to - from);
         } else {
@@ -313,9 +324,59 @@ public class QueueList extends RecyclerView {
 
     // -- rows ------------------------------------------------------------------------------
 
+    /** A cover from a file, or, for a song in a chat, the one exteraGram's own queue would show: Telegram loads it. */
+    private static final class CoverView extends ImageView {
+        private final ImageReceiver receiver = new ImageReceiver(this);
+        private MessageObject shown;
+
+        CoverView(Context context) {
+            super(context);
+        }
+
+        void showMessage(MessageObject message) {
+            if (message == shown) {
+                return;
+            }
+            shown = message;
+            setTag(null);
+            setImageDrawable(null);
+            // 56: the row's size in dp. true: artwork already found for a song without its own picture; nothing is fetched
+            PlayerCovers.setCover(receiver, message, 56, true);
+            invalidate();
+        }
+
+        void showFile() {
+            if (shown != null) {
+                shown = null;
+                receiver.clearImage();
+            }
+        }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            receiver.onAttachedToWindow();
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            receiver.onDetachedFromWindow();
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            super.onDraw(canvas);
+            if (shown != null) {
+                receiver.setImageCoords(0f, 0f, getWidth(), getHeight());
+                receiver.draw(canvas);
+            }
+        }
+    }
+
     private class Holder extends RecyclerView.ViewHolder {
         final ImageView handle;
-        final ImageView cover;
+        final CoverView cover;
         final TextView title;
         final TextView artist;
         final TextView album;
@@ -346,7 +407,7 @@ public class QueueList extends RecyclerView {
             });
             row.addView(handle, new LinearLayout.LayoutParams(dp(40), dp(48)));
 
-            cover = new ImageView(context);
+            cover = new CoverView(context);
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
             coverBack.setCornerRadius(dp(8));
             cover.setBackground(coverBack);
@@ -433,7 +494,13 @@ public class QueueList extends RecyclerView {
             menu.setImageResource(menuIcon);
             menu.setColorFilter(tint);
             itemView.setSelected(playing);
-            loadCover(cover, covers[position]);
+            Object message = position < messages.length ? messages[position] : null;
+            if (covers[position] == null && message instanceof MessageObject) {
+                cover.showMessage((MessageObject) message);
+            } else {
+                cover.showFile();
+                loadCover(cover, covers[position]);
+            }
         }
     }
 
@@ -486,6 +553,7 @@ public class QueueList extends RecyclerView {
             move(albums, a, b);
             move(times, a, b);
             move(covers, a, b);
+            move(messages, a, b);
             if (current == a) {
                 current = b;
             } else if (a < current && current <= b) {

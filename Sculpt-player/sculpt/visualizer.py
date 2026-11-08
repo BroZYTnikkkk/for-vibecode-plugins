@@ -8,7 +8,7 @@ import time
 
 from java import jarray, jclass, jfloat, jint
 
-from .common import BANDS, BAR_RADIUS, Fields, RHYTHM_ANALYZER, RHYTHM_TAP, VIS_BARS, VIS_BUILD_SECONDS, VIS_CORNER, VIS_COVER_CHECK, VIS_DARKER, VIS_FAR_BINS, VIS_GRAY, VIS_HEIGHT_DP, VIS_HUE_BINS, VIS_LAYERS, VIS_MIN_CHROMA, VIS_MIN_HUE, VIS_MIN_SHARE, VIS_PALE_LIGHT, VIS_SAMPLE, VIS_WIDTHS, _dp, _log
+from .common import LYRICS_SHIFT, MARGIN, BANDS, BAR_RADIUS, Fields, RHYTHM_ANALYZER, RHYTHM_TAP, VIS_BARS, VIS_BUILD_SECONDS, VIS_CORNER, VIS_COVER_CHECK, VIS_DARKER, VIS_FAR_BINS, VIS_GRAY, VIS_HEIGHT_DP, VIS_HUE_BINS, VIS_LAYERS, VIS_MIN_CHROMA, VIS_MIN_HUE, VIS_MIN_SHARE, VIS_PALE_LIGHT, VIS_SAMPLE, VIS_WIDTHS, _dp, _log
 
 
 def _hls(color):
@@ -210,6 +210,7 @@ class Visualizer:
             get = self.plugin.get_setting
             self.settings = (get("vis_top", True), get("vis_bottom", True), get("vis_density", 1), get("vis_color_mode", 0),
                              get("vis_height", 1), get("vis_style", 0), self.plugin.cover_radius())
+            self.strip_on_top = int(get("lyrics_vis", 0)) == 1
             self.settings_at = now
         return self.settings
 
@@ -305,9 +306,9 @@ class Visualizer:
         sheet_fields, f = self.plugin.sheet_fields, self.plugin.layout_fields
         lay = player.layout
         mode = max(0.0, min(1.0, sheet_fields.float(player.sheet, "modeProgress")))
-        if mode >= 0.99:
-            return
         playing = not self.media.getInstance().isMessagePaused()
+        # with the lyrics open the bars leave the cover and become a low strip standing on the title
+        strip = mode > 0.5
 
         full_left = f.float(lay, "coverLeft")
         full_size = f.float(lay, "coverSize")
@@ -319,12 +320,22 @@ class Visualizer:
         left = full_left + inset
         size = full_size * scale
         top = f.float(lay, "coverTop") + inset
+        if strip:
+            show_top, show_bottom = True, False
+            inset = 0.0
+            full_left = left = float(f.int(lay, "paneLeft") + _dp(MARGIN))
+            full_size = size = float(f.int(lay, "paneWidth") - 2 * _dp(MARGIN))
+            top = float(f.int(lay, "titleTop") + _dp(LYRICS_SHIFT) - _dp(6))
+            if getattr(self, "strip_on_top", False):
+                # hanging from the header and growing down, the way the bottom row grows from a cover's lower edge
+                show_top, show_bottom = False, True
+                top = float(f.int(lay, "headerBottom") + _dp(4)) - size
 
         # The numbers change 40 times a second at most: other frames paint what is built, at almost no cost.
         key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
         if started - self.built_at >= VIS_BUILD_SECONDS or key != self.built_key:
             self._build(lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
-                        height_index, show_top, show_bottom, cover_radius)
+                        height_index, show_top, show_bottom, cover_radius, strip)
             self.built_at = started
             self.built_key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
 
@@ -368,12 +379,12 @@ class Visualizer:
             lay.postInvalidateOnAnimation()
 
     def _build(self, lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
-               height_index, show_top, show_bottom, cover_radius):
+               height_index, show_top, show_bottom, cover_radius, strip=False):
         count = VIS_BARS[density]
         layered = color_mode == 0
         self._check_cover(self.built_at)
         self.moving = self._advance(count, self.spectrum.poll(playing), layered)
-        wanted = _dp(VIS_HEIGHT_DP[height_index])
+        wanted = _dp(48) if strip else _dp(VIS_HEIGHT_DP[height_index])
         full_top = top - inset
         ceiling = f.int(lay, "headerBottom") + _dp(4)
         above = max(0.0, min(wanted, full_top - ceiling)) if show_top else 0.0
@@ -391,11 +402,12 @@ class Visualizer:
             rows.append((top + size, 1.0, max(0.0, min(wanted, room))))
 
         # The bars start under the cover, which is drawn over them: this also fills its rounded corners.
-        inside = _dp(cover_radius) + _dp(2)
         width = step * VIS_WIDTHS[style]
+        # a strip has no cover over its foot: the feet stay on the line, a round cap included
+        inside = (0.0 if style == 0 else -width / 2.0) if strip else _dp(cover_radius) + _dp(2)
         radius = min(_dp(BAR_RADIUS), width * VIS_CORNER)
         offset = width / 2.0 - radius
-        alpha = int(255 * (1.0 - mode))
+        alpha = int(255 * 0.85 * max(0.0, 2.0 * mode - 1.0)) if strip else int(255 * max(0.0, 1.0 - 2.0 * mode))
         batches = []
         for layer in (2, 1, 0) if layered else (0,):
             values = self.layers[layer]
@@ -408,7 +420,11 @@ class Visualizer:
                     if value <= 0.005 or any(front[i] >= value for front in hiding):
                         continue
                     x = left + half + i * step
-                    tip = base + sign * height * value
+                    reach = height * value
+                    if strip:
+                        # a bar shorter than its own rounded top would poke through the line
+                        reach = max(reach, 2.0 * radius if style == 0 else width)
+                    tip = base + sign * reach
                     if style != 0:
                         body.extend((x, start, x, tip))
                         continue

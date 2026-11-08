@@ -41,6 +41,15 @@ def kind_of(item):
     return "track" if kind == "song" else kind
 
 
+def filter_kind(filter_id):
+    """The kind of result a service's filter asks for: "albums" and "album" alike; None when it is something else."""
+    word = str(filter_id or "").lower()
+    for kind, names in (("track", ("track", "song", "music")), ("album", ("album",)), ("artist", ("artist",)), ("playlist", ("playlist",))):
+        if any(name in word for name in names):
+            return kind
+    return None
+
+
 def mark_local(music, items):
     """Results the library already has (same author and title) get the path of the song on the phone."""
     local = {}
@@ -834,7 +843,15 @@ class DownloadSearchScreen(RemoteRows):
                     manager.state["search_provider"] = provider
                     manager.save_state()
             used, items = manager.search(query, filter_id, provider or None)
-            return {"items": mark_local(music, list(items)[:120]), "provider": used}
+            items = list(items)[:120]
+            # services often leave the kind out of a filtered answer: Mornye reads it from the filter too
+            kind = filter_kind(filter_id)
+            if kind is not None:
+                for item in items:
+                    if isinstance(item, dict) and not item.get("item_type"):
+                        item["item_type"] = kind
+            _log("download search: filter %s, %d results" % (filter_id, len(items)))
+            return {"items": mark_local(music, items), "provider": used}
 
         def failed(text):
             self.results = {"error": text}

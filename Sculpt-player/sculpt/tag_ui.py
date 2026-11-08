@@ -276,7 +276,10 @@ class TagScreen(RemoteRows):
         field.setTextSize(1, 16.0)
         if key in tags.MULTILINE:
             field.setSingleLine(False)
-            field.setMaxLines(8)
+            if key == "lyrics":
+                field.setMinLines(4)
+            else:
+                field.setMaxLines(8)
         else:
             field.setSingleLine(True)
         field.setTextColor(owner.color("text"))
@@ -287,6 +290,45 @@ class TagScreen(RemoteRows):
         place.setMargins(_dp(16), 0, _dp(16), 0)
         container.addView(field, place)
         self.fields[key] = field
+
+    def toggle_lyrics(self):
+        self.open_lyrics(self.lyrics_box.getVisibility() != 0)
+
+    def open_lyrics(self, opened):
+        self.lyrics_box.setVisibility(0 if opened else 8)
+        self.lyrics_arrow.setRotation(180.0 if opened else 0.0)
+
+    def find_lyrics(self):
+        """The lyrics extensions first, then LRCLIB; the text lands in the field, and is written with "Save"."""
+        title = str(self.fields["title"].getText()).strip()
+        artist = str(self.fields["artist"].getText()).strip()
+        album = str(self.fields["album"].getText()).strip()
+        duration = int(self.track.get("duration") or 0)
+        if not title:
+            self.say("Сначала укажи название песни.")
+            return
+        self.say("Ищу текст…")
+
+        def task(manager):
+            from .ext.lyrics import fetch_lyrics_raw
+            from .extensions import lyrics_text
+            value = manager.lyrics(title, artist, album, duration)
+            text = lyrics_text(value) if value else ""
+            if text:
+                return text, str(value.get("provider") or "расширения")
+            data = fetch_lyrics_raw(title, artist, duration)
+            text = (data.get("syncedLyrics") or data.get("plainLyrics") or "") if data else ""
+            return (text, "LRCLIB") if text else None
+
+        def done(found):
+            if not found:
+                self.say("Текст не нашёлся. Проверь название и исполнителя.")
+                return
+            self.fields["lyrics"].setText(found[0])
+            self.open_lyrics(True)
+            self.say("Текст из %s. Проверь и нажми «Сохранить»." % found[1])
+
+        self.run(task, done)
 
     def toggle_advanced(self):
         shown = self.advanced_box.getVisibility() == 0
@@ -312,12 +354,24 @@ class TagScreen(RemoteRows):
         self.advanced_box.setOrientation(1)
         self.advanced_box.setVisibility(8)
         filled = [label for key, label in tags.ADVANCED_FIELDS if self.before.get(key)]
-        hint = ("заполнено: %d из %d" % (len(filled), len(tags.ADVANCED_FIELDS))) if filled else "Номера, ISRC, композитор, лейбл, текст и другое"
+        hint = ("заполнено: %d из %d" % (len(filled), len(tags.ADVANCED_FIELDS))) if filled else "Номера, ISRC, композитор, лейбл и другое"
         self.advanced_row, self.advanced_arrow = self.fold_header(self.body, ("menu_tag_edit", "msg_edit"),
                                                                   "Расширенные теги", hint, self.toggle_advanced)
         for key, label in tags.ADVANCED_FIELDS:
             self.add_field(self.advanced_box, key, label)
         self.body.addView(self.advanced_box, Params(-1, -2))
+        has_text = bool(self.before.get("lyrics"))
+        self.lyrics_row, self.lyrics_arrow = self.fold_header(self.body, ("msg_photo_text2", "msg_edit"), "Текст песни",
+                                                              "Есть в файле" if has_text else "В файле нет текста", self.toggle_lyrics)
+        self.lyrics_box = jclass("android.widget.LinearLayout")(owner.context)
+        self.lyrics_box.setOrientation(1)
+        self.lyrics_box.setVisibility(8)
+        finder = self.pill("Найти текст в интернете", False, self.find_lyrics)
+        place = Params(-2, -2)
+        place.setMargins(_dp(20), _dp(12), _dp(20), 0)
+        self.lyrics_box.addView(finder, place)
+        self.add_field(self.lyrics_box, "lyrics", "Текст песни")
+        self.body.addView(self.lyrics_box, Params(-1, -2))
         save = self.pill("Сохранить", True, self.save)
         save.setContentDescription("Записать теги в файл")
         place = Params(-1, _dp(48))

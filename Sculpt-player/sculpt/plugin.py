@@ -13,7 +13,7 @@ from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -92,6 +92,10 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(settings, "onItemClick", (_java_class("org.telegram.ui.Components.UItem"), _java_class("android.view.View")),
                          SettingsClickHook(self, "onItemClick"))
             self.extensions = Extensions(self)
+            lyrics_view = _java_class("com.exteragram.messenger.player.ui.LyricsView")
+            self.install(lyrics_view, "setPosition", (JLong.TYPE, b), LyricsPositionHook(self, "lyricsPosition"))
+            self.install(lyrics_view, "setLyrics", (_java_class("com.exteragram.messenger.player.lyrics.Lyrics"), _java_class("java.lang.CharSequence")),
+                         LyricsSetHook(self, "setLyrics"))
             self.install(_java_class("com.exteragram.messenger.player.lyrics.LyricsRepository"), "requestLrclib",
                          (_java_class("com.exteragram.messenger.player.TrackQuery"),), LyricsHook(self, "requestLrclib"))
             self.add_menu_item(MenuItemData(
@@ -372,6 +376,8 @@ class SculptPlayerPlugin(BasePlugin):
             return
         player.visualizer.shader_key = None
         player.visualizer.settings = None
+        if player.effects is not None:
+            player.effects.align()
         player.apply_wave()
         player.layout.requestLayout()
         player.layout.invalidate()

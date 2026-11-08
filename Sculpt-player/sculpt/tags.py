@@ -19,8 +19,8 @@ except Exception:
 MAIN_FIELDS = (("title", "Название"), ("artist", "Исполнитель"), ("album", "Альбом"), ("date", "Год"), ("genre", "Жанр"))
 ADVANCED_FIELDS = (("albumartist", "Исполнитель альбома"), ("tracknumber", "Номер дорожки"), ("discnumber", "Номер диска"),
                    ("isrc", "ISRC"), ("composer", "Композитор"), ("lyricist", "Автор слов"), ("organization", "Лейбл"),
-                   ("copyright", "Копирайт"), ("bpm", "BPM"), ("comment", "Комментарий"), ("lyrics", "Текст песни"))
-FIELDS = MAIN_FIELDS + ADVANCED_FIELDS
+                   ("copyright", "Копирайт"), ("bpm", "BPM"), ("comment", "Комментарий"))
+FIELDS = MAIN_FIELDS + ADVANCED_FIELDS + (("lyrics", "Текст песни"),)
 MULTILINE = ("comment", "lyrics")
 
 
@@ -86,7 +86,23 @@ def read(path):
                     values[key] = str(found[0]).strip()
     except Exception as e:
         _log("tags read %s: %s" % (os.path.basename(path), e))
+    if not values["lyrics"]:
+        values["lyrics"] = _raw_lyrics(path)
     return values
+
+
+def _raw_lyrics(path):
+    """Lyrics under the other names containers keep them: UNSYNCEDLYRICS, USLT frames, the M4A atom."""
+    try:
+        tags_ = mutagen.File(path).tags
+        for key in list(tags_.keys()):
+            if str(key).upper().startswith("USLT") or str(key).upper() in ("LYRICS", "UNSYNCEDLYRICS", "\xa9LYR"):
+                value = tags_[key]
+                value = getattr(value, "text", value)
+                return str(value[0] if isinstance(value, (list, tuple)) and value else value).strip()
+    except Exception:
+        pass
+    return ""
 
 
 def from_item(item):
@@ -130,6 +146,12 @@ def _write(path, values, cover):
         except Exception as e:
             _log("tag %s: %s" % (key, e))  # some containers have no place for a field (ISRC in M4A)
     easy.save()
+    if "lyrics" in values and path.lower().endswith((".flac", ".ogg", ".opus")):
+        # the text is written as LYRICS: an older copy under the other name would come back
+        audio = mutagen.File(path)
+        if audio is not None and audio.tags is not None and "UNSYNCEDLYRICS" in [str(k).upper() for k in audio.tags.keys()]:
+            del audio["UNSYNCEDLYRICS"]
+            audio.save()
     if cover:
         _write_cover(path, cover)
 

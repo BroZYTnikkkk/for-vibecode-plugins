@@ -4,10 +4,11 @@ from android_utils import OnClickListener, run_on_ui_thread
 from java import jarray, jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, LYRICS_SHIFT, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
+from .lyrics_fx import LyricsEffects
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
@@ -19,7 +20,7 @@ class Player:
     """One open MusicPlayerSheet: its views and the ones this plugin adds to it."""
 
     NAMES = ("titleView", "artistView", "seekBar", "timeView", "durationView", "controlsView", "profileButton",
-             "lyricsButton", "queueButton", "moreButton", "speedButton", "repeatButton", "shuffleButton",
+             "lyricsView", "lyricsButton", "queueButton", "moreButton", "speedButton", "repeatButton", "shuffleButton",
              "collapseButton", "headerTitle", "headerSubtitle", "coverView")
 
     def __init__(self, plugin, sheet):
@@ -36,6 +37,7 @@ class Player:
         self.visualizer = None
         self.peeks = None
         self.taps = None
+        self.effects = None
         self.album_checked = 0.0
         self.tabs = []
         self.panel_top = 0
@@ -121,6 +123,8 @@ class Player:
         self.peeks = Peeks(self.plugin, self)
         self.taps = Taps(self.plugin, self)
         self.taps.attach()
+        self.effects = LyricsEffects(self.plugin, self)
+        self.effects.align()
         # the covers a first swipe shows are read now too: after Telegram restarts, no song starts to do it
         run_on_ui_thread(lambda: self.plugin.warm_neighbors(), 600)
         self.update_like()
@@ -382,6 +386,7 @@ class Player:
         if self.taps is not None:
             self.taps.detach()
             self.taps = None
+        self.effects = None
         self.menu_runs = []
 
     def run_later(self, action):
@@ -495,6 +500,32 @@ class Player:
             self.album.setText(text)
         self.recenter()
 
+    def lyrics_layout(self, progress):
+        """With the lyrics open the icon row goes, the title drops into its place, and the lyrics button stays, beside
+        the title where the ⋯ was: it is the way back. Runs after applyTransitions, which has just set these views."""
+        shift = _dp(LYRICS_SHIFT)
+        for view in (self.titleView, self.artistView):
+            view.setTranslationY(view.getTranslationY() + shift * progress)
+        fading = max(0.0, 1.0 - progress * 1.6)
+        for view in (self.like, self.add, self.speedButton, self.repeatButton, self.shuffleButton):
+            view.setAlpha(view.getAlpha() * fading)
+            view.setEnabled(progress < 0.5)
+        lyrics = self.lyricsButton
+        # counted from the places worked out here, not read from the views: on the first opening the player's own
+        # layout still holds the ⋯ in the header, and the button would follow it there
+        x, top = getattr(self, "lyrics_slot", (lyrics.getLeft(), lyrics.getTop()))
+        more_x, more_top = self.more_spot()
+        lyrics.setTranslationX((more_x - x) * progress)
+        lyrics.setTranslationY((more_top + shift - top) * progress)
+
+    def more_spot(self):
+        """Where the ⋯ belongs: beside the title and the author (Musicolet's place for it)."""
+        f = self.plugin.layout_fields
+        lay = self.layout
+        size = _dp(BUTTON)
+        right = f.int(lay, "paneLeft") + f.int(lay, "paneWidth") - _dp(MARGIN)
+        return right - size, f.int(lay, "titleTop") + (_dp(ARTIST_OFFSET) + _dp(TITLE_H) - size) // 2
+
     def recenter(self):
         """Beside the small cover in queue and lyrics: the text keeps close to the middle of the screen.
 
@@ -579,6 +610,7 @@ class Player:
         for tab in self.tabs:
             measure(tab, slot, _dp(PANEL_H))
         measure(self.divider, pane, max(1, _dp(1) // 2))
+        measure(self.lyricsView, self.lyricsView.getMeasuredWidth(), self.lyricsView.getMeasuredHeight() + _dp(LYRICS_SHIFT))
         measure(self.indicator, slot, _dp(2))
         for _, stack in self.stacks():
             if stack is not None:
@@ -599,6 +631,7 @@ class Player:
         size = _dp(BUTTON)
         x = left + 2 * self.step()
         self.lyricsButton.layout(x, top, x + size, top + size)
+        self.lyrics_slot = (x, top)
         # the queue is the first tab of the bottom panel now
         self.queueButton.layout(0, 0, 0, 0)
 
@@ -621,8 +654,7 @@ class Player:
         put(self.titleView, left + inset, title_top)
         put(self.artistView, left + inset - _dp(6), title_top + _dp(ARTIST_OFFSET))
         put(self.album, left + inset, title_top + _dp(ALBUM_OFFSET))
-        # Musicolet's place for the song's ⋯: beside the title and the author
-        put(self.moreButton, right - size, title_top + (_dp(ARTIST_OFFSET) + _dp(TITLE_H) - size) // 2)
+        put(self.moreButton, *self.more_spot())
 
         step = self.step()
         # the player's own heart adds to the Telegram profile; here that is a line in the plus's menu
@@ -646,6 +678,8 @@ class Player:
         pane_left = f.int(lay, "paneLeft")
         slot = f.int(lay, "paneWidth") // len(self.tabs)
         put(self.divider, pane_left, self.panel_top)
+        self.lyricsView.layout(self.lyricsView.getLeft(), self.lyricsView.getTop(), self.lyricsView.getRight(),
+                               self.lyricsView.getTop() + self.lyricsView.getMeasuredHeight())
         for index, tab in enumerate(self.tabs):
             put(tab, pane_left + index * slot, self.panel_top)
         self.place_indicator()

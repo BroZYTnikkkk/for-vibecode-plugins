@@ -9,6 +9,7 @@ from java import dynamic_proxy, jclass
 
 from .common import CONFIG, SETTINGS_SHEET, SHEET, RADIUS_LABELS, advanced, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _dp
 from .ext_ui import ExtScreen
+from .lyrics_fx import ALIGN_LABELS
 from .library_ui import Screen
 from .mornye_ui import MornyeView
 
@@ -204,6 +205,8 @@ class LookScreen(ExtScreen):
         self.native("getLyricsOnline", "setLyricsOnline", "Тексты из сети",
                     "Сначала расширения с текстами, если они установлены, затем LRCLIB.", "onLyricsOnlineChanged")
         self.lyrics_progress()
+        self.choice("lyrics_align", "Выравнивание текста", ALIGN_LABELS, 0)
+        self.choice("lyrics_vis", "Визуализатор при тексте", ("Над названием", "Сверху"), 0)
 
     def toggle(self, key, title, hint):
         switch = self.switch(self.plugin.get_setting(key, True), lambda on: self.save(key, on), title)

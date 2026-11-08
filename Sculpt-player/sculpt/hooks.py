@@ -111,6 +111,21 @@ class CoverRectHook(_Hook):
     def before_hooked_method(self, param):
         try:
             compact = float(param.args[4])
+            player = self.plugin.player
+            if compact > 0.0 and player is not None and player.effects is not None:
+                # toward the lyrics the cover does not shrink away: it grows and dissolves into the backdrop
+                f = self.plugin.layout_fields
+                lay = player.layout
+                size = f.float(lay, "coverSize")
+                grown = size * (1.0 + 0.6 * compact)
+                param.args[0] = JFloat(float(f.float(lay, "coverLeft") - (grown - size) / 2.0))
+                param.args[1] = JFloat(float(f.float(lay, "coverTop") - (grown - size) / 2.0))
+                param.args[2] = JFloat(float(grown))
+                param.args[3] = JFloat(float(_dp(self.plugin.cover_radius())))
+                param.args[4] = JFloat(0.0)
+                param.thisObject.setAlpha(max(0.0, 1.0 - compact * 1.6))
+                return
+            param.thisObject.setAlpha(1.0)
             radius = _dp(self.plugin.cover_radius()) * (1.0 - compact) + _dp(14) * compact
             param.args[3] = JFloat(float(radius))
         except Exception as e:
@@ -130,6 +145,7 @@ class TransitionsHook(_Hook):
                 player.like.setAlpha(alpha)
                 player.add.setAlpha(alpha)
                 player.recenter()
+                player.lyrics_layout(max(0.0, min(1.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress"))))
                 player.hide_panel(self.plugin.layout_fields.bool(player.layout, "keyboardLayout"))
         except Exception as e:
             self.fail(e)
@@ -144,6 +160,9 @@ class DrawHook(_Hook):
             if player is not None and player.visualizer is not None:
                 canvas = param.args[0]
                 visualizer = player.visualizer
+                progress = self.plugin.sheet_fields.float(player.sheet, "modeProgress")
+                if progress > 0.003 and player.effects is not None and not (player.library_visible() or player.queue_visible()):
+                    player.effects.draw(canvas, min(1.0, progress))
                 visualizer.draw(canvas)
                 if player.peeks is not None and not (player.library_visible() or player.queue_visible()):
                     player.peeks.draw(canvas, visualizer.colors)
@@ -183,6 +202,30 @@ class CoverSwapHook(_Hook):
             if self.swapped:
                 self.swapped = False
                 param.thisObject.refreshCover()
+        except Exception as e:
+            self.fail(e)
+
+
+class LyricsPositionHook(_Hook):
+    """LyricsView.setPosition: the lines' blur follows the current line."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.effects is not None:
+                player.effects.position(param.thisObject)
+        except Exception as e:
+            self.fail(e)
+
+
+class LyricsSetHook(_Hook):
+    """LyricsView.setLyrics: new line views, which take the chosen alignment."""
+
+    def after_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.effects is not None:
+                player.effects.lyrics_set(param.thisObject)
         except Exception as e:
             self.fail(e)
 
