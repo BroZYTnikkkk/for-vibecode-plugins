@@ -17,6 +17,9 @@ from .mornye_ui import MornyeView, SearchView
 from .settings_ui import SettingsView
 
 
+MENU_SWAP_MS = 180  # one menu closes before the other opens
+
+
 class Player:
     """One open MusicPlayerSheet: its views and the ones this plugin adds to it."""
 
@@ -53,6 +56,7 @@ class Player:
         self.mornye = None
         self.settings = None
         self.like = None
+        self.stock_menu_next = False
         self.add = None
         self.add_ring = None
         self.queue_screen = None
@@ -620,6 +624,26 @@ class Player:
                 measure(stack.root, pane, self.panel_top)
         if self.queue_screen is not None:
             measure(self.queue_screen.root, pane, self.panel_top)
+
+    def open_song_menu(self):
+        """True when the song's menu opened in place of the player's own."""
+        from .song_menu import PlayerSongMenu
+        if self.stock_menu_next:
+            self.stock_menu_next = False
+            return False
+        message = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+        if message is None:
+            return False
+        PlayerSongMenu(self, message).show()
+        return True
+
+    def open_stock_menu(self):
+        """The player's own ⋯ menu, once the song's menu has closed; ShowMenuHook lets this one through."""
+        def show():
+            self.stock_menu_next = True
+            self.plugin.sheet_method("showMenu").invoke(self.sheet)
+
+        run_on_ui_thread(show, MENU_SWAP_MS)
 
     def update_remote_button(self):
         """Only with a computer to steer."""

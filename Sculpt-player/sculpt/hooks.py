@@ -207,6 +207,18 @@ class CoverSwapHook(_Hook):
             self.fail(e)
 
 
+class ShowMenuHook(_Hook):
+    """MusicPlayerSheet.showMenu: the ⋯ opens the song's own menu; if that fails, the player's own one still opens."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.open_song_menu():
+                param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
 class LinkSourceHook(_Hook):
     """VideoPlayer.preparePlayer: a song from the computer starts from its empty marker file, and plays from the network."""
 

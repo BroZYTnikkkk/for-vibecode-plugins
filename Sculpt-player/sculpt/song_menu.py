@@ -3,13 +3,18 @@
 """A song's menu in the Queue tab, the way Musicolet has it: the title with a heart on top, then what to do."""
 
 import os
+from types import SimpleNamespace
 
 from android_utils import OnClickListener
 from java import jarray, jclass
 from java.lang import Integer as JInteger
 
-from .common import MEDIA_CONTROLLER, _ctx, _dp, _log
+from .common import MEDIA_CONTROLLER, _ctx, _dp, _java_class, _log
 from .library_ui import Run
+from .music import local_path
+
+
+TITLE_MAX_DP = 220
 
 
 def human_size(size):
@@ -69,6 +74,11 @@ class SongMenu:
         head.setPadding(_dp(18), _dp(10), _dp(8), _dp(6))
         title = self.screen.text(18, bold=True)
         title.setText(self.row.title or "Без названия")
+        # a long title runs by instead of stretching the menu across the screen
+        title.setMaxWidth(_dp(TITLE_MAX_DP))
+        title.setEllipsize(jclass("android.text.TextUtils$TruncateAt").MARQUEE)
+        title.setMarqueeRepeatLimit(-1)
+        title.setSelected(True)
         colors = self.screen.colors
         if colors is not None:
             title.setTextColor(colors.text)
@@ -287,3 +297,97 @@ class SongMenu:
         pending = MediaStore.createDeleteRequest(resolver, uris)
         activity.startIntentSenderForResult(pending.getIntentSender(), 7302, None, 0, 0, 0)
         _log("delete asked: %s" % os.path.basename(self.row.path))
+
+
+class PlayerMenuScreen:
+    """What a song's menu needs from the screen it opened on, for the menu opened from the player itself."""
+
+    def __init__(self, player):
+        self.player = player
+        self.plugin = player.plugin
+        self.context = player.context
+
+    @property
+    def colors(self):
+        return self.plugin.sheet_fields.get(self.player.sheet, "colors")
+
+    def resource(self, name):
+        return self.context.getResources().getIdentifier(name, "drawable", self.context.getPackageName())
+
+    def text(self, size, bold=False):
+        view = jclass("android.widget.TextView")(self.context)
+        view.setTextSize(1, float(size))
+        view.setSingleLine(True)
+        view.setEllipsize(jclass("android.text.TextUtils$TruncateAt").END)
+        if bold:
+            view.setTypeface(jclass("org.telegram.messenger.AndroidUtilities").bold())
+        return view
+
+    def guarded(self, action, *args):
+        try:
+            action(*args)
+        except Exception as e:
+            self.plugin.report("song menu", e)
+
+    def say(self, text, animation="info"):
+        self.plugin.bulletin(self.player.sheet, animation, text)
+
+
+class PlayerSongMenu(SongMenu):
+    """The ⋯ beside the title: everything here is about this song. The player's own settings are behind the gear."""
+
+    ITEM_OPTIONS = "org.telegram.ui.Components.ItemOptions"
+    MESSAGE = "org.telegram.messenger.MessageObject"
+
+    def __init__(self, player, message):
+        path = local_path(message)
+        track = player.plugin.music.by_path.get(path) if path else None
+        title, author = message.getMusicTitle(), message.getMusicAuthor()
+        row = SimpleNamespace(title=str(title) if title else "", artist=str(author) if author else "", album=(track or {}).get("album") or "",
+                              seconds=int(float(message.getDuration() or 0)), path=path, message=message)
+        super().__init__(PlayerMenuScreen(player), row, player.moreButton)
+
+    def stock(self, name, menu, message):
+        """One of the player's own builders, for what only Telegram knows how to do with a song in a chat."""
+        method = self.plugin.sheet_method(name, _java_class(self.ITEM_OPTIONS), _java_class(self.MESSAGE))
+        return method.invoke(self.player.sheet, menu, message)
+
+    def chat_items(self, menu, later):
+        message = self.row.message
+        actions = self.plugin.sheet_actions(self.player.sheet)
+        saving = self.stock("buildSaveOptions", menu, message)
+        menu.add(self.icon("msg_stories_save", "msg_download"), "Сохранить в…", later(lambda: menu.openSwipeback(saving)))
+        last = menu.getLast()
+        if last is not None:
+            last.setRightIcon(self.icon("msg_arrowright"))
+        self.stock("addForwardAndShare", menu, message)
+        menu.add(self.icon("menu_download_round", "msg_download"), "Сохранить в музыку", later(lambda: actions.saveToMusic(message)))
+        menu.add(self.icon("msg_message"), "Показать в чате", later(lambda: actions.showInChat(message)))
+
+    def show(self):
+        menu = self.plugin.sheet_menu(self.player.sheet, self.anchor, True)
+        self.menu = menu
+        later = self.player.start_menu()
+        on_phone = self.row.path is not None
+        menu.addView(self.header())
+        menu.add(self.icon("msg_info", "menu_info"), "Информация о песне", later(self.info))
+        if on_phone:
+            menu.add(self.icon("menu_tag_edit", "msg_edit"), "Изменить теги", later(self.edit_tags))
+        menu.addGap()
+        if on_phone:
+            menu.add(self.icon("msg_share"), "Поделиться", later(self.share))
+        else:
+            self.chat_items(menu, later)
+        stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
+        menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
+                 "Не останавливаться после этой песни" if stopping else "Остановиться после этой песни", later(self.stop_after))
+        if on_phone:
+            menu.addGap()
+            menu.add(self.icon("msg_delete"), "Удалить навсегда", later(self.delete))
+        # exteraGram's own menu, with whatever other plugins put there: people will look for its settings
+        menu.addGap()
+        menu.add(self.icon("msg_settings"), "Настройки плеера и плагины", later(self.player.open_stock_menu))
+        last = menu.getLast()
+        if last is not None:
+            last.setRightIcon(self.icon("msg_arrowright"))
+        self.player.show_menu(menu)

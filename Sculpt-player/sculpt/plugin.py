@@ -14,7 +14,7 @@ from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
-from .hooks import LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -66,6 +66,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(sheet, "applyColors", (colors,), ColorsHook(self, "applyColors"))
             self.install(sheet, "applySpeedColors", (colors,), SpeedColorsHook(self, "applySpeedColors"))
             self.install(sheet, "applyTransitions", (), TransitionsHook(self, "applyTransitions"))
+            self.install(sheet, "showMenu", (), ShowMenuHook(self, "showMenu"))
             self.install(sheet, "bindMessage", (b, b), BindHook(self, "bindMessage"))
             self.install(sheet, "updateRhythm", (), RhythmHook(self, "updateRhythm"))
             self.install(layout, "onDraw", (_java_class("android.graphics.Canvas"),), DrawHook(self, "onDraw"))

@@ -525,10 +525,14 @@ class QueueScreen:
             return
         menu = self.plugin.sheet_menu(self.player.sheet, self.picker, False)
         later = self.player.start_menu()
-        playing = self.resource("msg_played") or self.resource("player_new_play")
+        playing = self.resource("play_mini_video") or self.resource("ic_action_play")
         for index, entry in enumerate(self.store.entries):
-            mark = playing if entry["key"] == self.store.active else 0
-            menu.add(mark, "%d. %s" % (index + 1, entry["title"]), later(lambda k=entry["key"]: self.show_queue(k)))
+            menu.add(0, "%d. %s" % (index + 1, entry["title"]), later(lambda k=entry["key"]: self.show_queue(k)))
+            if entry["key"] == self.store.active:
+                # after the name, so that every queue's name starts at the same place
+                last = menu.getLast()
+                if last is not None:
+                    last.setRightIcon(playing)
         self.player.show_menu(menu)
 
     def show_queue(self, key):
