@@ -14,9 +14,11 @@ from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
 from .mornye_ui import MornyeView, SearchView
+from .playlists_ui import PlaylistsView, ask_name
 from .settings_ui import SettingsView
 
 
+CURRENT_SONG = object()  # add_playlist_item: not a song from a list, but the one that plays
 MENU_SWAP_MS = 180  # one menu closes before the other opens
 
 
@@ -54,6 +56,7 @@ class Player:
         self.search_tab = None
         self.search_shape = None
         self.mornye = None
+        self.playlists = None
         self.settings = None
         self.like = None
         self.stock_menu_next = False
@@ -64,7 +67,8 @@ class Player:
 
     # the tabs made of a stack of screens: panel index, attribute, class
     STACK_KINDS = ((PANEL_LIBRARY, "library", LibraryView), (PANEL_SEARCH, "search_tab", SearchView),
-                   (PANEL_MORNYE, "mornye", MornyeView), (PANEL_SETTINGS, "settings", SettingsView))
+                   (PANEL_PLAYLISTS, "playlists", PlaylistsView), (PANEL_MORNYE, "mornye", MornyeView),
+                   (PANEL_SETTINGS, "settings", SettingsView))
 
     def stacks(self):
         """The tabs made of a stack of screens, with their panel indexes: library, search, Mornye, settings."""
@@ -159,8 +163,6 @@ class Player:
         self.moreButton.bringToFront()
 
     def tab_pressed(self, index):
-        if index == PANEL_PLAYLISTS:
-            return  # a blank for now
         if index == self.active_tab:
             self.tab_again(index)
         else:
@@ -407,8 +409,12 @@ class Player:
         except Exception as e:
             self.plugin.report("menu", e)
 
-    def add_playlist_item(self, menu):
-        """Playlists are a blank for now: the list and its "create" button are in place, with nothing behind them."""
+    def add_playlist_item(self, menu, path=CURRENT_SONG):
+        """"To a playlist" with its list of playlists. path: the song's file, None for a chat's song, by default what plays."""
+        if path is CURRENT_SONG:
+            playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+            path = local_path(playing) if playing is not None else None
+        store = self.plugin.playlists
         res = self.context.getResources()
         package = self.context.getPackageName()
 
@@ -418,12 +424,35 @@ class Player:
         submenu = menu.makeSwipeback()
         submenu.add(icon("ic_ab_back"), "Назад", self.run_later(menu.closeSwipeback))
 
+        def say(text):
+            self.plugin.bulletin(self.sheet, "info", text)
+
+        def no_chat_songs():
+            say("Песни из Telegram сюда не добавляются: для них будет отдельный плейлист.")
+
+        def added_to(item):
+            say("Добавлено в «%s»." % item["name"])
+
         def create():
             menu.dismiss()
-            self.plugin.bulletin(self.sheet, "info", "Плейлисты появятся позже.")
+            if path is None:
+                no_chat_songs()
+                return
+            ask_name(self, "Новый плейлист", "", lambda name: added_to(store.create(name, [path])), "Создать")
+
+        def add_to(item):
+            menu.dismiss()
+            if path is None:
+                no_chat_songs()
+            elif store.add(item["id"], [path]):
+                added_to(item)
+            else:
+                say("Эта песня уже есть в «%s»." % item["name"])
 
         submenu.addGap()
         submenu.add(icon("msg_add"), "Создать плейлист", self.run_later(create))
+        for item in store.items:
+            submenu.add(0, item["name"], self.run_later(lambda chosen=item: add_to(chosen)))
         menu.add(icon("msg_addfolder"), "В плейлист", self.run_later(lambda: menu.openSwipeback(submenu)))
         last = menu.getLast()
         if last is not None:

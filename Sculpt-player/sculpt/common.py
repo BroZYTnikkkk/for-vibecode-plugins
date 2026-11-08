@@ -10,7 +10,7 @@ from java import jclass
 from ui.bulletin import BulletinHelper
 
 
-VERSION = "0.34.1"
+VERSION = "0.35.1"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -55,10 +55,10 @@ PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
 PANEL_SEARCH = 3  # in the middle of the panel and filled with the accent: songs to download, Mornye's search
-PANEL_PLAYLISTS = 4  # a blank for now
+PANEL_PLAYLISTS = 4
 PANEL_MORNYE = 5  # downloads and extensions from Mornye; search of one's own songs is in the library
 PANEL_SETTINGS = 6  # the gear in the panel's last place, where the player's ⋯ was; the ⋯ is beside the title now
-PANEL_STACKS = (PANEL_LIBRARY, PANEL_SEARCH, PANEL_MORNYE, PANEL_SETTINGS)  # tabs that are a stack of screens
+PANEL_STACKS = (PANEL_LIBRARY, PANEL_SEARCH, PANEL_PLAYLISTS, PANEL_MORNYE, PANEL_SETTINGS)  # tabs that are a stack of screens
 SEARCH_HISTORY = 8  # recent download searches kept on the Search tab
 ID_OPEN_SETTINGS = 9110  # the link from exteraGram's player settings sheet to this plugin's settings
 MODE_PLAYER, MODE_LYRICS, MODE_QUEUE = 0, 1, 2  # MusicPlayerSheet.mode

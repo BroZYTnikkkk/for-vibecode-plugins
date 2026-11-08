@@ -295,7 +295,8 @@ class QueueScreen:
         return self.store.find(self.shown_key)
 
     def is_active(self):
-        return self.shown_key is not None and self.shown_key == self.store.active
+        # after a restart the active queue is known but nothing plays: its songs are then the saved ones
+        return self.shown_key is not None and self.shown_key == self.store.active and self.controller().getPlayingMessageObject() is not None
 
     def number(self, key):
         for index, entry in enumerate(self.store.entries):
@@ -567,7 +568,19 @@ class QueueScreen:
         self.store.switch(entry["key"])
 
     def save_queue(self):
-        self.say("Сохранение очереди в плейлист появится вместе с плейлистами.")
+        tracks = self.library_tracks()
+        if not tracks:
+            self.say("Очередь из чата пока нельзя сохранить: для песен Telegram будет отдельный плейлист.")
+            return
+        from .playlists_ui import ask_name
+        entry = self.shown_entry()
+        title = entry["title"] if entry is not None else ""
+
+        def done(name):
+            self.plugin.playlists.create(name, [t["path"] for t in tracks])
+            self.say("Плейлист «%s» сохранён." % name)
+
+        ask_name(self.player, "Сохранить как плейлист", title, done)
 
     def library_tracks(self):
         """The shown queue as library songs, or None when it is a chat's queue."""

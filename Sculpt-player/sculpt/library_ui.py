@@ -1380,10 +1380,12 @@ class LibraryView:
     def make_menu(self, anchor, swipeback=True):
         return self.plugin.sheet_menu(self.player.sheet, anchor, swipeback)
 
-    def song_menu(self, anchor, track):
+    def song_menu(self, anchor, track, extra=None):
         path = track["path"]
         menu = self.make_menu(anchor)
         later = self.player.start_menu()
+        if extra is not None:
+            extra(menu, later)
         menu.add(self.resource("msg_info"), "Информация о песне", later(lambda: self.menu_action(menu, self.song_info, track)))
         menu.add(self.resource("menu_tag_edit") or self.resource("msg_edit"), "Изменить теги",
                  later(lambda: self.menu_action(menu, self.edit_tags, track["path"])))
@@ -1392,7 +1394,7 @@ class LibraryView:
         favorite = self.data.is_favorite(path)
         menu.add(self.resource("media_like_active" if favorite else "media_like"), "Убрать из любимых" if favorite else "В любимые",
                  later(lambda: self.menu_action(menu, self.toggle_favorite, path)))
-        self.player.add_playlist_item(menu)
+        self.player.add_playlist_item(menu, path)
         self.player.show_menu(menu)
 
     def menu_action(self, menu, action, *args):

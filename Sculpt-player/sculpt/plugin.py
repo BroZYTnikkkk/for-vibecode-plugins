@@ -14,6 +14,7 @@ from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
+from .playlists import PlaylistStore
 from .hooks import ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
@@ -29,6 +30,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.music = None
         self.link_share = None
         self.queues = None
+        self.playlists = None
         # "stop after this song": the song's identity, and the one that played last
         self.stop_after = None
         self.last_song = None
@@ -44,6 +46,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.music = MusicData(self)
             self.music.covers.on_extracted = self.cover_extracted
             self.queues = QueueStore(self)
+            self.playlists = PlaylistStore(self)
             self.listen = ListenTimer(self)
             self.layout_fields = Fields(LAYOUT)
             self.cover_fields = Fields(COVER)
@@ -268,6 +271,9 @@ class SculptPlayerPlugin(BasePlugin):
 
     def song_started(self):
         """After MediaController.playMessage: when the song marked "stop after" is over, the next one waits."""
+        if self.queues is not None:
+            self.queues.snapshot()  # the queue comes back at this song after a restart
+            self.queues.save()
         controller = jclass(MEDIA_CONTROLLER).getInstance()
         playing = controller.getPlayingMessageObject()
         now = self.song_identity(playing)

@@ -405,6 +405,11 @@ class MusicData:
         if share is not None:
             share.library_changed()
         player = self.plugin.player
+        queue = getattr(player, "queue_screen", None) if player is not None else None
+        if queue is not None:
+            # a saved queue is made of the library's songs: opened right after a start, it waits for them
+            queue.guarded(queue.refresh)
+        player = self.plugin.player
         if player is not None and player.library is not None:
             player.library.data_changed()
 

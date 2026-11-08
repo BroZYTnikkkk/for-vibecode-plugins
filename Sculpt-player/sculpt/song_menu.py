@@ -52,8 +52,7 @@ class SongMenu:
         menu.addGap()
         menu.add(self.icon("player_new_next", "msg_forward", "msg_arrowright"), "Играть после текущей", later(self.play_next))
         self.add_to_queue(menu, later)
-        menu.add(self.icon("msg_addfolder", "msg_add"), "В плейлист", later(
-            lambda: self.screen.say("Плейлисты появятся позже.")))
+        self.player.add_playlist_item(menu, self.row.path)
         menu.addGap()
         stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
         menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
