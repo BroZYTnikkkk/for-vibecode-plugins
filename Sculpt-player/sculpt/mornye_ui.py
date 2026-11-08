@@ -200,6 +200,11 @@ class MornyeView(LibraryView):
     def open_about(self):
         self.push(AboutScreen(self))
 
+    def open_link_remote(self, saved):
+        from .link_remote_ui import LinkRemoteScreen
+        self.to_root()
+        self.push(LinkRemoteScreen(self, saved))
+
     def open_mornye_link(self):
         from .link_ui import LinkScreen
         self.push(LinkScreen(self))

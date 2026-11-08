@@ -9,6 +9,7 @@ from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
 from .lyrics_fx import LyricsEffects
+from .link_stream import saved_server
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
 from .queue_ui import QueueScreen
@@ -104,6 +105,8 @@ class Player:
         self.volume = self._button(context, ("filled_sound_on", "msg_call_speaker"), "Громкость", self.plugin.show_volume)
         self.equalizer = self._button(context, ("msg_photo_settings", "msg_settings"), "Эквалайзер", self.plugin.show_equalizer)
 
+        self.remote_button = self._button(context, ("msg2_devices", "menu_devices"), "Пульт компьютера", self.open_link_remote)
+        self.update_remote_button()
         self.like = self._button(context, ("media_like",), "В любимые", self.like_pressed)
         self.add = self._button(context, ("msg_add",), "Добавить", self.add_pressed)
         self.add_ring = jclass("android.graphics.drawable.GradientDrawable")()
@@ -604,7 +607,7 @@ class Player:
         measure(self.timeView, _dp(TIME_WIDTH), _dp(18))
         measure(self.durationView, _dp(TIME_WIDTH), _dp(18))
         for button in (self.like, self.add, self.lyricsButton, self.queueButton, self.moreButton, self.speedButton,
-                       self.repeatButton, self.shuffleButton, self.volume, self.equalizer):
+                       self.repeatButton, self.shuffleButton, self.volume, self.equalizer, self.remote_button):
             measure(button, _dp(BUTTON), _dp(BUTTON))
         slot = pane // len(self.tabs)
         for tab in self.tabs:
@@ -617,6 +620,17 @@ class Player:
                 measure(stack.root, pane, self.panel_top)
         if self.queue_screen is not None:
             measure(self.queue_screen.root, pane, self.panel_top)
+
+    def update_remote_button(self):
+        """Only with a computer to steer."""
+        self.remote_button.setVisibility(0 if saved_server(self.plugin) is not None else 8)
+
+    def open_link_remote(self):
+        saved = saved_server(self.plugin)
+        if saved is None:
+            return
+        self.show_tab(PANEL_MORNYE)
+        self.mornye.open_link_remote(saved)
 
     def step(self):
         pane = self.plugin.layout_fields.int(self.layout, "paneWidth")
@@ -658,6 +672,8 @@ class Player:
 
         step = self.step()
         # the player's own heart adds to the Telegram profile; here that is a line in the plus's menu
+        # the top right corner, level with the arrow that closes the player
+        put(self.remote_button, right - size, f.int(lay, "contentTop") + (_dp(HEADER_H) - size) // 2)
         self.profileButton.layout(0, 0, 0, 0)
         put(self.like, left, toolbar_top)
         put(self.add, left + step, toolbar_top)

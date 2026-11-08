@@ -99,13 +99,18 @@ class Share:
         self.socket = None
         self.files = {}
         self.file_ids = {}
+        self.paths = {}
         self.remote = Remote(plugin, self)
         self.sending = set()
         self.run_id = 0
         self.timer = None
         self.on_status = None
+        self.desktop_listener = None
         self.status = "Песни телефона появятся в Mornye на компьютере, пока Telegram открыт."
         self.uploads = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="sculpt-link-up")
+
+    def path_of(self, file_id):
+        return self.paths.get(file_id)
 
     def enabled(self):
         return bool(self.plugin.get_setting(SETTING, False))
@@ -201,8 +206,13 @@ class Share:
         kind, name = message.get("type"), message.get("name")
         if kind != "player.state":
             _log("link: got %s %s" % (kind, name or message.get("action") or ""))
-        if kind == "welcome":
-            self.publish_in_background()
+        if kind == "player.state":
+            listener = self.desktop_listener
+            if listener is not None and isinstance(message.get("state"), dict):
+                listener(message["state"])
+        elif kind == "welcome":
+            if self.enabled():  # the connection may be here only for the remote screen
+                self.publish_in_background()
             self.remote.start_loop(sock, self.stopping)
         elif kind == "command":
             self.remote.command(message)
@@ -304,6 +314,7 @@ class Share:
             # first of all: the computer may already be asking for a song from the list it keeps
             self.files = {name: path for _, name, path in made}
             self.file_ids = {path: name.split(".")[0] for _, name, path in made}
+            self.paths = {file_id: path for path, file_id in self.file_ids.items()}
             songs, covers = [], {}
             for song, _, path in made:
                 if run != self.run_id:

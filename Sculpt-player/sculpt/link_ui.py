@@ -347,6 +347,7 @@ class LinkScreen(LinkBase):
         self.chosen = None
         self.status = "Подключено."
         self.render()
+        self.refresh_player_button()
         self.say("Компьютер %s подключён." % saved["name"], "contact_check")
 
     def failed(self, error):
@@ -374,12 +375,22 @@ class LinkScreen(LinkBase):
         switch = self.switch(share.enabled(), self.toggle_share, "Показывать песни на компьютере")
         _, _, self.share_label = self.item_row(body, "Показывать песни на компьютере", share.status, trailing=switch)
         share.on_status = self.share_status
-        self.section(body, "Песни компьютера")
+        self.section(body, "Компьютер")
+        self.nav_row(body, ("ic_action_play", "msg_play"), "Пульт компьютера", lambda: self.open_remote(saved))
         self.nav_row(body, ("msg_filled_music", "msg_music", "msg_audio"), "Песни компьютера",
                      lambda: self.owner.push(LinkSongsScreen(self.owner, saved)))
         self.connect_button = self.button(body, "Проверить связь", False, self.check)
         self.button(body, "Забыть компьютер", False, self.confirm_forget)
         self.check()
+
+    def refresh_player_button(self):
+        player = self.plugin.player
+        if player is not None:
+            player.update_remote_button()
+
+    def open_remote(self, saved):
+        from .link_remote_ui import LinkRemoteScreen
+        self.owner.push(LinkRemoteScreen(self.owner, saved))
 
     def share_status(self, text):
         if self.alive and self.share_label is not None:
@@ -436,6 +447,7 @@ class LinkScreen(LinkBase):
         self.gave_up = False
         self.found = {}
         self.render()
+        self.refresh_player_button()
         if self.finder is not None:
             self.finder.stop()
         self.start_search()
