@@ -8,37 +8,19 @@ import collections
 import json
 import re
 import threading
-import uuid
 
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 
-from . import link
+from . import link, link_share, link_stream
 from .common import _dp, _log
 from .ext_ui import ButtonClick, ExtScreen
+from .link_stream import SERVER_KEY, device_id, saved_server
 
 NSD = "android.net.nsd.NsdManager"
 PROTOCOL_DNS_SD = 1
-SERVER_KEY = "link_server"
-DEVICE_KEY = "link_device"
 ICONS = ("msg2_devices", "menu_devices", "msg_link")
 SEARCH_MS = 10000  # after this long without a computer the screen says so
-
-
-def saved_server(plugin):
-    try:
-        value = json.loads(plugin.get_setting(SERVER_KEY, "") or "null")
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) and value.get("apiKey") else None
-
-
-def device_id(plugin):
-    value = plugin.get_setting(DEVICE_KEY, "")
-    if not value:
-        value = str(uuid.uuid4())
-        plugin.set_setting(DEVICE_KEY, value)
-    return value
 
 
 def address_of(server):
@@ -145,36 +127,7 @@ class Finder:
         threading.Thread(target=check, name="sculpt-link-probe", daemon=True).start()
 
 
-class LinkScreen(ExtScreen):
-    def __init__(self, owner):
-        super().__init__(owner, "Mornye Link")
-        self.page()
-        self.plugin = owner.plugin
-        self.found = {}
-        self.chosen = None
-        self.busy = False
-        self.gave_up = False
-        self.status = None
-        self.found_box = None
-        self.address_field = None
-        self.pin_field = None
-        self.connect_button = None
-        self.busy_button = None
-        self.button_text = ""
-        self.status_label = None
-        self.finder = None
-        self.start_body()
-        self.render()
-        self.start_search()
-
-    def dispose(self):
-        if self.finder is not None:
-            self.finder.stop()
-            self.finder = None
-        super().dispose()
-
-    # -- off the UI thread
-
+class LinkBase(ExtScreen):
     def background(self, task, done, failed):
         def finish(action, value):
             run_on_ui_thread(lambda: self.guarded(action, value) if self.alive else None)
@@ -192,6 +145,65 @@ class LinkScreen(ExtScreen):
             finish(done, result)
 
         threading.Thread(target=go, name="sculpt-link", daemon=True).start()
+
+
+class LinkSongsScreen(LinkBase):
+    """The computer's songs, played through Telegram's own player."""
+
+    def __init__(self, owner, saved):
+        super().__init__(owner, "Песни компьютера", saved["name"])
+        self.page()
+        self.tracks = []
+        self.start_body()
+        self.waiting = self.note(self.body, "Загружаю список песен…", top=12)
+        self.background(lambda: link_stream.tracks_of(link.songs(saved)), self.show, self.broke)
+
+    def broke(self, error):
+        self.waiting.setText(str(error))
+
+    def show(self, tracks):
+        self.tracks = tracks
+        if not tracks:
+            self.waiting.setText("На компьютере пока нет песен.")
+            return
+        self.clear_body()
+        for index, track in enumerate(tracks):
+            self.item_row(self.body, track["title"], track["artist"], lambda i=index: self.play(i))
+
+    def play(self, index):
+        self.owner.play(self.tracks, index, "Компьютер")
+
+
+class LinkScreen(LinkBase):
+    def __init__(self, owner):
+        super().__init__(owner, "Mornye Link")
+        self.page()
+        self.plugin = owner.plugin
+        self.found = {}
+        self.chosen = None
+        self.busy = False
+        self.gave_up = False
+        self.status = None
+        self.found_box = None
+        self.address_field = None
+        self.pin_field = None
+        self.connect_button = None
+        self.busy_button = None
+        self.button_text = ""
+        self.status_label = None
+        self.share_label = None
+        self.finder = None
+        self.start_body()
+        self.render()
+        self.start_search()
+
+    def dispose(self):
+        if self.plugin.link_share.on_status == self.share_status:
+            self.plugin.link_share.on_status = None
+        if self.finder is not None:
+            self.finder.stop()
+            self.finder = None
+        super().dispose()
 
     def start_search(self):
         try:
@@ -330,6 +342,7 @@ class LinkScreen(ExtScreen):
 
     def paired(self, saved):
         self.set_busy(None)
+        link_stream.stop()  # a stream of the previous pairing must not outlive its key
         self.plugin.set_setting(SERVER_KEY, json.dumps(saved))
         self.chosen = None
         self.status = "Подключено."
@@ -356,10 +369,29 @@ class LinkScreen(ExtScreen):
         body = self.body
         self.item_row(body, saved["name"], address_of(saved), icons=ICONS)
         self.status_label = self.note(body, self.status or "Проверяю связь…", top=4)
-        self.note(body, "Песни компьютера и пульт появятся здесь следующими.")
+        self.section(body, "Песни телефона")
+        share = self.plugin.link_share
+        switch = self.switch(share.enabled(), self.toggle_share, "Показывать песни на компьютере")
+        _, _, self.share_label = self.item_row(body, "Показывать песни на компьютере", share.status, trailing=switch)
+        share.on_status = self.share_status
+        self.section(body, "Песни компьютера")
+        self.nav_row(body, ("msg_filled_music", "msg_music", "msg_audio"), "Песни компьютера",
+                     lambda: self.owner.push(LinkSongsScreen(self.owner, saved)))
         self.connect_button = self.button(body, "Проверить связь", False, self.check)
         self.button(body, "Забыть компьютер", False, self.confirm_forget)
         self.check()
+
+    def share_status(self, text):
+        if self.alive and self.share_label is not None:
+            self.share_label.setText(text)
+
+    def toggle_share(self, enabled):
+        share = self.plugin.link_share
+        self.plugin.set_setting(link_share.SETTING, bool(enabled))
+        if enabled:
+            share.start()
+        else:
+            share.stop(clear=True)
 
     def check(self):
         if self.busy:
@@ -395,6 +427,10 @@ class LinkScreen(ExtScreen):
             button.setTextColor(Theme.getColor(Theme.key_text_RedBold))
 
     def forget(self):
+        share = self.plugin.link_share
+        if share.enabled():
+            share.stop(clear=True)
+            self.plugin.set_setting(link_share.SETTING, False)
         self.plugin.set_setting(SERVER_KEY, "")
         self.status = None
         self.gave_up = False

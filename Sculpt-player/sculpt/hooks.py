@@ -7,6 +7,7 @@ from java import jclass
 from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
 from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp, _log
+from . import link_stream
 from .music import local_path
 
 
@@ -202,6 +203,21 @@ class CoverSwapHook(_Hook):
             if self.swapped:
                 self.swapped = False
                 param.thisObject.refreshCover()
+        except Exception as e:
+            self.fail(e)
+
+
+class LinkSourceHook(_Hook):
+    """VideoPlayer.preparePlayer: a song from the computer starts from its empty marker file, and plays from the network."""
+
+    def before_hooked_method(self, param):
+        try:
+            uri = param.args[0]
+            if uri is None or str(uri.getScheme()) != "file":
+                return
+            url = link_stream.stream_url(self.plugin, str(uri.getPath()))
+            if url is not None:
+                param.args[0] = jclass("android.net.Uri").parse(url)
         except Exception as e:
             self.fail(e)
 

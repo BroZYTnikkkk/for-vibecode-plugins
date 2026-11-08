@@ -401,6 +401,9 @@ class MusicData:
         self._notify()
 
     def _notify(self):
+        share = getattr(self.plugin, "link_share", None)
+        if share is not None:
+            share.library_changed()
         player = self.plugin.player
         if player is not None and player.library is not None:
             player.library.data_changed()

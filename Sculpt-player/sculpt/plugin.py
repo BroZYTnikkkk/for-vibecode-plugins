@@ -13,7 +13,8 @@ from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from . import link_share, link_stream
+from .hooks import LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -26,6 +27,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.reported = set()
         self.callbacks = []
         self.music = None
+        self.link_share = None
         self.queues = None
         # "stop after this song": the song's identity, and the one that played last
         self.stop_after = None
@@ -92,6 +94,11 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(settings, "onItemClick", (_java_class("org.telegram.ui.Components.UItem"), _java_class("android.view.View")),
                          SettingsClickHook(self, "onItemClick"))
             self.extensions = Extensions(self)
+            self.link_share = link_share.Share(self)
+            if self.link_share.enabled():
+                self.link_share.start()
+            self.install(_java_class("org.telegram.ui.Components.VideoPlayer"), "preparePlayer",
+                         (_java_class("android.net.Uri"), _java_class("java.lang.String")), LinkSourceHook(self, "preparePlayer"))
             lyrics_view = _java_class("com.exteragram.messenger.player.ui.LyricsView")
             self.install(lyrics_view, "setPosition", (JLong.TYPE, b), LyricsPositionHook(self, "lyricsPosition"))
             self.install(lyrics_view, "setLyrics", (_java_class("com.exteragram.messenger.player.lyrics.Lyrics"), _java_class("java.lang.CharSequence")),
@@ -133,6 +140,9 @@ class SculptPlayerPlugin(BasePlugin):
         if self.listen is not None:
             self.listen.stopped = True
         if self.extensions is not None:
+            if self.link_share is not None:
+                self.link_share.stop()
+            link_stream.stop()
             self.extensions.close()
 
     def open_from_menu(self):
