@@ -375,7 +375,7 @@ class ExtensionManager:
     # -- priorities and provider choice
 
     def priorities(self, kind):
-        provider = "download_provider" if kind == "download" else "metadata_provider"
+        provider = {"download": "download_provider", "lyrics": "lyrics_provider"}.get(kind, "metadata_provider")
         enabled = self.provider_ids(provider)
         ordered = [i for i in self.state["priorities"].get(kind, []) if i in enabled]
         return ordered + sorted(i for i in enabled if i not in ordered)
@@ -638,12 +638,10 @@ class ExtensionManager:
         return []
 
     def lyrics(self, track_name, artist, album="", duration_s=0):
-        for ext, m in sorted(self.manifests.items()):
-            if not (self.is_enabled(ext) and m.has_type("lyrics_provider")):
-                continue
+        for ext in self.priorities("lyrics"):
             try:
                 value = self.provider_call(ext, "fetchLyrics", [track_name, artist, album, int(duration_s or 0)], 20000)
-                if value and value.get("lines"):
+                if value and (value.get("lines") or value.get("instrumental") is True):
                     return value
             except Exception as e:
                 self.log(ext, "WARN", "lyrics failed: %s" % e)

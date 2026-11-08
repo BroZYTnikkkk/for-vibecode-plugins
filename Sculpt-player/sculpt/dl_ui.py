@@ -1087,7 +1087,7 @@ class DownloadSettingsScreen(ExtScreen):
     def refresh(self):
         def task(manager):
             names = {ext: man.display_name for ext, man in manager.manifests.items()}
-            return {"names": names, "download": manager.priorities("download"), "metadata": manager.priorities("metadata"),
+            return {"names": names, "download": manager.priorities("download"), "metadata": manager.priorities("metadata"), "lyrics": manager.priorities("lyrics"),
                     "service": manager.default_service(), "quality": manager.state.get("quality") or "LOSSLESS",
                     "fallback": manager.state.get("auto_fallback", True), "search": manager.state.get("search_provider") or "",
                     "searchers": manager.search_providers()}
@@ -1125,6 +1125,9 @@ class DownloadSettingsScreen(ExtScreen):
                    "Сверху тот, кого пробовать первым, когда основной не справился.")
         self.order("Приоритет метаданных", "metadata", data["metadata"], name,
                    "Чьи название, альбом, обложка и теги берутся первыми при поиске и скачивании.")
+        if data["lyrics"]:
+            self.order("Приоритет текстов", "lyrics", data["lyrics"], name,
+                       "У кого текст песни спрашивать первым. Если никто не нашёл, текст берётся из LRCLIB.")
 
     def choice(self, label, current, options, value, chosen):
         row, _, _ = self.item_row(self.body, label, current, None)

@@ -13,7 +13,7 @@ from .library_ui import Run
 from .player import Player
 from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
-from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -92,6 +92,8 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(settings, "onItemClick", (_java_class("org.telegram.ui.Components.UItem"), _java_class("android.view.View")),
                          SettingsClickHook(self, "onItemClick"))
             self.extensions = Extensions(self)
+            self.install(_java_class("com.exteragram.messenger.player.lyrics.LyricsRepository"), "requestLrclib",
+                         (_java_class("com.exteragram.messenger.player.TrackQuery"),), LyricsHook(self, "requestLrclib"))
             self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.DRAWER_MENU,
                 text="Sculpt Player",

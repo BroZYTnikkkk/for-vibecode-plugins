@@ -164,6 +164,21 @@ def download_dir():
         return fallback
 
 
+def lyrics_text(value):
+    """An extension's lines as the text exteraGram's parser reads: LRC when they are timed, plain lines when not."""
+    lines = [line for line in value.get("lines") or [] if isinstance(line, dict)]
+    timed = str(value.get("syncType") or "").upper() != "UNSYNCED" and any(int(line.get("startTimeMs") or 0) > 0 for line in lines)
+    out = []
+    for line in lines:
+        words = " ".join(str(line.get("words") or "").split())
+        if timed:
+            ms = int(line.get("startTimeMs") or 0)
+            out.append("[%02d:%02d.%02d]%s" % (ms // 60000, ms // 1000 % 60, ms % 1000 // 10, words))
+        elif words:
+            out.append(words)
+    return "\n".join(out)
+
+
 class Extensions:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -251,6 +266,22 @@ class Extensions:
                 from .ext.ext_manager import ExtensionManager
                 self.manager = ExtensionManager(self.root)
             return self.manager
+
+    def lyrics_for(self, query):
+        """On exteraGram's lyrics thread: the song's lyrics from the extensions, or None to let LRCLIB answer."""
+        manager = self.get()
+        if not manager.priorities("lyrics"):
+            return None
+        duration = int(query.duration())
+        value = manager.lyrics(str(query.title() or ""), str(query.artist() or ""), str(query.album() or ""), duration)
+        if not value:
+            return None
+        Lyrics = jclass("com.exteragram.messenger.player.lyrics.Lyrics")
+        name = str(value.get("provider") or "Расширение")
+        if value.get("instrumental") is True:
+            return Lyrics.instrumental(duration, name)
+        text = lyrics_text(value)
+        return Lyrics.parse(text, duration, name) if text else None
 
     def work(self, task, done=None, failed=None):
         """task(manager) on its own thread; done(result) or failed(message) back on the UI thread."""

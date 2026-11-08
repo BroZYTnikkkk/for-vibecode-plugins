@@ -6,7 +6,7 @@ from base_plugin import MethodHook
 from java import jclass
 from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
-from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp
+from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp, _log
 from .music import local_path
 
 
@@ -185,6 +185,18 @@ class CoverSwapHook(_Hook):
                 param.thisObject.refreshCover()
         except Exception as e:
             self.fail(e)
+
+
+class LyricsHook(_Hook):
+    """LyricsRepository.requestLrclib, on its own thread: the extensions are asked first, LRCLIB when they have nothing."""
+
+    def before_hooked_method(self, param):
+        try:
+            found = self.plugin.extensions.lyrics_for(param.args[0])
+            if found is not None:
+                param.setResult(found)
+        except Exception as e:
+            _log("lyrics from extensions: %s" % e)
 
 
 class CoverTouchHook(_Hook):
