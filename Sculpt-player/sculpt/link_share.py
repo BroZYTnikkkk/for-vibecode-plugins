@@ -19,6 +19,7 @@ from java import jclass
 
 from . import link
 from .common import VERSION, _log
+from .link_remote import Remote
 from .link_stream import device_id, saved_server
 
 SETTING = "link_share"
@@ -97,6 +98,8 @@ class Share:
         self.thread = None
         self.socket = None
         self.files = {}
+        self.file_ids = {}
+        self.remote = Remote(plugin, self)
         self.sending = set()
         self.run_id = 0
         self.timer = None
@@ -197,9 +200,12 @@ class Share:
     def handle(self, saved, sock, message):
         kind, name = message.get("type"), message.get("name")
         if kind != "player.state":
-            _log("link: got %s %s" % (kind, name or ""))
+            _log("link: got %s %s" % (kind, name or message.get("action") or ""))
         if kind == "welcome":
             self.publish_in_background()
+            self.remote.start_loop(sock, self.stopping)
+        elif kind == "command":
+            self.remote.command(message)
         elif kind == "files.request" and isinstance(name, str):
             with self.lock:
                 if name in self.sending:
@@ -297,6 +303,7 @@ class Share:
             made = [(song, name, path) for (result, path) in made if result is not None for song, name in (result,)]
             # first of all: the computer may already be asking for a song from the list it keeps
             self.files = {name: path for _, name, path in made}
+            self.file_ids = {path: name.split(".")[0] for _, name, path in made}
             songs, covers = [], {}
             for song, _, path in made:
                 if run != self.run_id:
