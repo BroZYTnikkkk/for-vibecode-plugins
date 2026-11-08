@@ -43,6 +43,7 @@ class MornyeRoot(Screen):
         page.addView(scroll, Params(-1, 0, 1.0))
         self.view = page
 
+        self.nav_row(content, ("msg2_devices", "menu_devices", "msg_link"), "Mornye Link", owner.open_mornye_link)
         self.nav_row(content, ("msg_download",), "Загрузки", owner.open_downloads)
         self.nav_row(content, ("msg_info",), "О Mornye", owner.open_about)
 
@@ -84,7 +85,7 @@ class AboutScreen(Screen):
         about = self.label(15, "textSecondary")
         about.setSingleLine(False)
         about.setText("Музыкальный плеер для Android и компьютера. Sculpt Player берёт из него расширения для скачивания, "
-                      "поиск метаданных и, позже, Mornye Link.")
+                      "поиск метаданных и Mornye Link.")
         self.text_block(about, 8)
 
         self.section("Автор")
@@ -198,6 +199,10 @@ class MornyeView(LibraryView):
 
     def open_about(self):
         self.push(AboutScreen(self))
+
+    def open_mornye_link(self):
+        from .link_ui import LinkScreen
+        self.push(LinkScreen(self))
 
     def open_link(self, url):
         """A Telegram link opens its chat, which lies under the player: the player steps aside first."""
