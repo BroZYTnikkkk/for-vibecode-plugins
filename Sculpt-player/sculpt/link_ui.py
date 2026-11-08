@@ -12,6 +12,7 @@ import threading
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 
+from .i18n import tr
 from . import link, link_share, link_stream
 from .common import _dp, _log
 from .ext_ui import ButtonClick, ExtScreen
@@ -140,7 +141,7 @@ class LinkBase(ExtScreen):
                 return
             except Exception as e:
                 _log("link: %s" % type(e).__name__)
-                finish(failed, link.LinkError("Не получилось связаться с компьютером. Попробуй ещё раз."))
+                finish(failed, link.LinkError(tr("Не получилось связаться с компьютером. Попробуй ещё раз.")))
                 return
             finish(done, result)
 
@@ -151,11 +152,11 @@ class LinkSongsScreen(LinkBase):
     """The computer's songs, played through Telegram's own player."""
 
     def __init__(self, owner, saved):
-        super().__init__(owner, "Песни компьютера", saved["name"])
+        super().__init__(owner, tr("Песни компьютера"), saved["name"])
         self.page()
         self.tracks = []
         self.start_body()
-        self.waiting = self.note(self.body, "Загружаю список песен…", top=12)
+        self.waiting = self.note(self.body, tr("Загружаю список песен…"), top=12)
         self.background(lambda: link_stream.tracks_of(link.songs(saved)), self.show, self.broke)
 
     def broke(self, error):
@@ -164,14 +165,14 @@ class LinkSongsScreen(LinkBase):
     def show(self, tracks):
         self.tracks = tracks
         if not tracks:
-            self.waiting.setText("На компьютере пока нет песен.")
+            self.waiting.setText(tr("На компьютере пока нет песен."))
             return
         self.clear_body()
         for index, track in enumerate(tracks):
             self.item_row(self.body, track["title"], track["artist"], lambda i=index: self.play(i))
 
     def play(self, index):
-        self.owner.play(self.tracks, index, "Компьютер")
+        self.owner.play(self.tracks, index, tr("Компьютер"))
 
 
 class LinkScreen(LinkBase):
@@ -271,16 +272,16 @@ class LinkScreen(LinkBase):
 
     def render_search(self):
         body = self.body
-        self.note(body, "Подключи Mornye на компьютере, чтобы слушать его песни и управлять им отсюда. Телефон и компьютер должны быть в одной сети.",
+        self.note(body, tr("Подключи Mornye на компьютере, чтобы слушать его песни и управлять им отсюда. Телефон и компьютер должны быть в одной сети."),
                   top=12)
-        self.section(body, "Компьютеры рядом")
+        self.section(body, tr("Компьютеры рядом"))
         self.found_box = jclass("android.widget.LinearLayout")(self.owner.context)
         self.found_box.setOrientation(1)
         body.addView(self.found_box, jclass("android.widget.LinearLayout$LayoutParams")(-1, -2))
         self.paint_found()
-        self.section(body, "Адрес вручную")
+        self.section(body, tr("Адрес вручную"))
         self.address_field = self.field(body, "192.168.0.10:47710", 1)
-        self.connect_button = self.button(body, "Найти компьютер", False, self.find_by_address)
+        self.connect_button = self.button(body, tr("Найти компьютер"), False, self.find_by_address)
 
     def paint_found(self):
         box = self.found_box
@@ -290,7 +291,7 @@ class LinkScreen(LinkBase):
         for server in self.found.values():
             self.item_row(box, server["name"], address_of(server), lambda s=server: self.choose(s), icons=ICONS)
         if not self.found:
-            self.note(box, "Компьютер не нашёлся. Открой на нём Mornye или введи адрес ниже." if self.gave_up else "Ищу компьютер с Mornye…", top=0)
+            self.note(box, tr("Компьютер не нашёлся. Открой на нём Mornye или введи адрес ниже.") if self.gave_up else tr("Ищу компьютер с Mornye…"), top=0)
 
     def find_by_address(self):
         if self.busy:
@@ -300,7 +301,7 @@ class LinkScreen(LinkBase):
         except link.LinkError as e:
             self.say(str(e))
             return
-        self.set_busy("Ищу…")
+        self.set_busy(tr("Ищу…"))
         self.background(lambda: link.probe(host, port), self.address_found, self.failed)
 
     def address_found(self, server):
@@ -314,14 +315,14 @@ class LinkScreen(LinkBase):
     def render_pin(self, server):
         body = self.body
         self.item_row(body, server["name"], address_of(server), icons=ICONS)
-        self.note(body, "На компьютере открой настройки Mornye Link и нажми «Pair a phone». Введи 6 цифр, которые он покажет.", top=4)
-        self.note(body, "Код безопасности на компьютере должен быть %s." % server["fingerprint"][:8])
-        self.section(body, "Код с компьютера")
+        self.note(body, tr("На компьютере открой настройки Mornye Link и нажми «Pair a phone». Введи 6 цифр, которые он покажет."), top=4)
+        self.note(body, tr("Код безопасности на компьютере должен быть %s.") % server["fingerprint"][:8])
+        self.section(body, tr("Код с компьютера"))
         self.pin_field = self.field(body, "000000", 2)
         length = jclass("android.text.InputFilter$LengthFilter")(6)
         self.pin_field.setFilters(jarray(jclass("android.text.InputFilter"))([length]))
-        self.connect_button = self.button(body, "Подключить", True, self.connect)
-        self.button(body, "Другой компьютер", False, self.back_to_search)
+        self.connect_button = self.button(body, tr("Подключить"), True, self.connect)
+        self.button(body, tr("Другой компьютер"), False, self.back_to_search)
 
     def back_to_search(self):
         self.chosen = None
@@ -332,10 +333,10 @@ class LinkScreen(LinkBase):
             return
         pin = str(self.pin_field.getText()).strip()
         if not re.fullmatch(r"\d{6}", pin):
-            self.say("Код состоит из 6 цифр.")
+            self.say(tr("Код состоит из 6 цифр."))
             return
         jclass("org.telegram.messenger.AndroidUtilities").hideKeyboard(self.pin_field)
-        self.set_busy("Подключаю…")
+        self.set_busy(tr("Подключаю…"))
         server, device = self.chosen, device_id(self.plugin)
         name = "Sculpt Player (%s)" % jclass("android.os.Build").MODEL
         self.background(lambda: link.pair(server, pin, device, name), self.paired, self.failed)
@@ -345,10 +346,10 @@ class LinkScreen(LinkBase):
         link_stream.stop()  # a stream of the previous pairing must not outlive its key
         self.plugin.set_setting(SERVER_KEY, json.dumps(saved))
         self.chosen = None
-        self.status = "Подключено."
+        self.status = tr("Подключено.")
         self.render()
         self.refresh_player_button()
-        self.say("Компьютер %s подключён." % saved["name"], "contact_check")
+        self.say(tr("Компьютер %s подключён.") % saved["name"], "contact_check")
 
     def failed(self, error):
         self.set_busy(None)
@@ -369,18 +370,18 @@ class LinkScreen(LinkBase):
     def render_paired(self, saved):
         body = self.body
         self.item_row(body, saved["name"], address_of(saved), icons=ICONS)
-        self.status_label = self.note(body, self.status or "Проверяю связь…", top=4)
-        self.section(body, "Песни телефона")
+        self.status_label = self.note(body, self.status or tr("Проверяю связь…"), top=4)
+        self.section(body, tr("Песни телефона"))
         share = self.plugin.link_share
-        switch = self.switch(share.enabled(), self.toggle_share, "Показывать песни на компьютере")
-        _, _, self.share_label = self.item_row(body, "Показывать песни на компьютере", share.status, trailing=switch)
+        switch = self.switch(share.enabled(), self.toggle_share, tr("Показывать песни на компьютере"))
+        _, _, self.share_label = self.item_row(body, tr("Показывать песни на компьютере"), share.status, trailing=switch)
         share.on_status = self.share_status
-        self.section(body, "Компьютер")
-        self.nav_row(body, ("ic_action_play", "msg_play"), "Пульт компьютера", lambda: self.open_remote(saved))
-        self.nav_row(body, ("msg_filled_music", "msg_music", "msg_audio"), "Песни компьютера",
+        self.section(body, tr("Компьютер"))
+        self.nav_row(body, ("ic_action_play", "msg_play"), tr("Пульт компьютера"), lambda: self.open_remote(saved))
+        self.nav_row(body, ("msg_filled_music", "msg_music", "msg_audio"), tr("Песни компьютера"),
                      lambda: self.owner.push(LinkSongsScreen(self.owner, saved)))
-        self.connect_button = self.button(body, "Проверить связь", False, self.check)
-        self.button(body, "Забыть компьютер", False, self.confirm_forget)
+        self.connect_button = self.button(body, tr("Проверить связь"), False, self.check)
+        self.button(body, tr("Забыть компьютер"), False, self.confirm_forget)
         self.check()
 
     def refresh_player_button(self):
@@ -410,12 +411,12 @@ class LinkScreen(LinkBase):
         saved = saved_server(self.plugin)
         if saved is None:
             return
-        self.set_busy("Проверяю…")
+        self.set_busy(tr("Проверяю…"))
         self.background(lambda: link.ping(saved), self.answered, self.silent)
 
     def answered(self, _):
         self.set_busy(None)
-        self.status = "На связи."
+        self.status = tr("На связи.")
         self.status_label.setText(self.status)
 
     def silent(self, error):
@@ -426,10 +427,10 @@ class LinkScreen(LinkBase):
     def confirm_forget(self):
         saved = saved_server(self.plugin)
         builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(self.owner.context)
-        builder.setTitle("Забыть «%s»?" % saved["name"])
-        builder.setMessage("Телефон отключится от этого компьютера. В списке устройств на компьютере он останется, убрать его можно там.")
-        builder.setPositiveButton("Забыть", ButtonClick(self.forget))
-        builder.setNegativeButton("Отмена", ButtonClick(None))
+        builder.setTitle(tr("Забыть «%s»?") % saved["name"])
+        builder.setMessage(tr("Телефон отключится от этого компьютера. В списке устройств на компьютере он останется, убрать его можно там."))
+        builder.setPositiveButton(tr("Забыть"), ButtonClick(self.forget))
+        builder.setNegativeButton(tr("Отмена"), ButtonClick(None))
         dialog = builder.create()
         dialog.show()
         button = dialog.getButton(-1)

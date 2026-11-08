@@ -9,6 +9,8 @@ import uuid
 
 from client_utils import run_on_queue
 
+from . import chat_songs
+
 FILE = "playlists.json"
 VERSION = 1
 KIND_FILE = "file"
@@ -19,12 +21,13 @@ class PlaylistStore:
         self.plugin = plugin
         saved = plugin.music._load(FILE, {})
         self.items = [item for item in (saved.get("items") or []) if isinstance(item, dict) and item.get("id")] if isinstance(saved, dict) else []
+        self.telegram = [s for s in (saved.get("telegram") or []) if isinstance(s, dict) and s.get("id")] if isinstance(saved, dict) else []
 
     def find(self, playlist_id):
         return next((item for item in self.items if item["id"] == playlist_id), None)
 
     def changed(self):
-        data = {"version": VERSION, "items": [dict(item, songs=list(item["songs"])) for item in self.items]}
+        data = {"version": VERSION, "items": [dict(item, songs=list(item["songs"])) for item in self.items], "telegram": list(self.telegram)}
         run_on_queue(lambda: self.plugin.music._save(FILE, data))
         player = self.plugin.player
         view = getattr(player, "playlists", None) if player is not None else None
@@ -74,6 +77,19 @@ class PlaylistStore:
     def delete(self, playlist_id):
         """The playlist only: the songs stay on the phone."""
         self.items = [item for item in self.items if item["id"] != playlist_id]
+        self.changed()
+
+    def add_telegram(self, message):
+        """A song from a chat, into the one list of such songs; False when it is already there."""
+        ref = chat_songs.ref_of(message)
+        if any(chat_songs.key_of(song) == chat_songs.key_of(ref) for song in self.telegram):
+            return False
+        self.telegram.insert(0, ref)
+        self.changed()
+        return True
+
+    def remove_telegram(self, key):
+        self.telegram = [song for song in self.telegram if chat_songs.key_of(song) != key]
         self.changed()
 
     def tracks(self, playlist_id):

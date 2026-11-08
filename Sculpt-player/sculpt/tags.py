@@ -9,6 +9,7 @@ import shutil
 
 from java import jarray, jbyte, jclass
 
+from .i18n import tr
 from .common import _ctx, _log
 
 try:
@@ -16,11 +17,11 @@ try:
 except Exception:
     mutagen = None
 
-MAIN_FIELDS = (("title", "Название"), ("artist", "Исполнитель"), ("album", "Альбом"), ("date", "Год"), ("genre", "Жанр"))
-ADVANCED_FIELDS = (("albumartist", "Исполнитель альбома"), ("tracknumber", "Номер дорожки"), ("discnumber", "Номер диска"),
-                   ("isrc", "ISRC"), ("composer", "Композитор"), ("lyricist", "Автор слов"), ("organization", "Лейбл"),
-                   ("copyright", "Копирайт"), ("bpm", "BPM"), ("comment", "Комментарий"))
-FIELDS = MAIN_FIELDS + ADVANCED_FIELDS + (("lyrics", "Текст песни"),)
+MAIN_FIELDS = (("title", tr("Название")), ("artist", tr("Исполнитель")), ("album", tr("Альбом")), ("date", tr("Год")), ("genre", tr("Жанр")))
+ADVANCED_FIELDS = (("albumartist", tr("Исполнитель альбома")), ("tracknumber", tr("Номер дорожки")), ("discnumber", tr("Номер диска")),
+                   ("isrc", "ISRC"), ("composer", tr("Композитор")), ("lyricist", tr("Автор слов")), ("organization", tr("Лейбл")),
+                   ("copyright", tr("Копирайт")), ("bpm", "BPM"), ("comment", tr("Комментарий")))
+FIELDS = MAIN_FIELDS + ADVANCED_FIELDS + (("lyrics", tr("Текст песни")),)
 MULTILINE = ("comment", "lyrics")
 
 
@@ -133,7 +134,7 @@ def fetch_cover(url):
 def _write(path, values, cover):
     easy = mutagen.File(path, easy=True)
     if easy is None:
-        raise ValueError("Этот формат файла не поддерживает теги.")
+        raise ValueError(tr("Этот формат файла не поддерживает теги."))
     if easy.tags is None:
         easy.add_tags()
     for key, value in values.items():
@@ -213,7 +214,7 @@ def save(path, values, cover=None):
     """Writes the tags (and the cover). A file another app owns is written through MediaStore, which Android allows
     only after it asked the person (request_access); until then this raises PermissionError."""
     if mutagen is None:
-        raise RuntimeError("Нет библиотеки mutagen: теги не записать.")
+        raise RuntimeError(tr("Нет библиотеки mutagen: теги не записать."))
     try:
         _write(path, values, cover)
         return

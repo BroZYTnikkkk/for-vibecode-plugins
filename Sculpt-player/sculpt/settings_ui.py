@@ -7,6 +7,7 @@ Only sections with something in them are listed; playback and sound join when th
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jclass
 
+from .i18n import tr
 from .common import CONFIG, SETTINGS_SHEET, SHEET, RADIUS_LABELS, advanced, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _dp
 from .ext_ui import ExtScreen
 from .lyrics_fx import ALIGN_LABELS
@@ -16,7 +17,7 @@ from .mornye_ui import MornyeView
 
 SPOTIFY_REPO = "com.exteragram.messenger.player.motion.SpotifyCanvasRepository"
 SPOTIFY_AUTH = "com.exteragram.messenger.player.motion.SpotifyAuth"
-LYRICS_PROGRESS = ("Выключен", "По горизонтали", "По вертикали")
+LYRICS_PROGRESS = (tr("Выключен"), tr("По горизонтали"), tr("По вертикали"))
 
 
 class SpotifyLogin(dynamic_proxy(jclass(SPOTIFY_AUTH + "$Callback"))):
@@ -51,7 +52,7 @@ def sheet_options(plugin, sheet):
 
 class SettingsRoot(Screen):
     def __init__(self, owner):
-        super().__init__(owner, "Настройки")
+        super().__init__(owner, tr("Настройки"))
         LinearLayout = jclass("android.widget.LinearLayout")
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         page = LinearLayout(owner.context)
@@ -66,14 +67,14 @@ class SettingsRoot(Screen):
         scroll.addView(content)
         page.addView(scroll, Params(-1, 0, 1.0))
         self.view = page
-        self.nav_row(content, ("msg_photo_settings", "msg_settings"), "Вид плеера", owner.open_look)
-        self.nav_row(content, ("msg_voice_headphones", "filled_sound_on"), "Звук", owner.open_sound)
-        self.nav_row(content, ("msg_download",), "Скачивание", owner.open_download_settings)
-        self.nav_row(content, ("msg_plugins", "msg_bots"), "Расширения", owner.open_extensions)
-        self.nav_row(content, ("msg_info",), "О Mornye", owner.open_about)
+        self.nav_row(content, ("msg_photo_settings", "msg_settings"), tr("Вид плеера"), owner.open_look)
+        self.nav_row(content, ("msg_voice_headphones", "filled_sound_on"), tr("Звук"), owner.open_sound)
+        self.nav_row(content, ("msg_download",), tr("Скачивание"), owner.open_download_settings)
+        self.nav_row(content, ("msg_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)
+        self.nav_row(content, ("msg_info",), tr("О Mornye"), owner.open_about)
         note = self.label(13, "textSecondary")
         note.setSingleLine(False)
-        note.setText("Воспроизведение появится здесь вместе с таймером сна и кроссфейдом.")
+        note.setText(tr("Воспроизведение появится здесь вместе с таймером сна и кроссфейдом."))
         note.setPadding(_dp(20), _dp(16), _dp(20), 0)
         content.addView(note, Params(-1, -2))
 
@@ -82,7 +83,7 @@ class LookScreen(ExtScreen):
     """The player's look: the visualizer, the cover, the progress line. Each change shows in the player at once."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Вид плеера")
+        super().__init__(owner, tr("Вид плеера"))
         self.plugin = owner.plugin
         self.options = None
         self.page()
@@ -111,7 +112,7 @@ class LookScreen(ExtScreen):
         config = jclass(CONFIG)
         value = int(config.getLyricsProgress())
         current = LYRICS_PROGRESS[value] if 0 <= value < len(LYRICS_PROGRESS) else LYRICS_PROGRESS[0]
-        row, _, _ = self.item_row(self.body, "Прогресс строки", current, None)
+        row, _, _ = self.item_row(self.body, tr("Прогресс строки"), current, None)
         row.setBackground(self.owner.selector(0))
         self.click(row, self.progress_menu, row, value)
 
@@ -145,9 +146,9 @@ class LookScreen(ExtScreen):
             self.notify("onSpotifyCanvasChanged")
 
         switch = self.switch(bool(config.getPlayerSpotifyCanvas()) and logged, changed, "Spotify Canvas")
-        self.item_row(self.body, "Spotify Canvas", "Короткие видео вместо обложки. Нужен вход в Spotify.", trailing=switch)
+        self.item_row(self.body, "Spotify Canvas", tr("Короткие видео вместо обложки. Нужен вход в Spotify."), trailing=switch)
         if logged:
-            self.item_row(self.body, "Выйти из Spotify", None, self.spotify_logout)
+            self.item_row(self.body, tr("Выйти из Spotify"), None, self.spotify_logout)
 
     def spotify_answered(self, ok):
         if not self.alive:
@@ -156,16 +157,16 @@ class LookScreen(ExtScreen):
             jclass(CONFIG).setPlayerSpotifyCanvas(True)
             self.notify("onSpotifyCanvasChanged")
         else:
-            self.say("Не получилось войти в Spotify. Попробуй ещё раз.")
+            self.say(tr("Не получилось войти в Spotify. Попробуй ещё раз."))
         self.guarded(self.show)
 
     def spotify_logout(self):
         from .player_taps import DialogButton
         builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(self.owner.context)
-        builder.setTitle("Выйти из Spotify?")
-        builder.setMessage("Spotify Canvas выключится, пока ты не войдёшь снова.")
-        builder.setPositiveButton("Выйти", DialogButton(lambda: self.guarded(self.spotify_left)))
-        builder.setNegativeButton("Отмена", DialogButton(None))
+        builder.setTitle(tr("Выйти из Spotify?"))
+        builder.setMessage(tr("Spotify Canvas выключится, пока ты не войдёшь снова."))
+        builder.setPositiveButton(tr("Выйти"), DialogButton(lambda: self.guarded(self.spotify_left)))
+        builder.setNegativeButton(tr("Отмена"), DialogButton(None))
         builder.show()
 
     def spotify_left(self):
@@ -176,37 +177,37 @@ class LookScreen(ExtScreen):
 
     def show(self):
         self.clear_body()
-        self.section(self.body, "Визуализатор")
-        self.toggle("vis_top", "Над обложкой", "Столбики растут вверх от края обложки.")
-        self.toggle("vis_bottom", "Под обложкой", "Столбики растут вниз от края обложки.")
-        self.choice("vis_style", "Форма столбиков", VIS_STYLES, 0)
-        self.choice("vis_height", "Высота", VIS_HEIGHTS, 1)
-        self.choice("vis_density", "Количество", VIS_DENSITIES, 1)
-        self.choice("vis_color_mode", "Цвет", VIS_COLORS, 0)
-        self.section(self.body, "Обложка")
-        self.choice("cover_radius", "Скругление углов", RADIUS_LABELS, 1)
-        self.native("getPlayerCoverColors", "setPlayerCoverColors", "Цвета обложки в плеере",
-                    "Плеер окрашивается в цвета обложки.", "onCoverColorsChanged")
-        self.native("getPlayerMiniCoverColors", "setPlayerMiniCoverColors", "Цвета обложки в мини-плеере",
-                    "Мини-плеер в чатах окрашивается в цвета обложки.", "onCoverColorsChanged")
-        self.native("getPlayerMotionCovers", "setPlayerMotionCovers", "Живые обложки",
-                    "Анимированные обложки там, где они есть.", "onMotionCoversChanged")
-        self.section(self.body, "Фон")
-        self.toggle("glow_under_tabs", "Живое свечение под вкладками",
-                    "Фон плеера продолжает двигаться под Медиатекой, Поиском и другими вкладками. "
-                    "Выключи, если телефон греется: тогда свечение под вкладками замирает.")
-        self.native("getPlayerRhythmBackground", "setPlayerRhythmBackground", "Фон в такт музыке",
-                    "Свечение за обложкой двигается под музыку.", "onRhythmBackgroundChanged")
-        self.native("getPlayerParticles", "setPlayerParticles", "Частицы", "Частицы на фоне плеера.", "onRhythmBackgroundChanged")
-        self.section(self.body, "Прогресс")
-        self.toggle("flat_seek", "Ровная линия", "Выключено: волна, как в обычном плеере exteraGram.")
+        self.section(self.body, tr("Визуализатор"))
+        self.toggle("vis_top", tr("Над обложкой"), tr("Столбики растут вверх от края обложки."))
+        self.toggle("vis_bottom", tr("Под обложкой"), tr("Столбики растут вниз от края обложки."))
+        self.choice("vis_style", tr("Форма столбиков"), VIS_STYLES, 0)
+        self.choice("vis_height", tr("Высота"), VIS_HEIGHTS, 1)
+        self.choice("vis_density", tr("Количество"), VIS_DENSITIES, 1)
+        self.choice("vis_color_mode", tr("Цвет"), VIS_COLORS, 0)
+        self.section(self.body, tr("Обложка"))
+        self.choice("cover_radius", tr("Скругление углов"), RADIUS_LABELS, 1)
+        self.native("getPlayerCoverColors", "setPlayerCoverColors", tr("Цвета обложки в плеере"),
+                    tr("Плеер окрашивается в цвета обложки."), "onCoverColorsChanged")
+        self.native("getPlayerMiniCoverColors", "setPlayerMiniCoverColors", tr("Цвета обложки в мини-плеере"),
+                    tr("Мини-плеер в чатах окрашивается в цвета обложки."), "onCoverColorsChanged")
+        self.native("getPlayerMotionCovers", "setPlayerMotionCovers", tr("Живые обложки"),
+                    tr("Анимированные обложки там, где они есть."), "onMotionCoversChanged")
+        self.section(self.body, tr("Фон"))
+        self.toggle("glow_under_tabs", tr("Живое свечение под вкладками"),
+                    tr("Фон плеера продолжает двигаться под Медиатекой, Поиском и другими вкладками. "
+                    "Выключи, если телефон греется: тогда свечение под вкладками замирает."))
+        self.native("getPlayerRhythmBackground", "setPlayerRhythmBackground", tr("Фон в такт музыке"),
+                    tr("Свечение за обложкой двигается под музыку."), "onRhythmBackgroundChanged")
+        self.native("getPlayerParticles", "setPlayerParticles", tr("Частицы"), tr("Частицы на фоне плеера."), "onRhythmBackgroundChanged")
+        self.section(self.body, tr("Прогресс"))
+        self.toggle("flat_seek", tr("Ровная линия"), tr("Выключено: волна, как в обычном плеере exteraGram."))
         self.spotify()
-        self.section(self.body, "Текст песни")
-        self.native("getLyricsOnline", "setLyricsOnline", "Тексты из сети",
-                    "Сначала расширения с текстами, если они установлены, затем LRCLIB.", "onLyricsOnlineChanged")
+        self.section(self.body, tr("Текст песни"))
+        self.native("getLyricsOnline", "setLyricsOnline", tr("Автоматический поиск текста"),
+                    tr("Если в файле нет текста, он ищется сам: сначала в расширениях с текстами, затем на LRCLIB и lrcmux."), "onLyricsOnlineChanged")
         self.lyrics_progress()
-        self.choice("lyrics_align", "Выравнивание текста", ALIGN_LABELS, 0)
-        self.choice("lyrics_vis", "Визуализатор при тексте", ("Над названием", "Сверху"), 0)
+        self.choice("lyrics_align", tr("Выравнивание текста"), ALIGN_LABELS, 0)
+        self.choice("lyrics_vis", tr("Визуализатор при тексте"), (tr("Над названием"), tr("Сверху")), 0)
 
     def toggle(self, key, title, hint):
         switch = self.switch(self.plugin.get_setting(key, True), lambda on: self.save(key, on), title)
@@ -237,19 +238,19 @@ class SoundScreen(ExtScreen):
     """Sound: for now the switch that shows the details of sound to those who want them."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Звук")
+        super().__init__(owner, tr("Звук"))
         self.plugin = owner.plugin
         self.page()
-        switch = self.switch(advanced(self.plugin), self.changed, "Расширенный режим")
-        self.item_row(self.content, "Расширенный режим",
-                      "Показывает форматы и качество (FLAC, Hi-Res, битность, частота), порядок сервисов и источников "
-                      "метаданных, репозитории и журналы расширений. Без него всё названо простыми словами.",
+        switch = self.switch(advanced(self.plugin), self.changed, tr("Расширенный режим"))
+        self.item_row(self.content, tr("Расширенный режим"),
+                      tr("Показывает форматы и качество (FLAC, Hi-Res, битность, частота), порядок сервисов и источников "
+                      "метаданных, репозитории и журналы расширений. Без него всё названо простыми словами."),
                       trailing=switch)
-        self.note(self.content, "Эквалайзер и громкость пока — кнопками в самом плеере, по краям от кнопок управления.", top=16)
+        self.note(self.content, tr("Эквалайзер и громкость пока — кнопками в самом плеере, по краям от кнопок управления."), top=16)
 
     def changed(self, on):
         self.plugin.set_setting("advanced_mode", bool(on))
-        self.say("Расширенный режим включён" if on else "Расширенный режим выключен")
+        self.say(tr("Расширенный режим включён") if on else tr("Расширенный режим выключен"))
 
 
 class SettingsView(MornyeView):

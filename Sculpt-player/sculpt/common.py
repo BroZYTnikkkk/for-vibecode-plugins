@@ -8,9 +8,10 @@ import traceback
 from android_utils import copy_to_clipboard
 from java import jclass
 from ui.bulletin import BulletinHelper
+from .i18n import tr
 
 
-VERSION = "0.35.1"
+VERSION = "0.37.1"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -24,7 +25,7 @@ SETTINGS_SHEET = "com.exteragram.messenger.player.ui.PlayerSettingsSheet"
 RHYTHM_TAP = "com.exteragram.messenger.player.rhythm.RhythmTap"
 RHYTHM_ANALYZER = "com.exteragram.messenger.player.rhythm.RhythmAnalyzer"
 
-RADIUS_LABELS = ["Нет", "8 dp", "16 dp", "28 dp"]
+RADIUS_LABELS = [tr("Нет"), "8 dp", "16 dp", "28 dp"]
 RADIUS_VALUES = [0.0, 8.0, 16.0, 28.0]
 
 MARGIN = 24.0  # side gutters of the whole player
@@ -43,13 +44,13 @@ PANEL_H = 56.0
 LYRICS_SHIFT = 62.0  # how far the title drops with the lyrics open, into the place of the icon row
 # the bottom panel, left to right; ⋮ is the player's own button and takes the last slot
 PANEL_TABS = (
-    ("Очередь", ("player_new_queue",)),
-    ("Плеер", ("tab_music", "msg_filled_data_music", "msg_played")),
-    ("Медиатека", ("msg_folders", "msg2_folder")),
-    ("Поиск", ("outline_search_1_24", "msg_search")),
-    ("Плейлисты", ("files_music", "filled_widget_music")),
+    (tr("Очередь"), ("player_new_queue",)),
+    (tr("Плеер"), ("tab_music", "msg_filled_data_music", "msg_played")),
+    (tr("Медиатека"), ("msg_folders", "msg2_folder")),
+    (tr("Поиск"), ("outline_search_1_24", "msg_search")),
+    (tr("Плейлисты"), ("files_music", "filled_widget_music")),
     ("Mornye", ("menu_download_round", "msg_download")),
-    ("Настройки", ("msg_settings",)),
+    (tr("Настройки"), ("msg_settings",)),
 )
 PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
 PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
@@ -71,11 +72,11 @@ HEADER_H = 56.0  # the player's own header, same as PlayerLayout's
 ID_VIS_TOP, ID_VIS_BOTTOM, ID_FLAT_SEEK = 9101, 9102, 9103
 ID_VIS_STYLE, ID_VIS_HEIGHT, ID_VIS_DENSITY, ID_VIS_COLORS, ID_COVER_RADIUS = 9104, 9105, 9106, 9107, 9108
 CHECKS = {ID_VIS_TOP: "vis_top", ID_VIS_BOTTOM: "vis_bottom", ID_FLAT_SEEK: "flat_seek"}
-VIS_HEIGHTS = ["Низкий", "Средний", "Высокий"]
+VIS_HEIGHTS = [tr("Низкий"), tr("Средний"), tr("Высокий")]
 VIS_HEIGHT_DP = [40.0, 64.0, 88.0]
-VIS_DENSITIES = ["Редкие", "Обычные", "Частые"]
+VIS_DENSITIES = [tr("Редкие"), tr("Обычные"), tr("Частые")]
 VIS_BARS = [32, 48, 64]
-VIS_COLORS = ["Три слоя", "Плавный", "Один цвет"]
+VIS_COLORS = [tr("Три слоя"), tr("Плавный"), tr("Один цвет")]
 VIS_MIN_CHROMA = 0.09  # below this a color reads as gray
 VIS_MIN_HUE = 0.07  # hues closer than this (25 degrees) read as one color
 VIS_DARKER = 0.22  # the back layer of a cover with a single color
@@ -96,19 +97,19 @@ VIS_LAYERS = (
 VIS_CORNER = 0.3  # corner radius as a share of the bar width: more than this turns narrow bars into capsules
 VIS_BUILD_SECONDS = 0.024
 BAR_RADIUS = 3.0  # corners of the square style
-VIS_STYLES = ["Квадратные", "Скруглённые"]
+VIS_STYLES = [tr("Квадратные"), tr("Скруглённые")]
 VIS_WIDTHS = [0.62, 0.55]  # share of a bar's slot
 BANDS = 24  # RhythmAnalyzer.bandLevel
 
 MEDIA_CONTROLLER = "org.telegram.messenger.MediaController"
 MESSAGE_OBJECT = "org.telegram.messenger.MessageObject"
 PLAYER_COVERS = "com.exteragram.messenger.player.PlayerCovers"
-UNKNOWN_ARTIST = "Неизвестный исполнитель"
+UNKNOWN_ARTIST = tr("Неизвестный исполнитель")
 # Android names a file with no album tag after its folder: these names say nothing about an album
 GENERIC_FOLDERS = {"music", "download", "downloads", "audio", "telegram", "telegram audio", "0", "bluetooth", "recordings", "mornye"}
 ARTIST_SEP = re.compile(r"\s*(?:,|;|&|\s/\s|\s\+\s|\s(?:feat\.?|ft\.?|featuring|vs\.?|x)\s)\s*", re.I)
-SORT_MODES = (("title", "По названию"), ("artist", "По автору"), ("album", "По альбому"),
-              ("added", "По дате добавления"), ("duration", "По длительности"))
+SORT_MODES = (("title", tr("По названию")), ("artist", tr("По автору")), ("album", tr("По альбому")),
+              ("added", tr("По дате добавления")), ("duration", tr("По длительности")))
 NO_TRACK_NUMBER = 1 << 30
 COVER_SIZE = 640  # px of a cached cover
 TILE_SIZE = 112  # dp of a cover in a row that scrolls sideways

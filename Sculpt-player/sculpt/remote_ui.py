@@ -9,20 +9,14 @@ import random
 
 from java import dynamic_proxy, jarray, jclass, jfloat, jint
 
+from .i18n import plural, tr
 from .common import _dp, advanced
 from .dl_ui import KINDS, RemoteRows, mark_local, tracks_label
 from .music import find_group
 
-RELEASE_TYPES = {"album": "Альбом", "single": "Сингл", "ep": "EP", "compilation": "Сборник"}
-SHELVES = (("album", "Альбомы"), ("single", "Синглы и EP"), ("compilation", "Сборники"))
+RELEASE_TYPES = {"album": tr("Альбом"), "single": tr("Сингл"), "ep": "EP", "compilation": tr("Сборник")}
+SHELVES = (("album", tr("Альбомы")), ("single", tr("Синглы и EP")), ("compilation", tr("Сборники")))
 SHELF_TILE = 140  # dp of a release cover on the shelves that scroll sideways
-
-
-def plural(count, one, few, many):
-    tail = count % 100
-    if 11 <= tail <= 14:
-        return many
-    return {1: one, 2: few, 3: few, 4: few}.get(count % 10, many)
 
 
 def listeners_text(value):
@@ -33,15 +27,15 @@ def listeners_text(value):
     if count <= 0:
         return ""
     if count >= 1000000:
-        number = ("%.1f" % (count / 1000000.0)).rstrip("0").rstrip(".").replace(".", ",") + " млн"
-        word = "слушателей"
+        number = ("%.1f" % (count / 1000000.0)).rstrip("0").rstrip(".").replace(".", ",") + tr(" млн")
+        word = tr("слушателей")
     elif count >= 1000:
-        number = "%d тыс." % (count // 1000)
-        word = "слушателей"
+        number = tr("%d тыс.") % (count // 1000)
+        word = tr("слушателей")
     else:
         number = str(count)
-        word = plural(count, "слушатель", "слушателя", "слушателей")
-    return "%s %s в месяц" % (number, word)
+        word = plural(count, tr("слушатель"), tr("слушателя"), tr("слушателей"))
+    return tr("%s %s в месяц") % (number, word)
 
 
 def year_of(item):
@@ -83,8 +77,8 @@ def total_minutes(tracks):
     if not minutes:
         return ""
     if minutes >= 60:
-        return "%d ч %d мин" % (minutes // 60, minutes % 60)
-    return "%d мин" % minutes
+        return tr("%d ч %d мин") % (minutes // 60, minutes % 60)
+    return tr("%d мин") % minutes
 
 
 class Scrolled(dynamic_proxy(jclass("android.view.View$OnScrollChangeListener"))):
@@ -120,7 +114,7 @@ class RemoteScreen(RemoteRows):
         def failed(text):
             self.clear_body()
             self.draw_header(preview, loading=None)
-            self.note(self.body, "Не получилось открыть. %s" % text, size=15, top=16)
+            self.note(self.body, tr("Не получилось открыть. %s") % text, size=15, top=16)
 
         self.run(lambda m: m.provider_call(ext, method, [item_id], 45000), self.show, failed)
 
@@ -156,7 +150,7 @@ class RemoteScreen(RemoteRows):
         back = jclass("android.widget.ImageView")(owner.context)
         owner.set_icon(back, ("ic_ab_back",))
         back.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
-        back.setContentDescription("Назад")
+        back.setContentDescription(tr("Назад"))
         back.setBackground(owner.rounded(jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(-16777216, 90), _dp(22)))
         owner.tint(back, -1)
         self.click(back, owner.back)
@@ -294,7 +288,7 @@ class RemoteScreen(RemoteRows):
         self.clear_body()
         if not isinstance(data, dict):
             self.draw_header({}, loading=None)
-            self.note(self.body, "Сервис ничего не вернул.", size=15, top=16)
+            self.note(self.body, tr("Сервис ничего не вернул."), size=15, top=16)
             return
         self.data = data
         kind = self.kind
@@ -344,7 +338,7 @@ class RemoteScreen(RemoteRows):
                 if meta:
                     self.centered(13, "textSecondary", " · ".join(str(p) for p in meta), top=4)
             if loading:
-                self.note(self.body, "Загружаю…", size=15, top=16)
+                self.note(self.body, tr("Загружаю…"), size=15, top=16)
             elif loading is not None:
                 if artist:
                     self.artist_buttons()
@@ -376,11 +370,11 @@ class RemoteScreen(RemoteRows):
         buttons = []
         if self.local:
             buttons.append(self.circle(("player_new_shuffle", "player_shuffle", "msg_shuffle"),
-                                       "Перемешать: случайная песня этого исполнителя с телефона", self.shuffle))
+                                       tr("Перемешать: случайная песня этого исполнителя с телефона"), self.shuffle))
         if self.releases() or (self.data or {}).get("top_tracks"):
-            buttons.append(self.circle(("msg_download",), "Скачать…", self.download_menu, 60, True))
+            buttons.append(self.circle(("msg_download",), tr("Скачать…"), self.download_menu, 60, True))
         if self.local:
-            buttons.append(self.circle(("msg_folders", "msg2_folder"), "Открыть в медиатеке", self.open_in_library))
+            buttons.append(self.circle(("msg_folders", "msg2_folder"), tr("Открыть в медиатеке"), self.open_in_library))
         if buttons:
             self.button_row(buttons)
 
@@ -389,19 +383,19 @@ class RemoteScreen(RemoteRows):
         if releases:
             self.featured(releases[0])
         if tracks:
-            self.section(self.body, "Популярное")
+            self.section(self.body, tr("Популярное"))
             for track in tracks:
                 self.track_row(self.body, track, second=track.get("album_name") or track.get("artists"))
         shelves = [(title, [r for r in releases if release_type(r) == kind]) for kind, title in SHELVES]
         shelves = [(title, items) for title, items in shelves if items]
         if not shelves and releases:
-            shelves = [("Релизы", releases)]
+            shelves = [(tr("Релизы"), releases)]
         for title, items in shelves:
             self.shelf(title, items)
         if not tracks and not releases:
-            self.note(self.body, "У этого исполнителя в сервисе пока пусто.", size=15, top=16)
+            self.note(self.body, tr("У этого исполнителя в сервисе пока пусто."), size=15, top=16)
             return
-        count = (plural(len(releases), "%d релиз", "%d релиза", "%d релизов") % len(releases)) if releases else ""
+        count = (plural(len(releases), tr("%d релиз"), tr("%d релиза"), tr("%d релизов")) % len(releases)) if releases else ""
         self.ending(" · ".join(p for p in (count, self.source()) if p))
 
     def featured(self, release):
@@ -419,7 +413,7 @@ class RemoteScreen(RemoteRows):
         column = jclass("android.widget.LinearLayout")(owner.context)
         column.setOrientation(1)
         head = self.label(13, "textSecondary")
-        head.setText("Последний релиз")
+        head.setText(tr("Последний релиз"))
         column.addView(head)
         name = self.label(17, "text", True)
         name.setText(release.get("name") or "")
@@ -430,11 +424,11 @@ class RemoteScreen(RemoteRows):
         place = Params(0, -2, 1.0)
         place.setMarginStart(_dp(14))
         plate.addView(column, place)
-        button, at = self.circle(("msg_download",), "Скачать «%s»" % (release.get("name") or "релиз"),
+        button, at = self.circle(("msg_download",), tr("Скачать «%s»") % (release.get("name") or tr("релиз")),
                                  lambda: self.download_releases([release]), 40)
         at.setMargins(_dp(8), 0, _dp(4), 0)
         plate.addView(button, at)
-        plate.setContentDescription("Последний релиз: %s, %s" % (release.get("name") or "", release_line(release)))
+        plate.setContentDescription(tr("Последний релиз: %s, %s") % (release.get("name") or "", release_line(release)))
         self.click(plate, self.open_release, release)
         place = Params(-1, -2)
         place.setMargins(_dp(16), _dp(16), _dp(16), _dp(4))
@@ -457,7 +451,7 @@ class RemoteScreen(RemoteRows):
             top.topMargin = _dp(6)
             tile.addView(name, top)
             second = self.label(12, "textSecondary")
-            second.setText(release_line(release) if title == "Релизы" else year_of(release))
+            second.setText(release_line(release) if title == tr("Релизы") else year_of(release))
             tile.addView(second, Params(_dp(SHELF_TILE), -2))
             tile.setContentDescription("%s, %s" % (release.get("name") or "", release_line(release)))
             self.click(tile, self.open_release, release)
@@ -475,25 +469,25 @@ class RemoteScreen(RemoteRows):
         releases = self.releases()
         top = [t for t in (self.data or {}).get("top_tracks") or [] if isinstance(t, dict)]
         if top:
-            menu.add(icon("msg_download"), "Популярное (%s)" % tracks_label(len(top)),
+            menu.add(icon("msg_download"), tr("Популярное (%s)") % tracks_label(len(top)),
                      later(lambda: (menu.dismiss(), self.download_new(top))))
         if releases:
-            menu.add(icon("msg_download"), "Вся дискография (%s)" % (plural(len(releases), "%d релиз", "%d релиза", "%d релизов") % len(releases)),
+            menu.add(icon("msg_download"), tr("Вся дискография (%s)") % (plural(len(releases), tr("%d релиз"), tr("%d релиза"), tr("%d релизов")) % len(releases)),
                      later(lambda: (menu.dismiss(), self.download_releases(releases))))
         albums = [r for r in releases if release_type(r) == "album"]
         if albums and len(albums) != len(releases):
-            menu.add(icon("msg_media"), "Только альбомы (%d)" % len(albums),
+            menu.add(icon("msg_media"), tr("Только альбомы (%d)") % len(albums),
                      later(lambda: (menu.dismiss(), self.download_releases(albums))))
         singles = [r for r in releases if release_type(r) == "single"]
         if singles and len(singles) != len(releases):
-            menu.add(icon("msg_played"), "Только синглы и EP (%d)" % len(singles),
+            menu.add(icon("msg_played"), tr("Только синглы и EP (%d)") % len(singles),
                      later(lambda: (menu.dismiss(), self.download_releases(singles))))
         owner.player.show_menu(menu)
 
     def download_releases(self, releases):
         ext, music, extensions = self.ext, self.owner.data, self.owner.plugin.extensions
         wanted = [r for r in releases if r.get("id")]
-        self.say("Собираю песни: %s…" % (plural(len(wanted), "%d релиз", "%d релиза", "%d релизов") % len(wanted)))
+        self.say(tr("Собираю песни: %s…") % (plural(len(wanted), tr("%d релиз"), tr("%d релиза"), tr("%d релизов")) % len(wanted)))
 
         def task(manager):
             tracks = []
@@ -521,18 +515,18 @@ class RemoteScreen(RemoteRows):
     def queued(self, counts):
         found, new = counts
         if not found:
-            self.say("Сервис не отдал песен.")
+            self.say(tr("Сервис не отдал песен."))
         elif not new:
-            self.say("Всё это уже есть на телефоне.")
+            self.say(tr("Всё это уже есть на телефоне."))
         elif new == found:
-            self.say("В очереди на скачивание: %s. Ход — в «Загрузках»." % tracks_label(new))
+            self.say(tr("В очереди на скачивание: %s. Ход — в «Загрузках».") % tracks_label(new))
         else:
-            self.say("В очереди: %s, ещё %d уже есть на телефоне." % (tracks_label(new), found - new))
+            self.say(tr("В очереди: %s, ещё %d уже есть на телефоне.") % (tracks_label(new), found - new))
 
     def shuffle(self):
         """A random song of this author or album from the phone; whether the rest plays mixed is the player's choice."""
         if not self.local:
-            self.say("На телефоне нет песен отсюда.")
+            self.say(tr("На телефоне нет песен отсюда."))
             return
         self.owner.play(self.local, random.randrange(len(self.local)), (self.data or {}).get("name") or self.title_text)
 
@@ -549,11 +543,11 @@ class RemoteScreen(RemoteRows):
         buttons = []
         if self.local:
             buttons.append(self.circle(("player_new_shuffle", "player_shuffle", "msg_shuffle"),
-                                       "Перемешать: случайная песня отсюда с телефона", self.shuffle))
+                                       tr("Перемешать: случайная песня отсюда с телефона"), self.shuffle))
         tracks = [t for t in (self.data or {}).get("tracks") or [] if isinstance(t, dict)]
         if tracks:
-            buttons.append(self.big_pill("Скачать", lambda: self.download_new(tracks)))
-        buttons.append(self.circle(("ic_ab_other", "msg_more"), "Ещё", self.album_menu))
+            buttons.append(self.big_pill(tr("Скачать"), lambda: self.download_new(tracks)))
+        buttons.append(self.circle(("ic_ab_other", "msg_more"), tr("Ещё"), self.album_menu))
         self.button_row(buttons)
 
     def album_menu(self):
@@ -564,12 +558,12 @@ class RemoteScreen(RemoteRows):
         data = self.data or {}
         tracks = [t for t in data.get("tracks") or [] if isinstance(t, dict)]
         if tracks:
-            menu.add(icon("msg_download"), "Скачать всё, даже то, что есть",
+            menu.add(icon("msg_download"), tr("Скачать всё, даже то, что есть"),
                      later(lambda: (menu.dismiss(), self.download(tracks, False))))
         if data.get("artist_id"):
-            menu.add(icon("msg_contacts"), "Открыть исполнителя", later(lambda: (menu.dismiss(), self.open_artist())))
+            menu.add(icon("msg_contacts"), tr("Открыть исполнителя"), later(lambda: (menu.dismiss(), self.open_artist())))
         if self.local:
-            menu.add(icon("msg_played"), "Слушать с телефона по порядку",
+            menu.add(icon("msg_played"), tr("Слушать с телефона по порядку"),
                      later(lambda: (menu.dismiss(), self.owner.play(self.local, 0, data.get("name") or ""))))
         owner.player.show_menu(menu)
 
@@ -579,7 +573,7 @@ class RemoteScreen(RemoteRows):
 
     def draw_album(self, data, tracks):
         if not tracks:
-            self.note(self.body, "Здесь пусто.", size=15, top=16)
+            self.note(self.body, tr("Здесь пусто."), size=15, top=16)
             return
         numbered = self.kind == "album"
         for index, track in enumerate(tracks):
@@ -595,7 +589,7 @@ class RemoteScreen(RemoteRows):
     def source(self):
         try:
             manifest = self.owner.plugin.extensions.get().manifest(self.ext)
-            return "из %s" % manifest.display_name if manifest is not None else ""
+            return tr("из %s") % manifest.display_name if manifest is not None else ""
         except Exception:
             return ""
 

@@ -7,6 +7,7 @@
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass, jint
 
+from .i18n import tr
 from .common import _dp, advanced
 from .extensions import describe, type_names
 from .library_ui import Screen, TextChanged
@@ -221,7 +222,7 @@ class ExtScreen(Screen):
         owner.set_icon(arrow, ("arrow_more", "msg_arrow_more"))
         self.tint_icon(arrow, "textSecondary")
         head.addView(arrow, owner.params(20, 20))
-        head.setContentDescription("%s, развернуть" % title)
+        head.setContentDescription(tr("%s, развернуть") % title)
         self.click(head, action)
         place = Params(-1, -2)
         place.setMargins(_dp(12), _dp(12), _dp(12), _dp(4))
@@ -293,19 +294,19 @@ class ExtensionsScreen(ExtScreen):
     """Installed extensions, with the ways to get more."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Расширения")
+        super().__init__(owner, tr("Расширения"))
         self.page()
-        self.nav_row(self.content, ("msg_plugins", "msg_bots"), "Каталог расширений", owner.open_catalog)
+        self.nav_row(self.content, ("msg_plugins", "msg_bots"), tr("Каталог расширений"), owner.open_catalog)
         # where extensions come from is for the curious: the official catalog is enough for everyone else
         self.repo_count = None
         if advanced(owner.plugin):
-            self.repo_count = self.nav_row(self.content, ("msg_link", "msg_link2"), "Репозитории", owner.open_repos)
-        self.nav_row(self.content, ("msg_settings",), "Скачивание", owner.open_download_settings)
-        self.section(self.content, "Установленные")
+            self.repo_count = self.nav_row(self.content, ("msg_link", "msg_link2"), tr("Репозитории"), owner.open_repos)
+        self.nav_row(self.content, ("msg_settings",), tr("Скачивание"), owner.open_download_settings)
+        self.section(self.content, tr("Установленные"))
         self.start_body()
-        self.note(self.content, "Расширение можно установить и из файла .sflx в любом чате: зажми сообщение с файлом "
-                                "и выбери «Установить расширение».", top=20)
-        self.status = self.note(self.body, "Загружаю…")
+        self.note(self.content, tr("Расширение можно установить и из файла .sflx в любом чате: зажми сообщение с файлом "
+                                "и выбери «Установить расширение»."), top=20)
+        self.status = self.note(self.body, tr("Загружаю…"))
         self.refresh()
 
     def refresh(self):
@@ -318,16 +319,16 @@ class ExtensionsScreen(ExtScreen):
             self.repo_count.setText(str(len(repos)))
         self.set_subtitle(str(len(items)) if items else "")
         if not items:
-            self.note(self.body, "Пока ничего не установлено. В каталоге есть расширения, которые ищут и скачивают песни: "
-                                 "открой его и выбери нужное.", size=15)
+            self.note(self.body, tr("Пока ничего не установлено. В каталоге есть расширения, которые ищут и скачивают песни: "
+                                 "открой его и выбери нужное."), size=15)
             return
         for item in items:
             ext = item["id"]
             details = "v%s · %s" % (item["version"], type_names(item["types"]))
             if item.get("error"):
-                details += "\nОшибка: %s" % item["error"]
+                details += tr("\nОшибка: %s") % item["error"]
             switch = self.switch(item["enabled"], lambda on, e=ext: self.toggle(e, on),
-                                 "%s: %s" % (item["name"], "включено" if item["enabled"] else "выключено"))
+                                 "%s: %s" % (item["name"], tr("включено") if item["enabled"] else tr("выключено")))
             self.item_row(self.body, item["name"], details, lambda e=ext: self.owner.open_extension(e),
                           image=self.icon_image(item.get("icon")), trailing=switch)
 
@@ -339,8 +340,8 @@ class CatalogScreen(ExtScreen):
     """What the repositories offer; a button installs or updates one."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Каталог")
-        self.page(self.icon_button(("msg_link", "msg_link2"), "Репозитории", owner.open_repos) if advanced(owner.plugin) else None)
+        super().__init__(owner, tr("Каталог"))
+        self.page(self.icon_button(("msg_link", "msg_link2"), tr("Репозитории"), owner.open_repos) if advanced(owner.plugin) else None)
         self.busy = set()
         self.items = []
         self.errors = []
@@ -350,7 +351,7 @@ class CatalogScreen(ExtScreen):
 
     def refresh(self):
         self.clear_body()
-        self.note(self.body, "Загружаю каталог…", size=15)
+        self.note(self.body, tr("Загружаю каталог…"), size=15)
 
         def task(manager):
             urls = list(manager.state.get("repos") or [])
@@ -375,21 +376,21 @@ class CatalogScreen(ExtScreen):
         for text in self.errors:
             self.note(self.body, text, "accent")
         if not self.repos:
-            self.note(self.body, "Нет ни одного репозитория. Добавь ссылку на каталог расширений в «Репозиториях».", size=15)
+            self.note(self.body, tr("Нет ни одного репозитория. Добавь ссылку на каталог расширений в «Репозиториях»."), size=15)
             return
         if not self.items and not self.errors:
-            self.note(self.body, "В этих репозиториях пока нет расширений.", size=15)
+            self.note(self.body, tr("В этих репозиториях пока нет расширений."), size=15)
         for item in self.items:
             ext = item["id"]
             name = item.get("display_name") or item.get("displayName") or item.get("name") or ext
             if ext in self.busy:
-                button = self.pill("Устанавливаю…", True, None)
+                button = self.pill(tr("Устанавливаю…"), True, None)
             elif item.get("has_update"):
-                button = self.pill("Обновить", True, lambda i=item: self.install(i))
+                button = self.pill(tr("Обновить"), True, lambda i=item: self.install(i))
             elif item.get("installed_version"):
-                button = self.pill("Установлено", False, lambda e=ext: self.owner.open_extension(e))
+                button = self.pill(tr("Установлено"), False, lambda e=ext: self.owner.open_extension(e))
             else:
-                button = self.pill("Установить", True, lambda i=item: self.install(i))
+                button = self.pill(tr("Установить"), True, lambda i=item: self.install(i))
             button.setContentDescription("%s: %s" % (name, button.getText()))
             details = item.get("description") or ""
             version = item.get("version")
@@ -397,7 +398,7 @@ class CatalogScreen(ExtScreen):
                 details = ("v%s · %s" % (version, details)) if details else "v%s" % version
             self.item_row(self.body, name, details, trailing=button, icons=("msg_plugins", "msg_bots"))
         sources = "\n".join(self.repos)
-        self.note(self.body, "Источники:\n%s\nАвторы расширений указаны в их пакетах (LICENSE, NOTICE)." % sources, size=12, top=20)
+        self.note(self.body, tr("Источники:\n%s\nАвторы расширений указаны в их пакетах (LICENSE, NOTICE).") % sources, size=12, top=20)
 
     def install(self, item):
         ext = item["id"]
@@ -410,12 +411,12 @@ class CatalogScreen(ExtScreen):
             item["installed_version"] = item.get("version") or ""
             item["has_update"] = False
             self.draw()
-            self.say("Расширение «%s» установлено" % name, "saved_messages")
+            self.say(tr("Расширение «%s» установлено") % name, "saved_messages")
 
         def failed(text):
             self.busy.discard(ext)
             self.draw()
-            self.say("«%s» не установлено. %s" % (name, text))
+            self.say(tr("«%s» не установлено. %s") % (name, text))
 
         self.run(lambda m: m.install_from_registry(item), done, failed)
 
@@ -424,10 +425,10 @@ class ReposScreen(ExtScreen):
     """The catalogs the extensions come from: the official one, and any added by link."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Репозитории")
+        super().__init__(owner, tr("Репозитории"))
         self.page()
         self.adding = False
-        self.note(self.content, "Ссылка на GitHub-репозиторий с registry.json или на сам файл registry.json.", top=4)
+        self.note(self.content, tr("Ссылка на GitHub-репозиторий с registry.json или на сам файл registry.json."), top=4)
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         line = jclass("android.widget.LinearLayout")(owner.context)
         line.setOrientation(0)
@@ -440,12 +441,12 @@ class ReposScreen(ExtScreen):
         self.field.setTextColor(owner.color("text"))
         self.field.setHintTextColor(owner.color("textSecondary"))
         line.addView(self.field, Params(0, -2, 1.0))
-        self.add_button = self.pill("Добавить", True, self.add)
+        self.add_button = self.pill(tr("Добавить"), True, self.add)
         at = Params(-2, -2)
         at.setMarginStart(_dp(8))
         line.addView(self.add_button, at)
         self.content.addView(line, Params(-1, -2))
-        self.section(self.content, "Добавленные")
+        self.section(self.content, tr("Добавленные"))
         self.start_body()
         self.refresh()
 
@@ -459,9 +460,9 @@ class ReposScreen(ExtScreen):
     def show(self, repos):
         self.clear_body()
         if not repos:
-            self.note(self.body, "Ни одного репозитория. Без них каталог пуст.", size=15)
+            self.note(self.body, tr("Ни одного репозитория. Без них каталог пуст."), size=15)
         for url in repos:
-            remove = self.icon_button(("msg_delete",), "Убрать репозиторий %s" % url, self.remove, url)
+            remove = self.icon_button(("msg_delete",), tr("Убрать репозиторий %s") % url, self.remove, url)
             self.item_row(self.body, url.replace("https://", ""), "", trailing=remove)
 
     def remove(self, url):
@@ -470,16 +471,16 @@ class ReposScreen(ExtScreen):
                 manager.state["repos"] = [r for r in manager.state["repos"] if r != url]
                 manager.save_state()
 
-        self.run(task, lambda _: (self.say("Репозиторий убран", "ic_delete"), self.refresh()))
+        self.run(task, lambda _: (self.say(tr("Репозиторий убран"), "ic_delete"), self.refresh()))
 
     def add(self):
         url = str(self.field.getText()).strip()
         if not url or self.adding:
             if not url:
-                self.say("Вставь ссылку на репозиторий.")
+                self.say(tr("Вставь ссылку на репозиторий."))
             return
         self.adding = True
-        self.add_button.setText("Проверяю…")
+        self.add_button.setText(tr("Проверяю…"))
 
         def task(manager):
             items = manager.fetch_registry(url)
@@ -491,15 +492,15 @@ class ReposScreen(ExtScreen):
 
         def done(count):
             self.adding = False
-            self.add_button.setText("Добавить")
+            self.add_button.setText(tr("Добавить"))
             self.field.setText("")
-            self.say("Репозиторий добавлен, расширений в нём: %d" % count, "saved_messages")
+            self.say(tr("Репозиторий добавлен, расширений в нём: %d") % count, "saved_messages")
             self.refresh()
 
         def failed(text):
             self.adding = False
-            self.add_button.setText("Добавить")
-            self.say("Репозиторий не добавлен. " + text)
+            self.add_button.setText(tr("Добавить"))
+            self.say(tr("Репозиторий не добавлен. ") + text)
 
         self.run(task, done, failed)
 
@@ -508,14 +509,14 @@ class ExtensionScreen(ExtScreen):
     """One extension: what it is, on or off, its settings, removing it, its log."""
 
     def __init__(self, owner, ext):
-        super().__init__(owner, "Расширение")
+        super().__init__(owner, tr("Расширение"))
         self.ext = ext
         self.values = {}
         self.save_generation = 0
         self.pending = False
         self.page()
         self.start_body()
-        self.note(self.body, "Загружаю…")
+        self.note(self.body, tr("Загружаю…"))
         self.refresh()
 
     def refresh(self):
@@ -536,32 +537,32 @@ class ExtensionScreen(ExtScreen):
     def show(self, data):
         self.clear_body()
         if data is None:
-            self.note(self.body, "Этого расширения больше нет.", size=15)
+            self.note(self.body, tr("Этого расширения больше нет."), size=15)
             return
         self.title_view.setText(data["name"])
         self.set_subtitle("v%s · %s" % (data["version"], type_names(data["types"])))
         self.values = dict(data["values"])
         self.note(self.body, data["description"], "text", 15, top=4)
         if data["homepage"]:
-            self.item_row(self.body, "Сайт расширения", data["homepage"].replace("https://", ""),
+            self.item_row(self.body, tr("Сайт расширения"), data["homepage"].replace("https://", ""),
                           lambda: self.owner.open_link(data["homepage"]), icons=("msg_link", "msg_link2"))
-        switch = self.switch(data["enabled"], self.toggle, "Расширение включено")
-        self.item_row(self.body, "Включено", "Выключенное расширение не ищет и не скачивает.", trailing=switch)
+        switch = self.switch(data["enabled"], self.toggle, tr("Расширение включено"))
+        self.item_row(self.body, tr("Включено"), tr("Выключенное расширение не ищет и не скачивает."), trailing=switch)
         if data["signed"]:
-            self.item_row(self.body, "Проверка сессии", "Сервис иногда просит подтвердить, что качает человек. "
-                                                         "Откроется его страница; после проверки загрузки пойдут снова.",
+            self.item_row(self.body, tr("Проверка сессии"), tr("Сервис иногда просит подтвердить, что качает человек. "
+                                                         "Откроется его страница; после проверки загрузки пойдут снова."),
                           lambda: self.check(data["name"]), icons=("msg_permissions", "msg_secret", "msg_info"))
         if data["error"]:
-            self.note(self.body, "Последняя ошибка: %s" % data["error"], "accent")
+            self.note(self.body, tr("Последняя ошибка: %s") % data["error"], "accent")
         if data["settings"]:
-            self.section(self.body, "Настройки")
+            self.section(self.body, tr("Настройки"))
             for setting in data["settings"]:
                 self.setting(setting)
-        self.section(self.body, "Удаление")
-        self.item_row(self.body, "Удалить расширение", "Вместе с его настройками и данными на телефоне.",
+        self.section(self.body, tr("Удаление"))
+        self.item_row(self.body, tr("Удалить расширение"), tr("Вместе с его настройками и данными на телефоне."),
                       self.confirm_remove, icons=("msg_delete",))
         if data["logs"] and advanced(self.owner.plugin):
-            self.section(self.body, "Журнал")
+            self.section(self.body, tr("Журнал"))
             log = self.note(self.body, "\n".join("%s %s" % (level, text) for level, text in data["logs"]), size=12, top=0)
             log.setTypeface(jclass("android.graphics.Typeface").MONOSPACE)
             log.setTextIsSelectable(True)
@@ -592,7 +593,7 @@ class ExtensionScreen(ExtScreen):
         elif kind == "select":
             options = [o if isinstance(o, dict) else {"value": o, "label": o} for o in (setting.get("options") or [])]
             current = next((str(o.get("label") or o.get("value")) for o in options if str(o.get("value")) == str(value)), str(value or ""))
-            row, _, second = self.item_row(self.body, label, current or "Не выбрано", None)
+            row, _, second = self.item_row(self.body, label, current or tr("Не выбрано"), None)
             self.click(row, self.choose, row, key, options)
             row.setBackground(self.owner.selector(0))
             if hint:
@@ -673,9 +674,9 @@ class ExtensionScreen(ExtScreen):
                 text = str(result.get("message") or result.get("error") or "")
             elif isinstance(result, str):
                 text = result
-            self.say(text or "«%s»: готово" % label)
+            self.say(text or tr("«%s»: готово") % label)
 
-        self.say("«%s»: выполняю…" % label)
+        self.say(tr("«%s»: выполняю…") % label)
         self.run(lambda m: m.action(self.ext, name), done)
 
     def confirm_remove(self):
@@ -683,10 +684,10 @@ class ExtensionScreen(ExtScreen):
         name = str(self.title_view.getText())
         Builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")
         builder = Builder(owner.context)
-        builder.setTitle("Удалить «%s»?" % name)
-        builder.setMessage("Расширение, его настройки и данные удалятся с телефона. Вернуть его можно, только установив заново.")
-        builder.setPositiveButton("Удалить", ButtonClick(lambda: self.remove(name)))
-        builder.setNegativeButton("Отмена", ButtonClick(None))
+        builder.setTitle(tr("Удалить «%s»?") % name)
+        builder.setMessage(tr("Расширение, его настройки и данные удалятся с телефона. Вернуть его можно, только установив заново."))
+        builder.setPositiveButton(tr("Удалить"), ButtonClick(lambda: self.remove(name)))
+        builder.setNegativeButton(tr("Отмена"), ButtonClick(None))
         dialog = builder.create()
         dialog.show()
         button = dialog.getButton(-1)
@@ -698,7 +699,7 @@ class ExtensionScreen(ExtScreen):
         ext = self.ext
 
         def done(_):
-            self.say("Расширение «%s» удалено" % name, "ic_delete")
+            self.say(tr("Расширение «%s» удалено") % name, "ic_delete")
             self.owner.back()
 
         self.run(lambda m: m.remove(ext), done)

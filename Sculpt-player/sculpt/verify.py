@@ -11,6 +11,7 @@ from base_plugin import MethodHook
 from java import dynamic_proxy, jclass
 from java.lang import Boolean as JBoolean
 
+from .i18n import tr
 from .common import _log
 
 GRANT = "mornye://session-grant"
@@ -200,15 +201,15 @@ def verify(plugin, ext, name, say, then=None):
     def finished(grant):
         if grant is None:
             return
-        say("Проверка «%s» пройдена, завершаю…" % name)
+        say(tr("Проверка «%s» пройдена, завершаю…") % name)
         extensions.work(lambda m: m.complete_grant(ext, grant),
-                        lambda _: (say("Проверка «%s» пройдена" % name), then() if then is not None else None),
-                        lambda text: say("Проверка «%s» не завершилась. %s" % (name, text)))
+                        lambda _: (say(tr("Проверка «%s» пройдена") % name), then() if then is not None else None),
+                        lambda text: say(tr("Проверка «%s» не завершилась. %s") % (name, text)))
 
     def open_page(pending):
         if pending is None or not pending.get("auth_url"):
-            say("Сервису «%s» проверка сейчас не нужна. Попробуй скачать снова." % name)
+            say(tr("Сервису «%s» проверка сейчас не нужна. Попробуй скачать снова.") % name)
             return
         Verification(plugin, ext, pending, lambda grant: run_on_ui_thread(lambda: finished(grant))).start()
 
-    extensions.work(prepare, open_page, lambda text: say("Не удалось начать проверку «%s». %s" % (name, text)))
+    extensions.work(prepare, open_page, lambda text: say(tr("Не удалось начать проверку «%s». %s") % (name, text)))

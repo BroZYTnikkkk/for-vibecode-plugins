@@ -9,6 +9,7 @@ import re
 
 from java import dynamic_proxy, jclass
 
+from .i18n import plural, tr
 from .common import SEARCH_HISTORY, _dp, _log, advanced
 from .extensions import QUALITIES, STAGES, describe
 from .ext_ui import ExtScreen
@@ -16,7 +17,7 @@ from .library_ui import TextChanged
 
 URL = re.compile(r"^https?://", re.I)
 SPLIT = re.compile(r",|&|;| feat\.| ft\.", re.I)
-KINDS = {"album": "Альбом", "playlist": "Плейлист", "artist": "Исполнитель"}
+KINDS = {"album": tr("Альбом"), "playlist": tr("Плейлист"), "artist": tr("Исполнитель")}
 
 
 class EditorAction(dynamic_proxy(jclass("android.widget.TextView$OnEditorActionListener"))):
@@ -76,17 +77,15 @@ def seconds_of(item):
 
 
 def tracks_label(count):
-    tail = count % 100
-    word = "песен" if 11 <= tail <= 14 else {1: "песня", 2: "песни", 3: "песни", 4: "песни"}.get(count % 10, "песен")
-    return "%d %s" % (count, word)
+    return "%d %s" % (count, plural(count, tr("песня"), tr("песни"), tr("песен")))
 
 
-QUALITY_NAMES = {"LOSSLESS": ("FLAC Lossless", "16 бит, до 44,1 кГц"),
-                 "HI_RES": ("FLAC высокого разрешения", "24 бит, до 96 кГц"),
-                 "HI_RES_LOSSLESS": ("FLAC Max высокого разрешения", "24 бит, до 192 кГц")}
+QUALITY_NAMES = {"LOSSLESS": ("FLAC Lossless", tr("16 бит, до 44,1 кГц")),
+                 "HI_RES": (tr("FLAC высокого разрешения"), tr("24 бит, до 96 кГц")),
+                 "HI_RES_LOSSLESS": (tr("FLAC Max высокого разрешения"), tr("24 бит, до 192 кГц"))}
 HEALTH_COLORS = {"online": 0xFF24D47A, "offline": 0xFFFF5A66}  # anything else: amber
 HEALTH_AMBER = 0xFFFFC247
-SECTIONS = (("artist", "Исполнители"), ("album", "Альбомы"), ("playlist", "Плейлисты"), ("track", "Песни"))
+SECTIONS = (("artist", tr("Исполнители")), ("album", tr("Альбомы")), ("playlist", tr("Плейлисты")), ("track", tr("Песни")))
 FILTER_ICONS = {"track": "msg_played", "song": "msg_played", "music": "msg_played", "album": "msg_media",
                 "artist": "msg_contacts", "playlist": "msg_list", "video": "msg_video"}
 
@@ -202,7 +201,7 @@ class RemoteRows(ExtScreen):
             folder = jclass("android.widget.ImageView")(owner.context)
             owner.set_icon(folder, ("msg_folders", "msg2_folder"))
             self.tint_icon(folder, "accent")
-            folder.setContentDescription("Уже есть на телефоне")
+            folder.setContentDescription(tr("Уже есть на телефоне"))
             at = owner.params(16, 16)
             at.setMarginStart(_dp(6))
             line.addView(folder, at)
@@ -211,12 +210,12 @@ class RemoteRows(ExtScreen):
         place.setMarginStart(_dp(14))
         row.addView(column, place)
         if local:
-            row.addView(self.icon_button(("msg_played", "player_play"), "Слушать с телефона", self.play_local, item), owner.params(40, 40))
-        row.addView(self.icon_button(("ic_ab_other", "msg_more"), "Ещё: %s" % (item.get("name") or ""), self.track_menu, item, row), owner.params(40, 40))
+            row.addView(self.icon_button(("msg_played", "player_play"), tr("Слушать с телефона"), self.play_local, item), owner.params(40, 40))
+        row.addView(self.icon_button(("ic_ab_other", "msg_more"), tr("Ещё: %s") % (item.get("name") or ""), self.track_menu, item, row), owner.params(40, 40))
         row.setBackground(owner.selector(0))
         self.click(row, self.track_pressed, item)
         self.long_click(row, lambda view: self.track_menu(item, view))
-        row.setContentDescription("%s, %s%s" % (item.get("name") or "", item.get("artists") or "", ", уже есть на телефоне" if local else ""))
+        row.setContentDescription("%s, %s%s" % (item.get("name") or "", item.get("artists") or "", tr(", уже есть на телефоне") if local else ""))
         container.addView(row, Params(-1, -2))
 
     def track_pressed(self, item):
@@ -232,7 +231,7 @@ class RemoteRows(ExtScreen):
         if track is not None:
             self.owner.play([track], 0, item.get("name") or "")
         else:
-            self.say("Песня ещё не в медиатеке: открой «Медиатеку», чтобы она нашлась.")
+            self.say(tr("Песня ещё не в медиатеке: открой «Медиатеку», чтобы она нашлась."))
 
     def track_menu(self, item, anchor):
         owner = self.owner
@@ -240,15 +239,15 @@ class RemoteRows(ExtScreen):
         later = owner.player.start_menu()
         icon = owner.resource
         if item.get("local_path"):
-            menu.add(icon("msg_played"), "Слушать с телефона", later(lambda: (menu.dismiss(), self.play_local(item))))
-        menu.add(icon("msg_download"), "Скачать из…", later(lambda: (menu.dismiss(), self.pick_service(item))))
-        menu.add(icon("msg_download"), "Скачать основным сервисом", later(lambda: (menu.dismiss(), self.download([item], False))))
-        menu.add(icon("msg_played"), "Скачать и слушать", later(lambda: (menu.dismiss(), self.download([item], True))))
+            menu.add(icon("msg_played"), tr("Слушать с телефона"), later(lambda: (menu.dismiss(), self.play_local(item))))
+        menu.add(icon("msg_download"), tr("Скачать из…"), later(lambda: (menu.dismiss(), self.pick_service(item))))
+        menu.add(icon("msg_download"), tr("Скачать основным сервисом"), later(lambda: (menu.dismiss(), self.download([item], False))))
+        menu.add(icon("msg_played"), tr("Скачать и слушать"), later(lambda: (menu.dismiss(), self.download([item], True))))
         if item.get("album_id"):
-            menu.add(icon("msg_media"), "Открыть альбом", later(lambda: (menu.dismiss(), owner.open_remote(
+            menu.add(icon("msg_media"), tr("Открыть альбом"), later(lambda: (menu.dismiss(), owner.open_remote(
                 "album", item.get("provider_id"), item["album_id"], {"name": item.get("album_name"), "cover_url": item.get("cover_url")}))))
         if item.get("artist_id"):
-            menu.add(icon("msg_contacts"), "Открыть исполнителя", later(lambda: (menu.dismiss(), owner.open_remote(
+            menu.add(icon("msg_contacts"), tr("Открыть исполнителя"), later(lambda: (menu.dismiss(), owner.open_remote(
                 "artist", item.get("provider_id"), item["artist_id"], {"name": item.get("artists")}))))
         owner.player.show_menu(menu)
 
@@ -270,15 +269,15 @@ class RemoteRows(ExtScreen):
 
         def done(count):
             if count == 1:
-                self.say("Скачиваю «%s». Ход загрузки — в «Загрузках»." % (tracks[0].get("name") or "песню"))
+                self.say(tr("Скачиваю «%s». Ход загрузки — в «Загрузках».") % (tracks[0].get("name") or tr("песню")))
             else:
-                self.say("В очереди на скачивание: %s" % tracks_label(count))
+                self.say(tr("В очереди на скачивание: %s") % tracks_label(count))
 
         self.run(task, done)
 
 
 BEST_ORDER = ("HI_RES_LOSSLESS", "HI_RES", "LOSSLESS")
-SIMPLE_QUALITIES = (("LOSSLESS", "Лучшее"), ("HIGH", "Экономное, меньше места"))
+SIMPLE_QUALITIES = (("LOSSLESS", tr("Лучшее")), ("HIGH", tr("Экономное, меньше места")))
 
 
 def simple_qualities(options):
@@ -293,12 +292,12 @@ def simple_qualities(options):
     best = best or (lossless[0] if lossless else (options[0] if options else None))
     result = []
     if best is not None:
-        result.append({"id": best.get("id"), "simple": True, "label": "Лучшее качество",
-                       "description": "Самый чистый звук. Файл больше: обычно 20–40 МБ на песню."})
+        result.append({"id": best.get("id"), "simple": True, "label": tr("Лучшее качество"),
+                       "description": tr("Самый чистый звук. Файл больше: обычно 20–40 МБ на песню.")})
     economy = next((q for q in lossy if q is not best), None)
     if economy is not None:
-        result.append({"id": economy.get("id"), "simple": True, "label": "Экономное",
-                       "description": "Меньше места: обычно 5–10 МБ на песню. На слух почти не отличить."})
+        result.append({"id": economy.get("id"), "simple": True, "label": tr("Экономное"),
+                       "description": tr("Меньше места: обычно 5–10 МБ на песню. На слух почти не отличить.")})
     return result
 
 
@@ -356,7 +355,7 @@ class DownloadSheet:
         self.services, default = data
         owner = self.owner
         if not self.services:
-            self.screen.say("Нет включённых сервисов скачивания. Включи их в «Расширениях».")
+            self.screen.say(tr("Нет включённых сервисов скачивания. Включи их в «Расширениях»."))
             return
         ids = [s["id"] for s in self.services]
         self.chosen = default if default in ids else ids[0]
@@ -384,12 +383,12 @@ class DownloadSheet:
         at.setMarginStart(_dp(14))
         head.addView(names, at)
         column.addView(head)
-        column.addView(self.heading("Скачать из"))
+        column.addView(self.heading(tr("Скачать из")))
         self.chips = LinearLayout(owner.context)
         self.chips.setOrientation(1)
         self.chips.setPadding(_dp(16), 0, _dp(16), 0)
         column.addView(self.chips)
-        column.addView(self.heading("Выбрать качество"))
+        column.addView(self.heading(tr("Выбрать качество")))
         self.qualities = LinearLayout(owner.context)
         self.qualities.setOrientation(1)
         column.addView(self.qualities)
@@ -486,8 +485,8 @@ class DownloadSheet:
             at = owner.params(8, 8)
             at.setMarginStart(_dp(8))
             chip.addView(dot, at)
-            description += {"online": ", работает", "offline": ", не отвечает"}.get(status, ", работает с перебоями")
-        chip.setContentDescription(description + (", выбран" if chosen else ""))
+            description += {"online": tr(", работает"), "offline": tr(", не отвечает")}.get(status, tr(", работает с перебоями"))
+        chip.setContentDescription(description + (tr(", выбран") if chosen else ""))
         chip.setOnClickListener(OnClick(lambda: self.choose(service["id"])))
         self.chip_views.append(chip)
         return chip
@@ -508,7 +507,7 @@ class DownloadSheet:
         if not advanced(owner.plugin):
             options = simple_qualities(options)
         if not options:
-            options = [{"id": "", "label": "Лучшее доступное", "description": "Сервис сам выберет качество"}]
+            options = [{"id": "", "label": tr("Лучшее доступное"), "description": tr("Сервис сам выберет качество")}]
         for option in options:
             qid = str(option.get("id") or "")
             if option.get("simple"):
@@ -544,7 +543,7 @@ class DownloadSheet:
             owner.tint(arrow, owner.color("textSecondary"))
             row.addView(arrow, owner.params(20, 20))
             row.setBackground(owner.selector(0))
-            row.setContentDescription("Скачать в качестве %s" % label)
+            row.setContentDescription(tr("Скачать в качестве %s") % label)
             row.setOnClickListener(OnClick(lambda q=qid or None: self.pick(q)))
             self.keep.append(row)
             self.qualities.addView(row)
@@ -579,7 +578,7 @@ class DownloadSearchScreen(RemoteRows):
         self.watcher = None
         self.clear_button = None
         self.pill_view = None
-        super().__init__(owner, "Поиск")
+        super().__init__(owner, tr("Поиск"))
         self.providers = []
         self.provider = ""
         self.filter = None
@@ -592,7 +591,7 @@ class DownloadSearchScreen(RemoteRows):
         scroller.setPadding(_dp(16), _dp(4), _dp(16), _dp(4))
         self.content.addView(scroller, Params(-1, -2))
         self.start_body()
-        self.note(self.body, "Загружаю…")
+        self.note(self.body, tr("Загружаю…"))
         self.run(self.load_providers, self.providers_loaded)
 
     def header(self, large=False, trailing=None):
@@ -602,9 +601,9 @@ class DownloadSearchScreen(RemoteRows):
         row.setGravity(16)
         row.setPadding(_dp(8), _dp(8), _dp(8), _dp(4))
         if not self.root_tab:
-            row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+            row.addView(self.icon_button(("ic_ab_back",), tr("Назад"), owner.back), owner.params(40, 40))
         self.title_view = self.label(30, "text", True)
-        self.title_view.setText("Поиск")
+        self.title_view.setText(tr("Поиск"))
         at = jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0)
         at.setMarginStart(_dp(12 if self.root_tab else 8))
         row.addView(self.title_view, at)
@@ -638,12 +637,12 @@ class DownloadSearchScreen(RemoteRows):
         owner.set_icon(arrow, ("arrow_more", "msg_arrow_more"))
         self.tint_icon(arrow, "textSecondary")
         picker.addView(arrow, owner.params(14, 14))
-        picker.setContentDescription("Сервис поиска")
+        picker.setContentDescription(tr("Сервис поиска"))
         picker.setBackground(owner.selector(_dp(16)))
         self.click(picker, self.provider_menu, picker)
         pill.addView(picker, jclass("android.widget.LinearLayout$LayoutParams")(-2, -1))
         self.field = jclass("android.widget.EditText")(owner.context)
-        self.field.setHint("Песня, альбом, исполнитель или ссылка")
+        self.field.setHint(tr("Песня, альбом, исполнитель или ссылка"))
         self.field.setTextSize(1, 17.0)
         self.field.setSingleLine(True)
         self.field.setBackground(None)
@@ -655,7 +654,7 @@ class DownloadSearchScreen(RemoteRows):
         self.watcher = TextChanged(lambda text: self.clear_button.setVisibility(0 if text else 8))
         self.field.addTextChangedListener(self.watcher)
         pill.addView(self.field, jclass("android.widget.LinearLayout$LayoutParams")(0, -1, 1.0))
-        self.clear_button = self.icon_button(("msg_close", "ic_close_white"), "Очистить", self.clear)
+        self.clear_button = self.icon_button(("msg_close", "ic_close_white"), tr("Очистить"), self.clear)
         self.clear_button.setVisibility(8)
         pill.addView(self.clear_button, owner.params(40, 40))
         return pill
@@ -693,9 +692,9 @@ class DownloadSearchScreen(RemoteRows):
         self.providers, self.provider, installed = data
         if not installed:
             self.clear_body()
-            self.note(self.body, "Поиск и скачивание идут через расширения Mornye: Deezer, Qobuz, Tidal, YouTube Music, "
-                                 "SoundCloud и другие. Установи нужные в каталоге.", size=15)
-            button = self.pill("Открыть каталог", True, self.owner.open_catalog)
+            self.note(self.body, tr("Поиск и скачивание идут через расширения Mornye: Deezer, Qobuz, Tidal, YouTube Music, "
+                                 "SoundCloud и другие. Установи нужные в каталоге."), size=15)
+            button = self.pill(tr("Открыть каталог"), True, self.owner.open_catalog)
             place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
             place.setMargins(_dp(20), _dp(16), 0, 0)
             self.body.addView(button, place)
@@ -743,17 +742,17 @@ class DownloadSearchScreen(RemoteRows):
         """Before a search: what was looked for lately, and the mixes that are a plan for now."""
         queries = self.history()
         if queries:
-            plate = self.card(self.body, "Недавние")
+            plate = self.card(self.body, tr("Недавние"))
             for query in queries:
                 self.item_row(plate, query, None, lambda q=query: self.search_again(q), icons=("msg_recent", "msg_clock", "msg_search"))
-            clear = self.pill("Очистить недавние", False, self.forget_all)
+            clear = self.pill(tr("Очистить недавние"), False, self.forget_all)
             place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
             place.setMargins(_dp(20), _dp(12), 0, 0)
             self.body.addView(clear, place)
         else:
-            self.note(self.body, "Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист.", size=15)
-        plate = self.card(self.body, "Миксы и подборки")
-        self.note(plate, "Появятся позже: подборки по жанрам и миксы из того, что ты слушаешь.", size=15, top=12)
+            self.note(self.body, tr("Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист."), size=15)
+        plate = self.card(self.body, tr("Миксы и подборки"))
+        self.note(plate, tr("Появятся позже: подборки по жанрам и миксы из того, что ты слушаешь."), size=15, top=12)
         spacer = jclass("android.view.View")(self.owner.context)
         plate.addView(spacer, jclass("android.widget.LinearLayout$LayoutParams")(-1, _dp(12)))
 
@@ -776,8 +775,8 @@ class DownloadSearchScreen(RemoteRows):
         current = self.current()
         if current is None:
             return
-        self.field.setHint(current["placeholder"] or "Искать в %s" % current["name"])
-        for option in [{"id": None, "label": "Все"}] + current["filters"]:
+        self.field.setHint(current["placeholder"] or tr("Искать в %s") % current["name"])
+        for option in [{"id": None, "label": tr("Все")}] + current["filters"]:
             chip = self.filter_chip(option, option["id"] == self.filter)
             at = Params(-2, _dp(40))
             at.setMarginEnd(_dp(8))
@@ -803,7 +802,7 @@ class DownloadSearchScreen(RemoteRows):
         name = self.label(15, "accent" if chosen else "text", chosen)
         name.setText(option["label"])
         chip.addView(name)
-        chip.setContentDescription(option["label"] + (", выбрано" if chosen else ""))
+        chip.setContentDescription(option["label"] + (tr(", выбрано") if chosen else ""))
         self.click(chip, self.pick_filter, option["id"])
         return chip
 
@@ -836,7 +835,7 @@ class DownloadSearchScreen(RemoteRows):
             if URL.match(query):
                 ext = manager.find_url_handler(query)
                 if not ext:
-                    raise RuntimeError("Ни одно расширение не понимает эту ссылку. Установи расширение того сервиса, откуда она.")
+                    raise RuntimeError(tr("Ни одно расширение не понимает эту ссылку. Установи расширение того сервиса, откуда она."))
                 return {"url": manager.provider_call(ext, "handleUrl", [query], 45000), "provider": ext}
             if provider:
                 with manager.lock:
@@ -877,20 +876,20 @@ class DownloadSearchScreen(RemoteRows):
             if self.root_tab:
                 self.draw_start()
             else:
-                self.note(self.body, "Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист.", size=15)
+                self.note(self.body, tr("Что послушаем? Ищи песни, альбомы и исполнителей или вставь ссылку на трек, альбом или плейлист."), size=15)
             return
         if result == "loading":
-            self.note(self.body, "Ищу «%s»…" % self.query, size=15)
+            self.note(self.body, tr("Ищу «%s»…") % self.query, size=15)
             return
         if result.get("error"):
-            self.note(self.body, "Не получилось найти. %s" % result["error"], size=15)
+            self.note(self.body, tr("Не получилось найти. %s") % result["error"], size=15)
             return
         if "url" in result:
             self.draw_url(result.get("url") or {}, result.get("provider"))
             return
         items = [i for i in (result.get("items") or []) if isinstance(i, dict)]
         if not items:
-            self.note(self.body, "Ничего не нашлось по «%s». Попробуй другой запрос или другой сервис." % self.query, size=15)
+            self.note(self.body, tr("Ничего не нашлось по «%s». Попробуй другой запрос или другой сервис.") % self.query, size=15)
             return
         for kind, title in SECTIONS:
             group = [i for i in items if kind_of(i) == kind]
@@ -901,7 +900,7 @@ class DownloadSearchScreen(RemoteRows):
         items = ([value["track"]] if isinstance(value.get("track"), dict) else []) + list(value.get("tracks") or [])
         mark_local(self.owner.data, items)
         if items:
-            self.item_rows(self.card(self.body, "Песни"), items)
+            self.item_rows(self.card(self.body, tr("Песни")), items)
         for kind in ("album", "artist"):
             found = value.get(kind)
             if isinstance(found, dict):
@@ -912,7 +911,7 @@ class DownloadSearchScreen(RemoteRows):
                     self.owner.open_remote(kind, ext, found.get("id"), found, loaded=found)
                 return
         if not items:
-            self.note(self.body, "По ссылке ничего не нашлось.", size=15)
+            self.note(self.body, tr("По ссылке ничего не нашлось."), size=15)
 
     def open_keyboard(self):
         if self.field is not None and self.alive:
@@ -947,16 +946,16 @@ class DownloadSearchScreen(RemoteRows):
 class DownloadsScreen(ExtScreen):
     """What is downloading, waiting, done or failed; rows keep their views while only the progress moves."""
 
-    STATUS = {"queued": "В очереди", "done": "Скачано, уже в медиатеке", "cancelled": "Отменено"}
+    STATUS = {"queued": tr("В очереди"), "done": tr("Скачано, уже в медиатеке"), "cancelled": tr("Отменено")}
 
     def __init__(self, owner):
-        super().__init__(owner, "Загрузки")
-        self.page(self.icon_button(("msg_settings",), "Настройки скачивания", owner.open_download_settings))
+        super().__init__(owner, tr("Загрузки"))
+        self.page(self.icon_button(("msg_settings",), tr("Настройки скачивания"), owner.open_download_settings))
         self.rows = {}
         self.names = {}
         self.signature = None
         self.start_body()
-        self.note(self.body, "Загружаю…")
+        self.note(self.body, tr("Загружаю…"))
         owner.plugin.extensions.listeners.append(self.refresh)
         self.refresh()
 
@@ -1002,12 +1001,12 @@ class DownloadsScreen(ExtScreen):
         self.clear_body()
         self.rows = {}
         active = sum(1 for i in items if i["status"] in ("queued", "running"))
-        self.set_subtitle("идёт: %d" % active if active else "")
+        self.set_subtitle(tr("идёт: %d") % active if active else "")
         if not items:
-            self.note(self.body, "Пока ничего не скачивалось. Найди песню в поиске вкладки Mornye: строка «Найти песню для скачивания».", size=15)
+            self.note(self.body, tr("Пока ничего не скачивалось. Найди песню в поиске вкладки Mornye: строка «Найти песню для скачивания»."), size=15)
             return
         if any(i["status"] in ("done", "failed", "cancelled") for i in items):
-            self.item_row(self.body, "Убрать завершённые", "Файлы останутся на телефоне.", self.clear_finished, icons=("msg_clear", "msg_delete"))
+            self.item_row(self.body, tr("Убрать завершённые"), tr("Файлы останутся на телефоне."), self.clear_finished, icons=("msg_clear", "msg_delete"))
         for item in reversed(items):
             self.add_row(item)
 
@@ -1023,14 +1022,14 @@ class DownloadsScreen(ExtScreen):
             image.setImage(str(item["cover"]), "96_96", None)
         status = item["status"]
         if status in ("queued", "running"):
-            button = self.icon_button(("msg_close", "ic_close_white"), "Отменить загрузку", self.act, "cancel", item["id"])
+            button = self.icon_button(("msg_close", "ic_close_white"), tr("Отменить загрузку"), self.act, "cancel", item["id"])
         elif self.needs_check(item) and item.get("service"):
-            button = self.pill("Проверить", True, lambda e=item["service"]: self.check(e))
-            button.setContentDescription("Пройти проверку сессии сервиса")
+            button = self.pill(tr("Проверить"), True, lambda e=item["service"]: self.check(e))
+            button.setContentDescription(tr("Пройти проверку сессии сервиса"))
         elif status in ("failed", "cancelled"):
-            button = self.icon_button(("msg_retry", "msg_reset", "msg_redo"), "Скачать снова", self.act, "retry", item["id"])
+            button = self.icon_button(("msg_retry", "msg_reset", "msg_redo"), tr("Скачать снова"), self.act, "retry", item["id"])
         else:
-            button = self.icon_button(("msg_delete",), "Убрать из списка", self.act, "remove", item["id"])
+            button = self.icon_button(("msg_delete",), tr("Убрать из списка"), self.act, "remove", item["id"])
         action = (lambda: self.play(item["path"])) if status == "done" and item.get("path") else None
         self.item_row(holder, item.get("title") or "", item.get("artist") or "", action, image=image, trailing=button)
         status_line = self.label(13, "accent" if status == "failed" else "textSecondary")
@@ -1053,15 +1052,15 @@ class DownloadsScreen(ExtScreen):
     def paint(self, parts, item):
         status = item["status"]
         if status == "running":
-            stage = STAGES.get(item.get("stage") or "", "Скачиваю")
+            stage = STAGES.get(item.get("stage") or "", tr("Скачиваю"))
             percent = int(round((item.get("progress") or 0.0) * 100))
             parts["status"].setText("%s… %d%%" % (stage, percent) if percent else "%s…" % stage)
         elif self.needs_check(item):
-            name = self.names.get(item.get("service") or "", item.get("service") or "Сервис")
-            parts["status"].setText("Сервис «%s» просит пройти проверку сессии. Нажми «Проверить»: откроется его страница, "
-                                    "после проверки загрузка начнётся снова." % name)
+            name = self.names.get(item.get("service") or "", item.get("service") or tr("Сервис"))
+            parts["status"].setText(tr("Сервис «%s» просит пройти проверку сессии. Нажми «Проверить»: откроется его страница, "
+                                    "после проверки загрузка начнётся снова.") % name)
         elif status == "failed":
-            parts["status"].setText("Не скачалось. %s" % describe(item.get("error") or "неизвестная ошибка"))
+            parts["status"].setText(tr("Не скачалось. %s") % describe(item.get("error") or tr("неизвестная ошибка")))
         else:
             parts["status"].setText(self.STATUS.get(status, status))
         running = status == "running"
@@ -1080,9 +1079,9 @@ class DownloadsScreen(ExtScreen):
     def play(self, path):
         track = self.owner.data.by_path.get(path)
         if track is None:
-            self.say("Песни ещё нет в медиатеке: она появится через пару секунд после скачивания.")
+            self.say(tr("Песни ещё нет в медиатеке: она появится через пару секунд после скачивания."))
             return
-        self.owner.play([track], 0, "Скачанное")
+        self.owner.play([track], 0, tr("Скачанное"))
 
     def dispose(self):
         listeners = self.owner.plugin.extensions.listeners
@@ -1095,10 +1094,10 @@ class DownloadSettingsScreen(ExtScreen):
     """Which service downloads, in what quality, what comes next when it fails, and whose metadata wins."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Скачивание")
+        super().__init__(owner, tr("Скачивание"))
         self.page()
         self.start_body()
-        self.note(self.body, "Загружаю…")
+        self.note(self.body, tr("Загружаю…"))
         self.refresh()
 
     def refresh(self):
@@ -1120,31 +1119,31 @@ class DownloadSettingsScreen(ExtScreen):
 
         plugin = self.owner.plugin
         full = advanced(plugin)
-        self.choice("Основной сервис скачивания", name(data["service"]) if data["service"] else "Нет включённых",
+        self.choice(tr("Основной сервис скачивания"), name(data["service"]) if data["service"] else tr("Нет включённых"),
                     [(ext, name(ext)) for ext in data["download"]], data["service"], lambda v: self.save("default_service", v))
         qualities = list(QUALITIES) if full else list(SIMPLE_QUALITIES)
-        current = dict(qualities).get(data["quality"]) or ("Лучшее" if data["quality"] in BEST_ORDER else "Экономное")
-        self.choice("Качество", current, qualities, data["quality"], lambda v: self.save("quality", v))
+        current = dict(qualities).get(data["quality"]) or (tr("Лучшее") if data["quality"] in BEST_ORDER else tr("Экономное"))
+        self.choice(tr("Качество"), current, qualities, data["quality"], lambda v: self.save("quality", v))
         direct = self.switch(plugin.get_setting("download_direct", False),
-                             lambda on: plugin.set_setting("download_direct", bool(on)), "Качать сразу основным сервисом")
-        self.item_row(self.body, "Качать сразу основным сервисом",
-                      "Нажатие на песню в поиске скачивает её без вопроса «Скачать из».", trailing=direct)
-        switch = self.switch(data["fallback"], lambda on: self.save("auto_fallback", on), "Запасные сервисы")
-        self.item_row(self.body, "Запасные сервисы", "Если основной сервис не нашёл песню, пробовать следующие по порядку.", trailing=switch)
+                             lambda on: plugin.set_setting("download_direct", bool(on)), tr("Качать сразу основным сервисом"))
+        self.item_row(self.body, tr("Качать сразу основным сервисом"),
+                      tr("Нажатие на песню в поиске скачивает её без вопроса «Скачать из»."), trailing=direct)
+        switch = self.switch(data["fallback"], lambda on: self.save("auto_fallback", on), tr("Запасные сервисы"))
+        self.item_row(self.body, tr("Запасные сервисы"), tr("Если основной сервис не нашёл песню, пробовать следующие по порядку."), trailing=switch)
         if not full:
-            self.note(self.body, "Сервис поиска, порядок сервисов и приоритет метаданных — в расширенном режиме: Настройки → Звук.",
+            self.note(self.body, tr("Сервис поиска, порядок сервисов и приоритет метаданных — в расширенном режиме: Настройки → Звук."),
                       size=13, top=16)
             return
-        searchers = [("", "Автоматически")] + [(ext, name(ext)) for ext in data["searchers"]]
-        self.choice("Сервис поиска", name(data["search"]) if data["search"] else "Автоматически", searchers, data["search"],
+        searchers = [("", tr("Автоматически"))] + [(ext, name(ext)) for ext in data["searchers"]]
+        self.choice(tr("Сервис поиска"), name(data["search"]) if data["search"] else tr("Автоматически"), searchers, data["search"],
                     lambda v: self.save("search_provider", v))
-        self.order("Порядок сервисов скачивания", "download", data["download"], name,
-                   "Сверху тот, кого пробовать первым, когда основной не справился.")
-        self.order("Приоритет метаданных", "metadata", data["metadata"], name,
-                   "Чьи название, альбом, обложка и теги берутся первыми при поиске и скачивании.")
+        self.order(tr("Порядок сервисов скачивания"), "download", data["download"], name,
+                   tr("Сверху тот, кого пробовать первым, когда основной не справился."))
+        self.order(tr("Приоритет метаданных"), "metadata", data["metadata"], name,
+                   tr("Чьи название, альбом, обложка и теги берутся первыми при поиске и скачивании."))
         if data["lyrics"]:
-            self.order("Приоритет текстов", "lyrics", data["lyrics"], name,
-                       "У кого текст песни спрашивать первым. Если никто не нашёл, текст берётся из LRCLIB.")
+            self.order(tr("Приоритет текстов"), "lyrics", data["lyrics"], name,
+                       tr("У кого текст песни спрашивать первым. Если никто не нашёл, текст берётся из LRCLIB."))
 
     def choice(self, label, current, options, value, chosen):
         row, _, _ = self.item_row(self.body, label, current, None)
@@ -1164,15 +1163,15 @@ class DownloadSettingsScreen(ExtScreen):
         self.section(self.body, title)
         self.note(self.body, hint, size=12, top=0)
         if not ids:
-            self.note(self.body, "Нет включённых расширений этого вида.", size=14)
+            self.note(self.body, tr("Нет включённых расширений этого вида."), size=14)
             return
         for index, ext in enumerate(ids):
             buttons = jclass("android.widget.LinearLayout")(self.owner.context)
             buttons.setOrientation(0)
             if index > 0:
-                buttons.addView(self.icon_button(("msg_go_up",), "Выше: %s" % name(ext), self.move, kind, ids, index, -1), self.owner.params(40, 40))
+                buttons.addView(self.icon_button(("msg_go_up",), tr("Выше: %s") % name(ext), self.move, kind, ids, index, -1), self.owner.params(40, 40))
             if index < len(ids) - 1:
-                buttons.addView(self.icon_button(("msg_go_down",), "Ниже: %s" % name(ext), self.move, kind, ids, index, 1), self.owner.params(40, 40))
+                buttons.addView(self.icon_button(("msg_go_down",), tr("Ниже: %s") % name(ext), self.move, kind, ids, index, 1), self.owner.params(40, 40))
             self.item_row(self.body, "%d. %s" % (index + 1, name(ext)), "", trailing=buttons)
 
     def move(self, kind, ids, index, step):

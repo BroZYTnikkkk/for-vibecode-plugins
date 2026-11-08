@@ -6,6 +6,7 @@ from base_plugin import MethodHook
 from java import jclass
 from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
+from .i18n import language, tr
 from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp, _log
 from . import link_stream
 from .music import local_path
@@ -215,6 +216,18 @@ class ShowMenuHook(_Hook):
             player = self.plugin.player
             if player is not None and player.open_song_menu():
                 param.setResult(None)
+        except Exception as e:
+            self.fail(e)
+
+
+class LyricsStateHook(_Hook):
+    """LyricsView.setState: the offer to look a text up names only one service, and there are more."""
+
+    def before_hooked_method(self, param):
+        try:
+            # a language the plugin has no words for keeps exteraGram's own sentence
+            if "LRCLIB" in str(param.args[2] or "") and language() in ("ru", "uk", "en"):
+                param.args[2] = tr("Название и исполнитель уйдут сервисам поиска текстов, а не через Telegram.")
         except Exception as e:
             self.fail(e)
 

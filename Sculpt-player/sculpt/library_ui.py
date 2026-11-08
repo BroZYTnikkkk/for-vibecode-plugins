@@ -7,6 +7,7 @@ import time
 from android_utils import OnClickListener, run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 
+from .i18n import tr
 from .common import COLORS_SECONDS, COVERS_DELIVERY_MS, GROUP_COVER_TRIES, NO_TRACK_NUMBER, PANEL_ACTIVE, PERMISSION_POLLS, PERMISSION_REQUEST, PREVIEW_MAX, SORT_MODES, THUMB_AREA, THUMB_H, THUMB_MIN_ROWS, TILE_RADIUS, TILE_SIZE, _dp, tab_scrim
 from .music import first_letter, format_time, local_path, songs_label, sort_text, track_number
 
@@ -265,9 +266,9 @@ class Screen:
         row.setGravity(16)  # center vertically
         row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
         if large:
-            row.addView(self.icon_button(("arrow_more",), "Закрыть плеер", owner.close_player), owner.params(40, 40))
+            row.addView(self.icon_button(("arrow_more",), tr("Закрыть плеер"), owner.close_player), owner.params(40, 40))
         else:
-            row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+            row.addView(self.icon_button(("ic_ab_back",), tr("Назад"), owner.back), owner.params(40, 40))
         column = jclass("android.widget.LinearLayout")(owner.context)
         column.setOrientation(1)
         self.title_view = self.label(28 if large else 20, "text", True)
@@ -582,7 +583,7 @@ class SongsScreen(ListScreen):
         self.sort_mode, self.reverse = self.read_sort()
         trailing = None
         if list_id is not None:
-            trailing = self.icon_button(("msg_filter",), "Сортировка", self.show_sort)
+            trailing = self.icon_button(("msg_filter",), tr("Сортировка"), self.show_sort)
         self.build(trailing, empty_text)
 
     def toolbar(self):
@@ -604,7 +605,7 @@ class SongsScreen(ListScreen):
         self.tint_icon(icon, "textSecondary")
         pill.addView(icon, owner.params(20, 20))
         field = jclass("android.widget.EditText")(owner.context)
-        field.setHint("Искать в списке")
+        field.setHint(tr("Искать в списке"))
         field.setTextSize(1, 15.0)
         field.setSingleLine(True)
         field.setBackground(None)
@@ -615,7 +616,7 @@ class SongsScreen(ListScreen):
         self.filter_watcher = TextChanged(lambda text: self.guarded(self.filter_changed, text))
         field.addTextChangedListener(self.filter_watcher)
         pill.addView(field, Params(0, -1, 1.0))
-        self.filter_clear = self.icon_button(("msg_close", "ic_close_white"), "Очистить поиск", self.clear_filter)
+        self.filter_clear = self.icon_button(("msg_close", "ic_close_white"), tr("Очистить поиск"), self.clear_filter)
         self.filter_clear.setVisibility(8)
         pill.addView(self.filter_clear, owner.params(36, 36))
         self.filter_pill = pill
@@ -630,11 +631,11 @@ class SongsScreen(ListScreen):
         self.tint_icon(mark, "accent")
         shuffle.addView(mark, owner.params(20, 20))
         word = self.label(15, "accent", True)
-        word.setText("Перемешать")
+        word.setText(tr("Перемешать"))
         at = Params(-2, -2)
         at.setMarginStart(_dp(6))
         shuffle.addView(word, at)
-        shuffle.setContentDescription("Перемешать: включить случайную песню из этого списка")
+        shuffle.setContentDescription(tr("Перемешать: включить случайную песню из этого списка"))
         self.click(shuffle, self.shuffle)
         self.shuffle_pill = shuffle
         place = Params(-2, _dp(44))
@@ -683,7 +684,7 @@ class SongsScreen(ListScreen):
     def shuffle(self):
         """A random song of this list (of what the search left); the player's shuffle mode decides the rest."""
         if not self.tracks:
-            self.owner.plugin.bulletin(self.owner.player.sheet, "info", "В этом списке нет песен.")
+            self.owner.plugin.bulletin(self.owner.player.sheet, "info", tr("В этом списке нет песен."))
             return
         self.close_keyboard()
         self.owner.play(self.tracks, random.randrange(len(self.tracks)), self.title_text)
@@ -721,12 +722,12 @@ class SongsScreen(ListScreen):
         later = owner.player.start_menu()
         modes = list(SORT_MODES)
         if self.default_sort == "track":
-            modes.insert(0, ("track", "По номеру"))
+            modes.insert(0, ("track", tr("По номеру")))
         for mode, title in modes:
             menu.add(check if mode == self.sort_mode else 0, title,
                      later(lambda m=mode: self.pick_sort(menu, m, self.reverse)))
         menu.addGap()
-        menu.add(check if self.reverse else 0, "В обратном порядке", later(lambda: self.pick_sort(menu, self.sort_mode, not self.reverse)))
+        menu.add(check if self.reverse else 0, tr("В обратном порядке"), later(lambda: self.pick_sort(menu, self.sort_mode, not self.reverse)))
         owner.player.show_menu(menu)
 
     def pick_sort(self, menu, mode, reverse):
@@ -765,9 +766,9 @@ class SongsScreen(ListScreen):
             tracks.sort(key=self.sort_key, reverse=self.reverse)
         self.tracks = tracks
         if self.FILTERED and self.filter_query:
-            self.set_subtitle("%d из %s" % (len(tracks), songs_label(len(everything))))
+            self.set_subtitle(tr("%d из %s") % (len(tracks), songs_label(len(everything))))
             if self.empty is not None:
-                self.empty.setText("Ничего не нашлось по «%s» в этом списке." % self.filter_query)
+                self.empty.setText(tr("Ничего не нашлось по «%s» в этом списке.") % self.filter_query)
         else:
             self.set_subtitle(songs_label(len(tracks)) if tracks else "")
             if self.empty is not None and self.FILTERED:
@@ -789,7 +790,7 @@ class SongsScreen(ListScreen):
         if mode == "added":
             return time.strftime("%m.%y", time.localtime(self.when(track)))
         if mode == "duration":
-            return "%d мин" % (track.get("duration", 0) // 60)
+            return tr("%d мин") % (track.get("duration", 0) // 60)
         if mode == "track":
             number = track_number(track)
             return str(number % 1000) if number < NO_TRACK_NUMBER else "#"
@@ -828,9 +829,9 @@ class GroupsScreen(ListScreen):
         super().__init__(owner, title)
         self.kind = kind
         self.items = []
-        empty = {"artists": "Здесь появятся авторы твоих песен.",
-                 "albums": "Здесь появятся альбомы. Песни без альбома в тегах сюда не попадают.",
-                 "genres": "Здесь появятся жанры. Android знает их только из тегов файлов, а у этих песен жанр не указан."}[kind]
+        empty = {"artists": tr("Здесь появятся авторы твоих песен."),
+                 "albums": tr("Здесь появятся альбомы. Песни без альбома в тегах сюда не попадают."),
+                 "genres": tr("Здесь появятся жанры. Android знает их только из тегов файлов, а у этих песен жанр не указан.")}[kind]
         self.build(None, empty)
 
     def refresh(self):
@@ -886,14 +887,14 @@ class BlankScreen(Screen):
 class SearchScreen(SongsScreen):
     """Songs of the library by name, author or album; each letter narrows the list."""
 
-    HINT = "Начни вводить название песни, автора или альбом."
+    HINT = tr("Начни вводить название песни, автора или альбом.")
     FILTERED = False
 
     def __init__(self, owner):
         self.query = ""
         self.field = None
         self.watcher = None
-        super().__init__(owner, "Поиск", self.matches, None, "title", self.HINT)
+        super().__init__(owner, tr("Поиск"), self.matches, None, "title", self.HINT)
         run_on_ui_thread(self.open_keyboard, 250)
 
     def header(self, large=False, trailing=None):
@@ -902,9 +903,9 @@ class SearchScreen(SongsScreen):
         row.setOrientation(0)
         row.setGravity(16)
         row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
-        row.addView(self.icon_button(("ic_ab_back",), "Назад", owner.back), owner.params(40, 40))
+        row.addView(self.icon_button(("ic_ab_back",), tr("Назад"), owner.back), owner.params(40, 40))
         self.field = jclass("android.widget.EditText")(owner.context)
-        self.field.setHint("Песня, автор или альбом")
+        self.field.setHint(tr("Песня, автор или альбом"))
         self.field.setTextSize(1, 18.0)
         self.field.setSingleLine(True)
         self.field.setBackground(None)
@@ -954,7 +955,7 @@ class SearchScreen(SongsScreen):
     def refresh(self):
         super().refresh()
         if self.empty is not None:
-            self.empty.setText("Ничего не нашлось по запросу «%s»." % self.query if self.query else self.HINT)
+            self.empty.setText(tr("Ничего не нашлось по запросу «%s».") % self.query if self.query else self.HINT)
 
     def open_keyboard(self):
         if self.field is not None and self.owner.visible:
@@ -971,7 +972,7 @@ class SearchScreen(SongsScreen):
 
     def row_clicked(self, index, view):
         self.close_keyboard()
-        self.owner.play(self.tracks, index, "Поиск: %s" % self.query)
+        self.owner.play(self.tracks, index, tr("Поиск: %s") % self.query)
 
     def dispose(self):
         self.close_keyboard()
@@ -990,7 +991,7 @@ class RootScreen(Screen):
     """The first level: places to go first, the two rows of covers under them."""
 
     def __init__(self, owner):
-        super().__init__(owner, "Медиатека")
+        super().__init__(owner, tr("Медиатека"))
         LinearLayout = jclass("android.widget.LinearLayout")
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         context = owner.context
@@ -1012,7 +1013,7 @@ class RootScreen(Screen):
         self.message.setPadding(_dp(32), 0, _dp(32), _dp(16))
         self.button = self.label(15, "onAccent", True)
         self.button.setGravity(17)
-        self.button.setText("Разрешить")
+        self.button.setText(tr("Разрешить"))
         self.click(self.button, owner.ask_permission)
         self.notice = LinearLayout(context)
         self.notice.setOrientation(1)
@@ -1026,13 +1027,13 @@ class RootScreen(Screen):
 
         self.counts = {}
         self.tile_views = []
-        self.search_pill(self.content, "Искать в медиатеке", owner.open_search)
-        self.nav("all",("msg_filled_data_music", "msg_played"), "Все песни", owner.open_all)
-        self.nav("favorites", ("media_like",), "Любимые", owner.open_favorites)
-        self.nav(None, ("msg_stats",), "Популярные", owner.open_popular)
+        self.search_pill(self.content, tr("Искать в медиатеке"), owner.open_search)
+        self.nav("all",("msg_filled_data_music", "msg_played"), tr("Все песни"), owner.open_all)
+        self.nav("favorites", ("media_like",), tr("Любимые"), owner.open_favorites)
+        self.nav(None, ("msg_stats",), tr("Популярные"), owner.open_popular)
         self.tiles()
-        self.added_row = self.preview("Недавно добавленные", owner.open_added)
-        self.played_row = self.preview("Недавно сыгранные", owner.open_played)
+        self.added_row = self.preview(tr("Недавно добавленные"), owner.open_added)
+        self.played_row = self.preview(tr("Недавно сыгранные"), owner.open_played)
         self.colors_changed()
         self.refresh()
 
@@ -1056,9 +1057,9 @@ class RootScreen(Screen):
         row = LinearLayout(owner.context)
         row.setOrientation(0)
         row.setPadding(_dp(16), _dp(8), _dp(16), _dp(8))
-        for index, (kind, title, icons) in enumerate((("artists", "Авторы", ("msg_contacts",)),
-                                                      ("albums", "Альбомы", ("msg_media",)),
-                                                      ("genres", "Жанры", ("msg_voice_headphones",)))):
+        for index, (kind, title, icons) in enumerate((("artists", tr("Авторы"), ("msg_contacts",)),
+                                                      ("albums", tr("Альбомы"), ("msg_media",)),
+                                                      ("genres", tr("Жанры"), ("msg_voice_headphones",)))):
             tile = LinearLayout(owner.context)
             tile.setOrientation(1)
             tile.setGravity(17)
@@ -1093,7 +1094,7 @@ class RootScreen(Screen):
         name.setText(title)
         head.addView(name, Params(0, -2, 1.0))
         more = self.label(14, "accent")
-        more.setText("Показать всё")
+        more.setText(tr("Показать всё"))
         head.addView(more)
         arrow = ImageView(owner.context)
         owner.set_icon(arrow, ("msg_arrowright",))
@@ -1144,11 +1145,11 @@ class RootScreen(Screen):
         data = self.owner.data
         has_songs = bool(data.tracks)
         if not has_songs and not data.has_permission():
-            self.message.setText("Разреши доступ к музыке на телефоне, чтобы песни появились в медиатеке.")
+            self.message.setText(tr("Разреши доступ к музыке на телефоне, чтобы песни появились в медиатеке."))
             self.button.setVisibility(0)
         elif not has_songs:
-            self.message.setText("Ищу музыку на телефоне." if data.scanning or not data.loaded
-                                 else "На телефоне пока нет песен. Добавь музыку, и она появится здесь.")
+            self.message.setText(tr("Ищу музыку на телефоне.") if data.scanning or not data.loaded
+                                 else tr("На телефоне пока нет песен. Добавь музыку, и она появится здесь."))
             self.button.setVisibility(8)
         self.scroll.setVisibility(0 if has_songs else 8)
         self.notice.setVisibility(8 if has_songs else 0)
@@ -1158,7 +1159,7 @@ class RootScreen(Screen):
         favorites = data.favorite_tracks()
         self.counts["favorites"].setText(str(len(favorites)) if favorites else "")
         self.fill(self.added_row, data.recently_added(), "")
-        self.fill(self.played_row, data.history_tracks(), "Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд.")
+        self.fill(self.played_row, data.history_tracks(), tr("Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд."))
 
 
 class LibraryView:
@@ -1386,13 +1387,13 @@ class LibraryView:
         later = self.player.start_menu()
         if extra is not None:
             extra(menu, later)
-        menu.add(self.resource("msg_info"), "Информация о песне", later(lambda: self.menu_action(menu, self.song_info, track)))
-        menu.add(self.resource("menu_tag_edit") or self.resource("msg_edit"), "Изменить теги",
+        menu.add(self.resource("msg_info"), tr("Информация о песне"), later(lambda: self.menu_action(menu, self.song_info, track)))
+        menu.add(self.resource("menu_tag_edit") or self.resource("msg_edit"), tr("Изменить теги"),
                  later(lambda: self.menu_action(menu, self.edit_tags, track["path"])))
-        menu.add(self.resource("msg_played"), "Играть следующей", later(lambda: self.menu_action(menu, self.queue_next, track)))
-        menu.add(self.resource("player_new_queue"), "В конец очереди", later(lambda: self.menu_action(menu, self.queue_last, track)))
+        menu.add(self.resource("msg_played"), tr("Играть следующей"), later(lambda: self.menu_action(menu, self.queue_next, track)))
+        menu.add(self.resource("player_new_queue"), tr("В конец очереди"), later(lambda: self.menu_action(menu, self.queue_last, track)))
         favorite = self.data.is_favorite(path)
-        menu.add(self.resource("media_like_active" if favorite else "media_like"), "Убрать из любимых" if favorite else "В любимые",
+        menu.add(self.resource("media_like_active" if favorite else "media_like"), tr("Убрать из любимых") if favorite else tr("В любимые"),
                  later(lambda: self.menu_action(menu, self.toggle_favorite, path)))
         self.player.add_playlist_item(menu, path)
         self.player.show_menu(menu)
@@ -1415,15 +1416,15 @@ class LibraryView:
 
     def queue_next(self, track):
         self.data.play_next(track)
-        self.plugin.bulletin(self.player.sheet, "saved_messages", "Песня заиграет следующей")
+        self.plugin.bulletin(self.player.sheet, "saved_messages", tr("Песня заиграет следующей"))
 
     def queue_last(self, track):
         self.data.play_last(track)
-        self.plugin.bulletin(self.player.sheet, "saved_messages", "Песня добавлена в конец очереди")
+        self.plugin.bulletin(self.player.sheet, "saved_messages", tr("Песня добавлена в конец очереди"))
 
     def toggle_favorite(self, path):
         added = self.data.toggle_favorite(path)
-        self.plugin.bulletin(self.player.sheet, "saved_messages" if added else "ic_delete", "Добавлено в любимые" if added else "Убрано из любимых")
+        self.plugin.bulletin(self.player.sheet, "saved_messages" if added else "ic_delete", tr("Добавлено в любимые") if added else tr("Убрано из любимых"))
         self.data_changed()
         self.player.update_like()
 
@@ -1563,21 +1564,21 @@ class LibraryView:
         self.push(SearchScreen(self))
 
     def open_all(self):
-        self.push(SongsScreen(self, "Все песни", lambda: self.data.tracks, "all", "title"))
+        self.push(SongsScreen(self, tr("Все песни"), lambda: self.data.tracks, "all", "title"))
 
     def open_favorites(self):
-        self.push(SongsScreen(self, "Любимые", self.data.favorite_tracks, "favorites", "added",
-                              "Здесь будут песни, которые ты отметишь сердечком. Отметить можно в плеере или долгим нажатием на песню.", fav_dates=True))
+        self.push(SongsScreen(self, tr("Любимые"), self.data.favorite_tracks, "favorites", "added",
+                              tr("Здесь будут песни, которые ты отметишь сердечком. Отметить можно в плеере или долгим нажатием на песню."), fav_dates=True))
 
     def open_added(self):
-        self.push(SongsScreen(self, "Недавно добавленные", lambda: self.data.tracks, "added", "added"))
+        self.push(SongsScreen(self, tr("Недавно добавленные"), lambda: self.data.tracks, "added", "added"))
 
     def open_played(self):
-        self.push(SongsScreen(self, "Недавно сыгранные", self.data.history_tracks, None, "title",
-                              "Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд."))
+        self.push(SongsScreen(self, tr("Недавно сыгранные"), self.data.history_tracks, None, "title",
+                              tr("Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд.")))
 
     def open_popular(self):
-        self.push(BlankScreen(self, "Популярные", "Здесь появятся песни, которые ты слушаешь чаще всего."))
+        self.push(BlankScreen(self, tr("Популярные"), tr("Здесь появятся песни, которые ты слушаешь чаще всего.")))
 
     def open_groups(self, kind, title):
         self.push(GroupsScreen(self, kind, title))
@@ -1601,7 +1602,7 @@ class LibraryView:
         block.setOrientation(1)
         block.setLayoutParams(jclass("android.widget.AbsListView$LayoutParams")(-1, -2))
         name = screen.label(17, "text", True)
-        name.setText("Альбомы")
+        name.setText(tr("Альбомы"))
         name.setPadding(_dp(20), _dp(8), _dp(20), _dp(12))
         block.addView(name)
         scroller, row = screen.sideways()
@@ -1613,7 +1614,7 @@ class LibraryView:
             row.addView(tile["view"], place)
         block.addView(scroller, Params(-1, -2))
         songs = screen.label(17, "text", True)
-        songs.setText("Песни")
+        songs.setText(tr("Песни"))
         songs.setPadding(_dp(20), _dp(16), _dp(20), _dp(8))
         block.addView(songs)
         return block

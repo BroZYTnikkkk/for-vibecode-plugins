@@ -14,6 +14,7 @@ from file_utils import get_files_dir
 from java import jarray, jbyte, jclass, jint
 from java.lang import Integer as JInteger, Long as JLong
 
+from .i18n import plural, tr
 from .common import ARTIST_SEP, COVER_SIZE, GENERIC_FOLDERS, HISTORY_MAX, LISTEN_SECONDS, LISTEN_TICK_MS, NO_TRACK_NUMBER, QUEUE_MAX, UNKNOWN_ARTIST, _ctx, _log, sculpt_method, MEDIA_CONTROLLER, QUEUE_HEAD, QUEUE_CHUNK
 
 try:
@@ -72,16 +73,7 @@ def first_letter(text):
 
 
 def songs_label(count):
-    tail = count % 100
-    if 11 <= tail <= 14:
-        word = "песен"
-    elif count % 10 == 1:
-        word = "песня"
-    elif 2 <= count % 10 <= 4:
-        word = "песни"
-    else:
-        word = "песен"
-    return "%d %s" % (count, word)
+    return "%d %s" % (count, plural(count, tr("песня"), tr("песни"), tr("песен")))
 
 
 def format_time(seconds):
@@ -266,6 +258,7 @@ class MusicData:
         self.covers = CoverCache(self.dir)
         self.tracks = []
         self.by_path = {}
+        self.queue_settling = False  # a saved queue is being built around the song it started from
         self.loaded = False
         self.scanning = False
         self.rescan = False
@@ -601,7 +594,7 @@ class MusicData:
 
     # -- playback -----------------------------------------------------------
 
-    def java_queue(self, tracks):
+    def java_queue(self, tracks, first=None):
         """MessageObjects for the tracks, built by sculpt.Queue in one call; None when the DEX is not there."""
         builder = sculpt_method("sculpt.Queue", "build")
         if builder is None:
@@ -609,8 +602,9 @@ class MusicData:
         UserConfig = jclass("org.telegram.messenger.UserConfig")
         account = UserConfig.selectedAccount
         user_id = UserConfig.getInstance(account).getClientUserId()
-        first = self.id_seq + 1
-        self.id_seq += len(tracks)
+        if first is None:
+            first = self.id_seq + 1
+            self.id_seq += len(tracks)
         strings = jarray(jclass("java.lang.String"))
         # Method.invoke boxes plain Python ints as Long: every int parameter gets its own Integer
         return builder.invoke(None, JInteger(account), JLong(user_id), JInteger(first), JInteger(int(time.time())),
@@ -667,15 +661,72 @@ class MusicData:
         document.attributes.add(name)
         return jclass("org.telegram.messenger.MessageObject")(account, message, False, True)
 
-    def _messages(self, tracks):
-        """(ArrayList of MessageObjects, "java" or "python")."""
-        items = self.java_queue(tracks)
+    def _messages(self, tracks, first=None):
+        """(ArrayList of MessageObjects, "java" or "python"). first: the id of the first one, when they are given ahead."""
+        items = self.java_queue(tracks, first)
         if items is not None:
             return items, "java"
         items = jclass("java.util.ArrayList")()
         for track in tracks:
             items.add(self.message_for(track))
         return items, "python"
+
+    def play_in_place(self, tracks, index, title="", progress=0.0):
+        """A saved queue from one of its songs: its order stays, with the songs before that one built after it."""
+        if not tracks:
+            return
+        queues = getattr(self.plugin, "queues", None)
+        if queues is not None:
+            queues.library_started(title, tracks, index, progress)
+        queue = tracks[:QUEUE_MAX]
+        index = min(index, len(queue) - 1)
+        self.queue_generation += 1
+        generation = self.queue_generation
+        base = self.id_seq + 1
+        self.id_seq += len(queue)
+        self.queue_settling = True
+        self.covers.warm([t["path"] for t in queue[index:index + 8]], first=True)
+        end = index + QUEUE_HEAD
+        parts = [(i, min(i + QUEUE_CHUNK, len(queue)), False) for i in range(end, len(queue), QUEUE_CHUNK)]
+        parts += [(max(0, i - QUEUE_CHUNK), i, True) for i in range(index, 0, -QUEUE_CHUNK)]
+
+        def head():
+            try:
+                items, way = self._messages(queue[index:end], base + index)
+                first = items.get(0)
+                timing = {"songs": items.size(), "way": way, "waited": 0.0, "built": 0.0}
+                first_id = first.getId()
+                run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress))
+                run_on_queue(lambda: self._build_around(generation, queue, base, parts, first_id))
+            except Exception as e:
+                failure = e
+                self.queue_settling = False
+                run_on_ui_thread(lambda: self.plugin.report("play", failure))
+
+        run_on_queue(head)
+
+    def _build_around(self, generation, queue, base, parts, first_id):
+        if generation != self.queue_generation:
+            return
+        if not parts:
+            self.queue_settling = False
+            run_on_ui_thread(self._queue_settled)
+            return
+        try:
+            start, end, earlier = parts[0]
+            items, _ = self._messages(queue[start:end], base + start)
+            run_on_ui_thread(lambda: self._append(generation, items, first_id, earlier))
+            run_on_queue(lambda: self._build_around(generation, queue, base, parts[1:], first_id))
+        except Exception as e:
+            _log("queue part failed to build: %s" % type(e).__name__)
+            self.queue_settling = False
+            run_on_ui_thread(self._queue_settled)
+
+    def _queue_settled(self):
+        player = self.plugin.player
+        screen = getattr(player, "queue_screen", None) if player is not None else None
+        if screen is not None:
+            screen.guarded(screen.refresh)
 
     def play(self, tracks, index, title="", progress=0.0):
         """The list becomes the queue, starting from the song that was tapped, `progress` (0..1) into it.
@@ -753,7 +804,7 @@ class MusicData:
             failure = e
             run_on_ui_thread(lambda: self.plugin.report("queue", failure))
 
-    def _append(self, generation, items, first_id):
+    def _append(self, generation, items, first_id, earlier=False):
         """Songs that come after everything already queued, in the order the list had them.
 
         MediaController keeps a library queue sorted by id from the largest down and walks it towards index 0,
@@ -776,7 +827,14 @@ class MusicData:
             Collections.reverse(newest_first)
             count = items.size()
             number = controller.getPlayingMessageObjectNum()
-            if config.shuffleMusic:
+            if earlier and not config.shuffleMusic:
+                # songs of a smaller id: behind the others in the list that goes from the largest down
+                if config.playOrderReversed:
+                    playlist.addAll(0, items)
+                    self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + count)
+                else:
+                    playlist.addAll(newest_first)
+            elif config.shuffleMusic:
                 mixed = jclass("java.util.ArrayList")(items)
                 Collections.shuffle(mixed)
                 playlist.addAll(0, newest_first)

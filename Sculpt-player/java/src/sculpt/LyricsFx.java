@@ -12,8 +12,10 @@ import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.os.Build;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.LinearInterpolator;
 import android.view.animation.PathInterpolator;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -31,6 +33,7 @@ public final class LyricsFx {
     private static final long EASE_MS = 420;
     private static final int BACKDROP_SIZE = 96;
     private static final int BACKDROP_RADIUS = 4;
+    private static final int DOTS_WIDTH_DP = 43;  // three dots of 9 dp, 7 dp apart, at the largest they pulse to
 
     private static final WeakHashMap<View, float[]> STATE = new WeakHashMap<>();  // value, from, to
     private static final Paint PAINT = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
@@ -183,6 +186,19 @@ public final class LyricsFx {
                 ((TextView) view).setGravity(gravity);
             }
             view.post(() -> view.setPivotX(mode == 0 ? 0f : mode == 2 ? view.getWidth() : view.getWidth() / 2f));
+        }
+        // the three dots of a pause fill their row and draw from its left edge: only a row as wide as they are can move
+        if (!lines.isEmpty() && lines.get(0).getParent() instanceof ViewGroup) {
+            ViewGroup column = (ViewGroup) lines.get(0).getParent();
+            for (int i = 0; i < column.getChildCount(); i++) {
+                View child = column.getChildAt(i);
+                if ("DotsView".equals(child.getClass().getSimpleName()) && child.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                    LinearLayout.LayoutParams place = (LinearLayout.LayoutParams) child.getLayoutParams();
+                    place.width = mode == 0 ? ViewGroup.LayoutParams.MATCH_PARENT : Math.round(DOTS_WIDTH_DP * child.getResources().getDisplayMetrics().density);
+                    place.gravity = gravity;
+                    child.setLayoutParams(place);
+                }
+            }
         }
     }
 

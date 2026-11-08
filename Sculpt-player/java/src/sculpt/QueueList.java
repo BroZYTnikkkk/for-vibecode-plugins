@@ -83,13 +83,18 @@ public class QueueList extends RecyclerView {
     private int handleIcon;
     private int menuIcon;
 
+    private static String dragLabel = "";
+    private static String menuLabel = "";
+
     // -- what Python calls -----------------------------------------------------------------
     //
     // Python never holds a QueueList: a reinstalled plugin loads this DEX again, and Chaquopy, still keeping
     // the first QueueList class by name, cannot wrap an object of the new one (whatever type it is read as).
     // So the list lives inside a plain FrameLayout that Python owns, and every call goes through it.
 
-    public static void attach(Context context, Handler.Callback events, ViewGroup holder) {
+    public static void attach(Context context, Handler.Callback events, ViewGroup holder, String drag, String menu) {
+        dragLabel = drag;
+        menuLabel = menu;
         holder.addView(new QueueList(context, events), new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -398,7 +403,7 @@ public class QueueList extends RecyclerView {
 
             handle = new ImageView(context);
             handle.setScaleType(ImageView.ScaleType.CENTER);
-            handle.setContentDescription("Перетащить");
+            handle.setContentDescription(dragLabel);
             handle.setOnTouchListener((v, event) -> {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN && dragEnabled) {
                     dragger.startDrag(Holder.this);
@@ -440,7 +445,7 @@ public class QueueList extends RecyclerView {
 
             menu = new ImageView(context);
             menu.setScaleType(ImageView.ScaleType.CENTER);
-            menu.setContentDescription("Меню песни");
+            menu.setContentDescription(menuLabel);
             menu.setOnClickListener(v -> {
                 int position = getAdapterPosition();
                 if (position >= 0) {

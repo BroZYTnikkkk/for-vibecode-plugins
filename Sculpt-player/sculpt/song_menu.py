@@ -9,6 +9,7 @@ from android_utils import OnClickListener
 from java import jarray, jclass
 from java.lang import Integer as JInteger
 
+from .i18n import tr
 from .common import MEDIA_CONTROLLER, _ctx, _dp, _java_class, _log
 from .library_ui import Run
 from .music import local_path
@@ -18,9 +19,9 @@ TITLE_MAX_DP = 220
 
 
 def human_size(size):
-    for unit in ("Б", "КБ", "МБ", "ГБ"):
-        if size < 1024 or unit == "ГБ":
-            return ("%.1f %s" % (size, unit)) if unit != "Б" else ("%d %s" % (size, unit))
+    for unit in (tr("Б"), tr("КБ"), tr("МБ"), tr("ГБ")):
+        if size < 1024 or unit == tr("ГБ"):
+            return ("%.1f %s" % (size, unit)) if unit != tr("Б") else ("%d %s" % (size, unit))
         size /= 1024.0
     return ""
 
@@ -47,19 +48,19 @@ class SongMenu:
         self.menu = menu
         later = self.player.start_menu()
         menu.addView(self.header())
-        menu.add(self.icon("msg_info", "menu_info"), "Информация о песне", later(self.info))
-        menu.add(self.icon("msg_remove", "msg_delete"), "Убрать из этой очереди", later(self.remove))
+        menu.add(self.icon("msg_info", "menu_info"), tr("Информация о песне"), later(self.info))
+        menu.add(self.icon("msg_remove", "msg_delete"), tr("Убрать из этой очереди"), later(self.remove))
         menu.addGap()
-        menu.add(self.icon("player_new_next", "msg_forward", "msg_arrowright"), "Играть после текущей", later(self.play_next))
+        menu.add(self.icon("player_new_next", "msg_forward", "msg_arrowright"), tr("Играть после текущей"), later(self.play_next))
         self.add_to_queue(menu, later)
-        self.player.add_playlist_item(menu, self.row.path)
+        self.player.add_playlist_item(menu, self.row.path, self.row.message)
         menu.addGap()
         stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
         menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
-                 "Не останавливаться после этой песни" if stopping else "Остановиться после этой песни", later(self.stop_after))
-        menu.add(self.icon("menu_tag_edit", "msg_edit"), "Изменить теги", later(self.edit_tags))
-        menu.add(self.icon("msg_share"), "Поделиться", later(self.share))
-        menu.add(self.icon("msg_delete"), "Удалить навсегда", later(self.delete))
+                 tr("Не останавливаться после этой песни") if stopping else tr("Остановиться после этой песни"), later(self.stop_after))
+        menu.add(self.icon("menu_tag_edit", "msg_edit"), tr("Изменить теги"), later(self.edit_tags))
+        menu.add(self.icon("msg_share"), tr("Поделиться"), later(self.share))
+        menu.add(self.icon("msg_delete"), tr("Удалить навсегда"), later(self.delete))
         self.player.show_menu(menu)
 
     # -- the title and the heart ---------------------------------------------------------------
@@ -72,7 +73,7 @@ class SongMenu:
         head.setGravity(16)
         head.setPadding(_dp(18), _dp(10), _dp(8), _dp(6))
         title = self.screen.text(18, bold=True)
-        title.setText(self.row.title or "Без названия")
+        title.setText(self.row.title or tr("Без названия"))
         # a long title runs by instead of stretching the menu across the screen
         title.setMaxWidth(_dp(TITLE_MAX_DP))
         title.setEllipsize(jclass("android.text.TextUtils$TruncateAt").MARQUEE)
@@ -97,7 +98,7 @@ class SongMenu:
     def paint_heart(self):
         favorite = self.row.path is not None and self.plugin.music.is_favorite(self.row.path)
         self.heart.setImageResource(self.icon("media_like_active" if favorite else "media_like"))
-        self.heart.setContentDescription("Убрать из любимых" if favorite else "В любимые")
+        self.heart.setContentDescription(tr("Убрать из любимых") if favorite else tr("В любимые"))
         colors = self.screen.colors
         if colors is not None:
             color = colors.accent if favorite else colors.icon
@@ -107,12 +108,12 @@ class SongMenu:
 
     def toggle_favorite(self):
         if self.row.path is None:
-            self.screen.say("В любимые можно добавить только песню с телефона.")
+            self.screen.say(tr("В любимые можно добавить только песню с телефона."))
             return
         added = self.plugin.music.toggle_favorite(self.row.path)
         self.paint_heart()
         self.player.update_like()
-        self.screen.say("Добавлено в любимые" if added else "Убрано из любимых", "saved_messages" if added else "ic_delete")
+        self.screen.say(tr("Добавлено в любимые") if added else tr("Убрано из любимых"), "saved_messages" if added else "ic_delete")
 
     # -- items -----------------------------------------------------------------------------------
 
@@ -143,7 +144,7 @@ class SongMenu:
 
     def edit_tags(self):
         if self.row.path is None:
-            self.screen.say("Теги можно записать только в песню с телефона.")
+            self.screen.say(tr("Теги можно записать только в песню с телефона."))
             return
         self.player.edit_tags(self.row.path)
 
@@ -157,7 +158,7 @@ class SongMenu:
             if row.message is None:
                 return
             if playing is not None and playing.getId() == row.message.getId() and playing.getDialogId() == row.message.getDialogId():
-                self.screen.say("Эта песня играет сейчас. Включите другую, чтобы убрать её.")
+                self.screen.say(tr("Эта песня играет сейчас. Включите другую, чтобы убрать её."))
                 return
             controller.getPlaylist().remove(row.message)
             shuffled = self.plugin.media_fields.get(controller, "shuffledPlaylist")
@@ -182,7 +183,7 @@ class SongMenu:
         index = rows.index(self.row)
         current = screen.current_index()
         if current < 0:
-            self.screen.say("Сначала включите песню из этой очереди.")
+            self.screen.say(tr("Сначала включите песню из этой очереди."))
             return
         if index == current:
             return
@@ -190,27 +191,27 @@ class SongMenu:
         if target != index:
             screen.moved(index, target)
             screen.refresh()
-        self.screen.say("«%s» заиграет следующей." % (self.row.title or "Песня"), "info")
+        self.screen.say(tr("«%s» заиграет следующей.") % (self.row.title or tr("Песня")), "info")
 
     def add_to_queue(self, menu, later):
         """Another queue from the library takes the song at its end."""
         if self.row.path is None:
-            menu.add(self.icon("msg_list", "msg_add"), "Добавить в очередь", later(
-                lambda: self.screen.say("В другую очередь можно добавить только песню с телефона.")))
+            menu.add(self.icon("msg_list", "msg_add"), tr("Добавить в очередь"), later(
+                lambda: self.screen.say(tr("В другую очередь можно добавить только песню с телефона."))))
             return
         store = self.plugin.queues
         others = [e for e in store.entries if e["kind"] == "library" and e["key"] != self.screen.shown_key]
         if not others:
-            menu.add(self.icon("msg_list", "msg_add"), "Добавить в очередь", later(
-                lambda: self.screen.say("Других очередей из Медиатеки пока нет.")))
+            menu.add(self.icon("msg_list", "msg_add"), tr("Добавить в очередь"), later(
+                lambda: self.screen.say(tr("Других очередей из Медиатеки пока нет."))))
             return
         submenu = menu.makeSwipeback()
-        submenu.add(self.icon("ic_ab_back"), "Назад", later(menu.closeSwipeback))
+        submenu.add(self.icon("ic_ab_back"), tr("Назад"), later(menu.closeSwipeback))
         submenu.addGap()
         for entry in others:
             number = self.screen.number(entry["key"])
-            submenu.add(0, "%d. %s" % (number, entry["title"]), later(lambda k=entry["key"]: self.append_to(k)))
-        menu.add(self.icon("msg_list", "msg_add"), "Добавить в очередь", later(lambda: menu.openSwipeback(submenu)))
+            submenu.add(0, "%d. %s" % (number, tr(entry["title"])), later(lambda k=entry["key"]: self.append_to(k)))
+        menu.add(self.icon("msg_list", "msg_add"), tr("Добавить в очередь"), later(lambda: menu.openSwipeback(submenu)))
         last = menu.getLast()
         if last is not None:
             last.setRightIcon(self.icon("msg_arrowright"))
@@ -242,21 +243,21 @@ class SongMenu:
                 table.put(JInteger(message.getId()), message)
         entry["paths"] = entry["paths"] + [self.row.path]
         store.save()
-        self.screen.say("Добавлено в очередь «%s»." % entry["title"], "info")
+        self.screen.say(tr("Добавлено в очередь «%s».") % tr(entry["title"]), "info")
 
     def stop_after(self):
         identity = self.identity()
         if self.plugin.stop_after == identity:
             self.plugin.stop_after = None
-            self.screen.say("Музыка продолжит играть после этой песни.")
+            self.screen.say(tr("Музыка продолжит играть после этой песни."))
         else:
             self.plugin.stop_after = identity
-            self.screen.say("Музыка остановится после «%s»." % (self.row.title or "этой песни"))
+            self.screen.say(tr("Музыка остановится после «%s».") % (self.row.title or tr("этой песни")))
 
     def share(self):
         path = self.file()
         if path is None:
-            self.screen.say("Песня ещё не скачана. Включите её, чтобы она загрузилась, и попробуйте снова.")
+            self.screen.say(tr("Песня ещё не скачана. Включите её, чтобы она загрузилась, и попробуйте снова."))
             return
         context = self.screen.context
         Intent = jclass("android.content.Intent")
@@ -266,14 +267,14 @@ class SongMenu:
         intent.setType("audio/*")
         intent.putExtra(Intent.EXTRA_STREAM, uri)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        chooser = Intent.createChooser(intent, "Поделиться песней")
+        chooser = Intent.createChooser(intent, tr("Поделиться песней"))
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(chooser)
 
     def delete(self):
         """Android asks the person itself before a file another app owns is deleted; this only starts the ask."""
         if self.row.path is None:
-            self.screen.say("Удалить навсегда можно только песню с телефона.")
+            self.screen.say(tr("Удалить навсегда можно только песню с телефона."))
             return
         activity = jclass("org.telegram.ui.LaunchActivity").instance
         MediaStore = jclass("android.provider.MediaStore")
@@ -289,7 +290,7 @@ class SongMenu:
             finally:
                 cursor.close()
         if uri is None or activity is None or jclass("android.os.Build$VERSION").SDK_INT < 30:
-            self.screen.say("Android не дал удалить этот файл отсюда.")
+            self.screen.say(tr("Android не дал удалить этот файл отсюда."))
             return
         uris = jclass("java.util.ArrayList")()
         uris.add(uri)
@@ -355,13 +356,13 @@ class PlayerSongMenu(SongMenu):
         message = self.row.message
         actions = self.plugin.sheet_actions(self.player.sheet)
         saving = self.stock("buildSaveOptions", menu, message)
-        menu.add(self.icon("msg_stories_save", "msg_download"), "Сохранить в…", later(lambda: menu.openSwipeback(saving)))
+        menu.add(self.icon("msg_stories_save", "msg_download"), tr("Сохранить в…"), later(lambda: menu.openSwipeback(saving)))
         last = menu.getLast()
         if last is not None:
             last.setRightIcon(self.icon("msg_arrowright"))
         self.stock("addForwardAndShare", menu, message)
-        menu.add(self.icon("menu_download_round", "msg_download"), "Сохранить в музыку", later(lambda: actions.saveToMusic(message)))
-        menu.add(self.icon("msg_message"), "Показать в чате", later(lambda: actions.showInChat(message)))
+        menu.add(self.icon("menu_download_round", "msg_download"), tr("Сохранить в музыку"), later(lambda: actions.saveToMusic(message)))
+        menu.add(self.icon("msg_message"), tr("Показать в чате"), later(lambda: actions.showInChat(message)))
 
     def show(self):
         menu = self.plugin.sheet_menu(self.player.sheet, self.anchor, True)
@@ -369,23 +370,23 @@ class PlayerSongMenu(SongMenu):
         later = self.player.start_menu()
         on_phone = self.row.path is not None
         menu.addView(self.header())
-        menu.add(self.icon("msg_info", "menu_info"), "Информация о песне", later(self.info))
+        menu.add(self.icon("msg_info", "menu_info"), tr("Информация о песне"), later(self.info))
         if on_phone:
-            menu.add(self.icon("menu_tag_edit", "msg_edit"), "Изменить теги", later(self.edit_tags))
+            menu.add(self.icon("menu_tag_edit", "msg_edit"), tr("Изменить теги"), later(self.edit_tags))
         menu.addGap()
         if on_phone:
-            menu.add(self.icon("msg_share"), "Поделиться", later(self.share))
+            menu.add(self.icon("msg_share"), tr("Поделиться"), later(self.share))
         else:
             self.chat_items(menu, later)
         stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
         menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
-                 "Не останавливаться после этой песни" if stopping else "Остановиться после этой песни", later(self.stop_after))
+                 tr("Не останавливаться после этой песни") if stopping else tr("Остановиться после этой песни"), later(self.stop_after))
         if on_phone:
             menu.addGap()
-            menu.add(self.icon("msg_delete"), "Удалить навсегда", later(self.delete))
+            menu.add(self.icon("msg_delete"), tr("Удалить навсегда"), later(self.delete))
         # exteraGram's own menu, with whatever other plugins put there: people will look for its settings
         menu.addGap()
-        menu.add(self.icon("msg_settings"), "Настройки плеера и плагины", later(self.player.open_stock_menu))
+        menu.add(self.icon("msg_settings"), tr("Настройки плеера и плагины"), later(self.player.open_stock_menu))
         last = menu.getLast()
         if last is not None:
             last.setRightIcon(self.icon("msg_arrowright"))

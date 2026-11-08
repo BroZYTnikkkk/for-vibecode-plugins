@@ -9,6 +9,7 @@ import time
 from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jclass
 
+from .i18n import tr
 from . import link
 from .common import _dp
 from .link_stream import saved_server
@@ -20,7 +21,7 @@ SEEK_STEPS = 1000
 NEXT_ROWS = 30  # the songs coming up, of the 200 the computer sends
 REPEAT_NEXT = {"none": "all", "all": "one", "one": "none"}
 REPEAT_ICONS = {"none": "player_new_repeat_off", "all": "player_new_repeatall", "one": "player_new_repeatone"}
-REPEAT_WORDS = {"none": "выключен", "all": "вся очередь", "one": "одна песня"}
+REPEAT_WORDS = {"none": tr("выключен"), "all": tr("вся очередь"), "one": tr("одна песня")}
 
 
 def name_key(title, artist=""):
@@ -48,7 +49,7 @@ class SeekChanged(dynamic_proxy(jclass("android.widget.SeekBar$OnSeekBarChangeLi
 
 class LinkRemoteScreen(LinkBase):
     def __init__(self, owner, saved):
-        super().__init__(owner, "Пульт компьютера", saved["name"])
+        super().__init__(owner, tr("Пульт компьютера"), saved["name"])
         self.saved = saved
         self.share = owner.plugin.link_share
         self.state = None
@@ -94,7 +95,7 @@ class LinkRemoteScreen(LinkBase):
         self.artist = self.centered(15, "textSecondary", False)
         self.seek = jclass("android.widget.SeekBar")(owner.context)
         self.seek.setMax(SEEK_STEPS)
-        self.seek.setContentDescription("Позиция в песне")
+        self.seek.setContentDescription(tr("Позиция в песне"))
         self.seek.setOnSeekBarChangeListener(self.seek_listener)
         place = Params(-1, _dp(40))
         place.setMargins(_dp(8), _dp(12), _dp(8), 0)
@@ -111,11 +112,11 @@ class LinkRemoteScreen(LinkBase):
         row = LinearLayout(owner.context)
         row.setOrientation(0)
         row.setGravity(17)
-        self.shuffle_button = self.icon_button(("player_new_shuffle",), "Перемешивание", self.toggle_shuffle)
-        previous = self.icon_button(("ic_action_previous",), "Предыдущая песня", self.send, "previous")
-        self.play_button = self.icon_button(("ic_action_play",), "Воспроизвести", self.toggle)
-        following = self.icon_button(("ic_action_next",), "Следующая песня", self.send, "next")
-        self.repeat_button = self.icon_button(("player_new_repeat_off",), "Повтор", self.next_repeat)
+        self.shuffle_button = self.icon_button(("player_new_shuffle",), tr("Перемешивание"), self.toggle_shuffle)
+        previous = self.icon_button(("ic_action_previous",), tr("Предыдущая песня"), self.send, "previous")
+        self.play_button = self.icon_button(("ic_action_play",), tr("Воспроизвести"), self.toggle)
+        following = self.icon_button(("ic_action_next",), tr("Следующая песня"), self.send, "next")
+        self.repeat_button = self.icon_button(("player_new_repeat_off",), tr("Повтор"), self.next_repeat)
         for button, size in ((self.shuffle_button, 48), (previous, 56), (self.play_button, 64), (following, 56), (self.repeat_button, 48)):
             place = owner.params(size, size)
             place.setMargins(_dp(6), 0, _dp(6), 0)
@@ -188,20 +189,20 @@ class LinkRemoteScreen(LinkBase):
     def paint(self):
         state = self.state or {}
         track = state.get("track")
-        self.title.setText((track or {}).get("title") or "На компьютере ничего не играет")
-        self.artist.setText((track or {}).get("artist") or ("" if track else "Запусти песню в Mornye на компьютере."))
+        self.title.setText((track or {}).get("title") or tr("На компьютере ничего не играет"))
+        self.artist.setText((track or {}).get("artist") or ("" if track else tr("Запусти песню в Mornye на компьютере.")))
         playing = bool(state.get("playing"))
         self.owner.set_icon(self.play_button, ("ic_action_pause",) if playing else ("ic_action_play",))
         self.owner.tint(self.play_button, self.owner.color("onAccent"))
-        self.play_button.setContentDescription("Пауза" if playing else "Воспроизвести")
+        self.play_button.setContentDescription(tr("Пауза") if playing else tr("Воспроизвести"))
         shuffle = bool(state.get("shuffle"))
         self.owner.set_icon(self.shuffle_button, ("player_new_shuffle" if shuffle else "player_new_shuffle_off", "player_new_shuffle"))
         self.owner.tint(self.shuffle_button, self.owner.color("accent" if shuffle else "icon"))
-        self.shuffle_button.setContentDescription("Перемешивание: %s" % ("включено" if shuffle else "выключено"))
+        self.shuffle_button.setContentDescription(tr("Перемешивание: %s") % (tr("включено") if shuffle else tr("выключено")))
         repeat = state.get("repeat") if state.get("repeat") in REPEAT_NEXT else "none"
         self.owner.set_icon(self.repeat_button, (REPEAT_ICONS[repeat],))
         self.owner.tint(self.repeat_button, self.owner.color("icon" if repeat == "none" else "accent"))
-        self.repeat_button.setContentDescription("Повтор: %s" % REPEAT_WORDS[repeat])
+        self.repeat_button.setContentDescription(tr("Повтор: %s") % REPEAT_WORDS[repeat])
         self.paint_cover(track)
         self.paint_position()
         self.paint_queue(state)
@@ -223,7 +224,7 @@ class LinkRemoteScreen(LinkBase):
         self.queue_shown = key
         self.clear_body()
         if coming:
-            self.section(self.body, "Дальше")
+            self.section(self.body, tr("Дальше"))
         for i, song in coming:
             image = self.owner.cover_view(8, 40)
             self.owner.bind_cover(image, self.path_for(song), 40)

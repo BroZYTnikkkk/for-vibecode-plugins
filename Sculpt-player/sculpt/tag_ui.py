@@ -9,6 +9,7 @@ import re
 
 from java import jclass
 
+from .i18n import tr
 from . import tags
 from .common import UNKNOWN_ARTIST, _dp
 from .dl_ui import EditorAction, RemoteRows, seconds_of
@@ -17,8 +18,8 @@ from .library_ui import TextChanged
 SEARCH_PROVIDERS = 2  # metadata providers asked, in priority order, until this many answered
 CANDIDATES = 8
 PILL_KEYS = ("title", "artist", "album", "albumartist", "date", "genre", "tracknumber", "discnumber", "isrc", "cover")
-PILL_NAMES = {"title": "Название", "artist": "Исполнитель", "album": "Альбом", "albumartist": "Исполнитель альбома",
-              "date": "Год", "genre": "Жанр", "tracknumber": "Дорожка", "discnumber": "Диск", "isrc": "ISRC", "cover": "Обложка"}
+PILL_NAMES = {"title": tr("Название"), "artist": tr("Исполнитель"), "album": tr("Альбом"), "albumartist": tr("Исполнитель альбома"),
+              "date": tr("Год"), "genre": tr("Жанр"), "tracknumber": tr("Дорожка"), "discnumber": tr("Диск"), "isrc": "ISRC", "cover": tr("Обложка")}
 
 
 def broken(text):
@@ -39,7 +40,7 @@ class TagScreen(RemoteRows):
     song in the services; the tag pills choose which tags a found version fills."""
 
     def __init__(self, owner, path):
-        super().__init__(owner, "Теги")
+        super().__init__(owner, tr("Теги"))
         self.path = path
         self.track = owner.data.by_path.get(path, {})
         self.before = tags.read(path)
@@ -80,7 +81,7 @@ class TagScreen(RemoteRows):
         self.tint_icon(icon, "accent")
         head.addView(icon, owner.params(22, 22))
         title = self.label(16, "text", True)
-        title.setText("Поиск в интернете")
+        title.setText(tr("Поиск в интернете"))
         at = Params(0, -2, 1.0)
         at.setMarginStart(_dp(12))
         head.addView(title, at)
@@ -88,7 +89,7 @@ class TagScreen(RemoteRows):
         owner.set_icon(self.fold_arrow, ("arrow_more", "msg_arrow_more"))
         self.tint_icon(self.fold_arrow, "textSecondary")
         head.addView(self.fold_arrow, owner.params(20, 20))
-        head.setContentDescription("Поиск в интернете, развернуть")
+        head.setContentDescription(tr("Поиск в интернете, развернуть"))
         self.click(head, self.toggle_search)
         place = Params(-1, -2)
         place.setMargins(_dp(12), _dp(4), _dp(12), _dp(4))
@@ -112,16 +113,16 @@ class TagScreen(RemoteRows):
         self.query_field.setImeOptions(3)
         self.query_field.setTextColor(owner.color("text"))
         self.query_field.setHintTextColor(owner.color("textSecondary"))
-        self.query_field.setHint("Исполнитель и название")
+        self.query_field.setHint(tr("Исполнитель и название"))
         self.query_action = EditorAction(lambda: self.guarded(self.search))
         self.query_field.setOnEditorActionListener(self.query_action)
         pill.addView(self.query_field, Params(0, -1, 1.0))
-        pill.addView(self.icon_button(("outline_search_1_24", "msg_search"), "Искать", self.search), owner.params(40, 40))
+        pill.addView(self.icon_button(("outline_search_1_24", "msg_search"), tr("Искать"), self.search), owner.params(40, 40))
         place = Params(-1, _dp(48))
         place.setMargins(_dp(16), _dp(8), _dp(16), _dp(4))
         self.search_box.addView(pill, place)
         label = self.label(13, "textSecondary")
-        label.setText("Что взять из найденного:")
+        label.setText(tr("Что взять из найденного:"))
         place = Params(-1, -2)
         place.setMargins(_dp(20), _dp(10), _dp(20), _dp(6))
         self.search_box.addView(label, place)
@@ -132,7 +133,7 @@ class TagScreen(RemoteRows):
         quick = jclass("android.widget.LinearLayout")(owner.context)
         quick.setOrientation(0)
         quick.setPadding(_dp(16), _dp(4), _dp(16), _dp(4))
-        for text, action in (("Выбрать всё", self.choose_all), ("Убрать всё", self.choose_none), ("Выбрать пустые", self.choose_empty)):
+        for text, action in ((tr("Выбрать всё"), self.choose_all), (tr("Убрать всё"), self.choose_none), (tr("Выбрать пустые"), self.choose_empty)):
             at = Params(-2, -2)
             at.setMarginEnd(_dp(8))
             quick.addView(self.pill(text, False, action), at)
@@ -162,7 +163,7 @@ class TagScreen(RemoteRows):
         for key in PILL_KEYS:
             chosen = key in self.chosen
             chip = self.pill(PILL_NAMES[key], chosen, lambda k=key: self.flip(k))
-            chip.setContentDescription("%s, %s" % (PILL_NAMES[key], "брать" if chosen else "не брать"))
+            chip.setContentDescription("%s, %s" % (PILL_NAMES[key], tr("брать") if chosen else tr("не брать")))
             chip.measure(spec, spec)
             need = int(chip.getMeasuredWidth()) + _dp(8)
             if line is None or used + need > width:
@@ -203,7 +204,7 @@ class TagScreen(RemoteRows):
         except Exception:
             pass
         self.hints.removeAllViews()
-        self.note(self.hints, "Ищу «%s» в сервисах…" % query)
+        self.note(self.hints, tr("Ищу «%s» в сервисах…") % query)
         length = int(self.track.get("duration") or 0)
 
         def task(manager):
@@ -226,14 +227,14 @@ class TagScreen(RemoteRows):
                 found.sort(key=lambda i: abs(int(i.get("duration_ms") or 0) // 1000 - length) > 10)
             return found[:CANDIDATES]
 
-        self.run(task, self.show_hints, lambda text: (self.hints.removeAllViews(), self.note(self.hints, "Не получилось найти. %s" % text)))
+        self.run(task, self.show_hints, lambda text: (self.hints.removeAllViews(), self.note(self.hints, tr("Не получилось найти. %s") % text)))
 
     def show_hints(self, items):
         self.hints.removeAllViews()
         if not items:
-            self.note(self.hints, "Сервисы ничего не нашли. Измени запрос или впиши теги сам.")
+            self.note(self.hints, tr("Сервисы ничего не нашли. Измени запрос или впиши теги сам."))
             return
-        plate = self.card(self.hints, "Найдено")
+        plate = self.card(self.hints, tr("Найдено"))
         for item in items:
             details = " · ".join(p for p in (item.get("artists"), item.get("album_name"), str(item.get("release_date") or "")[:4],
                                              seconds_of(item), item.get("service_name")) if p)
@@ -241,7 +242,7 @@ class TagScreen(RemoteRows):
 
     def fill(self, item):
         if not self.chosen:
-            self.say("Отметь, что взять: пиллы над результатами.")
+            self.say(tr("Отметь, что взять: пиллы над результатами."))
             return
         taken = 0
         for key, value in tags.from_item(item).items():
@@ -252,7 +253,7 @@ class TagScreen(RemoteRows):
             self.cover_url = str(item["cover_url"])
             self.paint_cover()
             taken += 1
-        self.say("Взято из «%s»: %d. Проверь и нажми «Сохранить»." % (item.get("service_name") or "сервиса", taken))
+        self.say(tr("Взято из «%s»: %d. Проверь и нажми «Сохранить».") % (item.get("service_name") or tr("сервиса"), taken))
 
     # -- the fields
 
@@ -267,7 +268,7 @@ class TagScreen(RemoteRows):
         container.addView(title, place)
         was = self.label(12, "textSecondary")
         before = self.before.get(key) or ""
-        was.setText("было: %s" % ((before[:60] + "…") if len(before) > 60 else (before or "пусто")))
+        was.setText(tr("было: %s") % ((before[:60] + "…") if len(before) > 60 else (before or tr("пусто"))))
         place = Params(-1, -2)
         place.setMargins(_dp(20), 0, _dp(20), 0)
         container.addView(was, place)
@@ -305,9 +306,9 @@ class TagScreen(RemoteRows):
         album = str(self.fields["album"].getText()).strip()
         duration = int(self.track.get("duration") or 0)
         if not title:
-            self.say("Сначала укажи название песни.")
+            self.say(tr("Сначала укажи название песни."))
             return
-        self.say("Ищу текст…")
+        self.say(tr("Ищу текст…"))
 
         def task(manager):
             from .ext.lyrics import fetch_lyrics_raw
@@ -315,18 +316,18 @@ class TagScreen(RemoteRows):
             value = manager.lyrics(title, artist, album, duration)
             text = lyrics_text(value) if value else ""
             if text:
-                return text, str(value.get("provider") or "расширения")
+                return text, str(value.get("provider") or tr("расширения"))
             data = fetch_lyrics_raw(title, artist, duration)
             text = (data.get("syncedLyrics") or data.get("plainLyrics") or "") if data else ""
             return (text, "LRCLIB") if text else None
 
         def done(found):
             if not found:
-                self.say("Текст не нашёлся. Проверь название и исполнителя.")
+                self.say(tr("Текст не нашёлся. Проверь название и исполнителя."))
                 return
             self.fields["lyrics"].setText(found[0])
             self.open_lyrics(True)
-            self.say("Текст из %s. Проверь и нажми «Сохранить»." % found[1])
+            self.say(tr("Текст из %s. Проверь и нажми «Сохранить».") % found[1])
 
         self.run(task, done)
 
@@ -334,15 +335,15 @@ class TagScreen(RemoteRows):
         shown = self.advanced_box.getVisibility() == 0
         self.advanced_box.setVisibility(8 if shown else 0)
         self.advanced_arrow.setRotation(0.0 if shown else 180.0)
-        self.advanced_row.setContentDescription("Расширенные теги, %s" % ("развернуть" if shown else "свернуть"))
+        self.advanced_row.setContentDescription(tr("Расширенные теги, %s") % (tr("развернуть") if shown else tr("свернуть")))
 
     def build_fields(self):
         owner = self.owner
         Params = jclass("android.widget.LinearLayout$LayoutParams")
-        self.section(self.body, "Теги")
+        self.section(self.body, tr("Теги"))
         for key, label in tags.MAIN_FIELDS:
             self.add_field(self.body, key, label)
-        self.section(self.body, "Обложка")
+        self.section(self.body, tr("Обложка"))
         self.cover_row = jclass("android.widget.LinearLayout")(owner.context)
         self.cover_row.setOrientation(0)
         self.cover_row.setGravity(16)
@@ -354,31 +355,31 @@ class TagScreen(RemoteRows):
         self.advanced_box.setOrientation(1)
         self.advanced_box.setVisibility(8)
         filled = [label for key, label in tags.ADVANCED_FIELDS if self.before.get(key)]
-        hint = ("заполнено: %d из %d" % (len(filled), len(tags.ADVANCED_FIELDS))) if filled else "Номера, ISRC, композитор, лейбл и другое"
+        hint = (tr("заполнено: %d из %d") % (len(filled), len(tags.ADVANCED_FIELDS))) if filled else tr("Номера, ISRC, композитор, лейбл и другое")
         self.advanced_row, self.advanced_arrow = self.fold_header(self.body, ("menu_tag_edit", "msg_edit"),
-                                                                  "Расширенные теги", hint, self.toggle_advanced)
+                                                                  tr("Расширенные теги"), hint, self.toggle_advanced)
         for key, label in tags.ADVANCED_FIELDS:
             self.add_field(self.advanced_box, key, label)
         self.body.addView(self.advanced_box, Params(-1, -2))
         has_text = bool(self.before.get("lyrics"))
-        self.lyrics_row, self.lyrics_arrow = self.fold_header(self.body, ("msg_photo_text2", "msg_edit"), "Текст песни",
-                                                              "Есть в файле" if has_text else "В файле нет текста", self.toggle_lyrics)
+        self.lyrics_row, self.lyrics_arrow = self.fold_header(self.body, ("msg_photo_text2", "msg_edit"), tr("Текст песни"),
+                                                              tr("Есть в файле") if has_text else tr("В файле нет текста"), self.toggle_lyrics)
         self.lyrics_box = jclass("android.widget.LinearLayout")(owner.context)
         self.lyrics_box.setOrientation(1)
         self.lyrics_box.setVisibility(8)
-        finder = self.pill("Найти текст в интернете", False, self.find_lyrics)
+        finder = self.pill(tr("Найти текст в интернете"), False, self.find_lyrics)
         place = Params(-2, -2)
         place.setMargins(_dp(20), _dp(12), _dp(20), 0)
         self.lyrics_box.addView(finder, place)
-        self.add_field(self.lyrics_box, "lyrics", "Текст песни")
+        self.add_field(self.lyrics_box, "lyrics", tr("Текст песни"))
         self.body.addView(self.lyrics_box, Params(-1, -2))
-        save = self.pill("Сохранить", True, self.save)
-        save.setContentDescription("Записать теги в файл")
+        save = self.pill(tr("Сохранить"), True, self.save)
+        save.setContentDescription(tr("Записать теги в файл"))
         place = Params(-1, _dp(48))
         place.setMargins(_dp(20), _dp(24), _dp(20), _dp(8))
         self.body.addView(save, place)
         self.save_button = save
-        self.note(self.body, "Теги записываются прямо в файл, вернуть прежние будет нельзя.", size=12, top=0)
+        self.note(self.body, tr("Теги записываются прямо в файл, вернуть прежние будет нельзя."), size=12, top=0)
 
     def paint_cover(self):
         owner = self.owner
@@ -393,7 +394,7 @@ class TagScreen(RemoteRows):
         arrow.setPadding(_dp(12), 0, _dp(12), 0)
         self.cover_row.addView(arrow)
         self.cover_row.addView(self.remote_image({"cover_url": self.cover_url}, size=72), owner.params(72, 72))
-        undo = self.icon_button(("msg_close", "ic_close_white"), "Оставить прежнюю обложку", self.keep_cover)
+        undo = self.icon_button(("msg_close", "ic_close_white"), tr("Оставить прежнюю обложку"), self.keep_cover)
         at = owner.params(40, 40)
         at.setMarginStart(_dp(12))
         self.cover_row.addView(undo, at)
@@ -414,10 +415,10 @@ class TagScreen(RemoteRows):
         changed = {key: value for key, value in values.items() if value != (self.before.get(key) or "")}
         cover_url = self.cover_url
         if not changed and not cover_url:
-            self.say("Ничего не изменилось.")
+            self.say(tr("Ничего не изменилось."))
             return
         self.saving = True
-        self.save_button.setText("Сохраняю…")
+        self.save_button.setText(tr("Сохраняю…"))
         path = self.path
 
         def task(manager):
@@ -431,22 +432,22 @@ class TagScreen(RemoteRows):
 
         def done(result):
             self.saving = False
-            self.save_button.setText("Сохранить")
+            self.save_button.setText(tr("Сохранить"))
             if result == "permission":
                 if tags.request_access(path):
-                    self.say("Android спрашивает, можно ли изменить этот файл. Разреши и нажми «Сохранить» ещё раз.")
+                    self.say(tr("Android спрашивает, можно ли изменить этот файл. Разреши и нажми «Сохранить» ещё раз."))
                 else:
-                    self.say("Android не дал изменить этот файл.")
+                    self.say(tr("Android не дал изменить этот файл."))
                 return
             self.before = values
-            self.say("Теги записаны", "saved_messages")
+            self.say(tr("Теги записаны"), "saved_messages")
             self.owner.data.scan()
             self.owner.back()
 
         def failed(text):
             self.saving = False
-            self.save_button.setText("Сохранить")
-            self.say("Теги не записаны. %s" % text)
+            self.save_button.setText(tr("Сохранить"))
+            self.say(tr("Теги не записаны. %s") % text)
 
         self.run(task, done, failed)
 

@@ -15,10 +15,11 @@ import threading
 from android_utils import OnClickListener, run_on_ui_thread
 from java import dynamic_proxy, jclass
 
+from .i18n import tr
 from .common import MEDIA_CONTROLLER, MODE_LYRICS, PANEL_SEARCH, _dp, _log
 from .music import find_group, local_path
 
-COVER_ACTIONS = ("Ничего", "Посмотреть обложку", "Открыть текст песни", "Плей/пауза")
+COVER_ACTIONS = (tr("Ничего"), tr("Посмотреть обложку"), tr("Открыть текст песни"), tr("Плей/пауза"))
 COVER_DEFAULT = 1
 GALLERY_FOLDER = "Pictures/Sculpt Player"
 
@@ -200,7 +201,7 @@ class Taps:
             return
         name = str(message.getMusicAuthor() or "").strip()
         if not name:
-            self.say("У этой песни не указан исполнитель.")
+            self.say(tr("У этой песни не указан исполнитель."))
             return
         if find_group(self.plugin.music, "artists", name) is not None:
             self.player.open_group("artists", name)
@@ -258,7 +259,7 @@ class Taps:
     def view_cover(self):
         bitmap = self.cover_bitmap()
         if bitmap is None:
-            self.say("У этой песни нет обложки.")
+            self.say(tr("У этой песни нет обложки."))
             return
         message = self.playing()
         name = ""
@@ -269,7 +270,7 @@ class Taps:
     def edit_cover(self):
         path = local_path(self.playing())
         if path is None:
-            self.say("Обложку можно изменить только у песни с телефона.")
+            self.say(tr("Обложку можно изменить только у песни с телефона."))
             return
         self.player.edit_tags(path)
 
@@ -396,7 +397,7 @@ class CoverViewer:
         resources = context.getResources()
         close.setImageResource(resources.getIdentifier("ic_close_white", "drawable", context.getPackageName()))
         close.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
-        close.setContentDescription("Закрыть")
+        close.setContentDescription(tr("Закрыть"))
         close.setBackground(rounded(jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(-16777216, 120), 22))
         self.on_click(close, self.close)
         top = Frame(_dp(44), _dp(44), 8388659)  # top start
@@ -404,7 +405,7 @@ class CoverViewer:
         root.addView(close, top)
 
         save = jclass("android.widget.TextView")(context)
-        save.setText("Сохранить в галерею")
+        save.setText(tr("Сохранить в галерею"))
         save.setTextSize(1, 16.0)
         save.setTextColor(-16777216)
         save.setTypeface(jclass("org.telegram.messenger.AndroidUtilities").bold())
@@ -505,10 +506,10 @@ class CoverViewer:
         def work():
             try:
                 saved = save_to_gallery(context, bitmap, name)
-                text = "Обложка сохранена в Галерею: %s" % GALLERY_FOLDER if saved else "Не получилось сохранить обложку."
+                text = tr("Обложка сохранена в Галерею: %s") % GALLERY_FOLDER if saved else tr("Не получилось сохранить обложку.")
             except Exception as e:
                 _log("save cover: %s" % e)
-                text = "Не получилось сохранить обложку."
+                text = tr("Не получилось сохранить обложку.")
             run_on_ui_thread(lambda: jclass("android.widget.Toast").makeText(context, text, 0).show())
 
         threading.Thread(target=work, name="sculpt-save-cover", daemon=True).start()
@@ -547,7 +548,7 @@ def save_to_gallery(context, bitmap, name):
     """Into Pictures/Sculpt Player through MediaStore: no permission is needed for a picture an app adds."""
     MediaStore = jclass("android.provider.MediaStore")
     values = jclass("android.content.ContentValues")()
-    clean = re.sub(r'[\\/:*?"<>|]+', " ", name or "").strip() or "Обложка"
+    clean = re.sub(r'[\\/:*?"<>|]+', " ", name or "").strip() or tr("Обложка")
     values.put("_display_name", "%s.jpg" % clean[:80])
     values.put("mime_type", "image/jpeg")
     values.put("relative_path", GALLERY_FOLDER)
@@ -634,12 +635,12 @@ class CoverMenu:
         column = jclass("android.widget.LinearLayout")(context)
         column.setOrientation(1)
         column.setPadding(0, _dp(4), 0, _dp(4))
-        self.row(column, ("msg_photos", "msg_gallery", "msg_media"), "Посмотреть обложку",
+        self.row(column, ("msg_photos", "msg_gallery", "msg_media"), tr("Посмотреть обложку"),
                  lambda: (self.close(), self.taps.view_cover()))
-        self.row(column, ("msg_edit", "menu_tag_edit"), "Изменить обложку альбома",
+        self.row(column, ("msg_edit", "menu_tag_edit"), tr("Изменить обложку альбома"),
                  lambda: (self.close(), self.taps.edit_cover()))
         head = self.label(14, self.accent, True)
-        head.setText("Нажатие на обложку")
+        head.setText(tr("Нажатие на обложку"))
         head.setPadding(_dp(24), _dp(16), _dp(24), _dp(4))
         column.addView(head, Params(-1, -2))
         for index, title in enumerate(COVER_ACTIONS):
@@ -647,10 +648,10 @@ class CoverMenu:
             self.marks.append(row.getChildAt(0))
         self.paint()
         builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(context)
-        builder.setTitle("Обложка")
+        builder.setTitle(tr("Обложка"))
         builder.setView(column)
-        builder.setNegativeButton("Отмена", DialogButton(None))
-        builder.setPositiveButton("Сохранить", DialogButton(self.save))
+        builder.setNegativeButton(tr("Отмена"), DialogButton(None))
+        builder.setPositiveButton(tr("Сохранить"), DialogButton(self.save))
         self.dialog = builder.create()
         self.dialog.setOnDismissListener(Dismissed(self.release))
         self.dialog.show()
@@ -667,7 +668,7 @@ class CoverMenu:
         plugin = self.taps.plugin
         if self.chosen != cover_action(plugin):
             plugin.set_setting("cover_tap", self.chosen)
-            self.taps.say("Нажатие на обложку: %s" % COVER_ACTIONS[self.chosen].lower())
+            self.taps.say(tr("Нажатие на обложку: %s") % COVER_ACTIONS[self.chosen].lower())
 
     def close(self):
         if self.dialog is not None:

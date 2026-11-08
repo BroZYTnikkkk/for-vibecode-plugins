@@ -4,6 +4,7 @@ from android_utils import OnClickListener, run_on_ui_thread
 from java import jarray, jclass
 from java.lang import Boolean as JBoolean, Integer as JInteger
 
+from .i18n import tr
 from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, LYRICS_SHIFT, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
 from .visualizer import Visualizer
 from .peeks import Peeks
@@ -110,13 +111,13 @@ class Player:
         self.album.setGravity(Gravity.CENTER)
         self.layout.addOwnView(self.album)
 
-        self.volume = self._button(context, ("filled_sound_on", "msg_call_speaker"), "Громкость", self.plugin.show_volume)
-        self.equalizer = self._button(context, ("msg_photo_settings", "msg_settings"), "Эквалайзер", self.plugin.show_equalizer)
+        self.volume = self._button(context, ("filled_sound_on", "msg_call_speaker"), tr("Громкость"), self.plugin.show_volume)
+        self.equalizer = self._button(context, ("msg_photo_settings", "msg_settings"), tr("Эквалайзер"), self.plugin.show_equalizer)
 
-        self.remote_button = self._button(context, ("msg2_devices", "menu_devices"), "Пульт компьютера", self.open_link_remote)
+        self.remote_button = self._button(context, ("msg2_devices", "menu_devices"), tr("Пульт компьютера"), self.open_link_remote)
         self.update_remote_button()
-        self.like = self._button(context, ("media_like",), "В любимые", self.like_pressed)
-        self.add = self._button(context, ("msg_add",), "Добавить", self.add_pressed)
+        self.like = self._button(context, ("media_like",), tr("В любимые"), self.like_pressed)
+        self.add = self._button(context, ("msg_add",), tr("Добавить"), self.add_pressed)
         self.add_ring = jclass("android.graphics.drawable.GradientDrawable")()
         self.add_ring.setShape(1)  # oval
         self.add.setBackground(jclass("android.graphics.drawable.InsetDrawable")(self.add_ring, _dp((BUTTON - 28.0) / 2.0)))
@@ -231,7 +232,7 @@ class Player:
         from .music import find_group
         item = find_group(self.plugin.music, kind, name)
         if item is None:
-            self.plugin.bulletin(self.sheet, "info", "В медиатеке нет «%s»." % name)
+            self.plugin.bulletin(self.sheet, "info", tr("В медиатеке нет «%s».") % name)
             return
         self.show_tab(PANEL_LIBRARY)
         self.library.open_group(kind, item)
@@ -301,10 +302,10 @@ class Player:
     def like_pressed(self):
         path = local_path(self.playing())
         if path is None:
-            self.plugin.bulletin(self.sheet, "info", "В любимые можно добавить только песню с телефона.")
+            self.plugin.bulletin(self.sheet, "info", tr("В любимые можно добавить только песню с телефона."))
             return
         added = self.plugin.music.toggle_favorite(path)
-        self.plugin.bulletin(self.sheet, "saved_messages" if added else "ic_delete", "Добавлено в любимые" if added else "Убрано из любимых")
+        self.plugin.bulletin(self.sheet, "saved_messages" if added else "ic_delete", tr("Добавлено в любимые") if added else tr("Убрано из любимых"))
         self.update_like()
         if self.library is not None:
             self.library.data_changed()
@@ -317,7 +318,7 @@ class Player:
         path = local_path(self.playing())
         favorite = path is not None and self.plugin.music.is_favorite(path)
         self.like.setImageResource(res.getIdentifier("media_like_active" if favorite else "media_like", "drawable", package))
-        self.like.setContentDescription("Убрать из любимых" if favorite else "В любимые")
+        self.like.setContentDescription(tr("Убрать из любимых") if favorite else tr("В любимые"))
         colors = self.plugin.sheet_fields.get(self.sheet, "colors")
         if colors is not None:
             self.tint_like(colors, path, favorite)
@@ -343,7 +344,7 @@ class Player:
         self.start_menu()
         if local_path(message) is not None:
             # Telegram can only keep what it has on its servers, and this file is only on the phone.
-            menu.add(icon("left_status_profile"), "Добавить в профиль", self.run_later(lambda: self.plugin.bulletin(self.sheet, "info", "В профиль можно добавить только песню из Telegram.")))
+            menu.add(icon("left_status_profile"), tr("Добавить в профиль"), self.run_later(lambda: self.plugin.bulletin(self.sheet, "info", tr("В профиль можно добавить только песню из Telegram."))))
             last = menu.getLast()
             if last is not None:
                 last.setAlpha(0.5)
@@ -354,7 +355,7 @@ class Player:
                 menu.dismiss()
                 self.plugin.toggle_profile(self.sheet)
 
-            menu.add(icon("left_status_profile"), "Убрать из профиля" if inside else "Добавить в профиль", self.run_later(toggle))
+            menu.add(icon("left_status_profile"), tr("Убрать из профиля") if inside else tr("Добавить в профиль"), self.run_later(toggle))
         self.add_playlist_item(menu)
         self.show_menu(menu)
 
@@ -395,6 +396,8 @@ class Player:
         if self.taps is not None:
             self.taps.detach()
             self.taps = None
+        if self.effects is not None:
+            self.effects.dispose()
         self.effects = None
         self.menu_runs = []
 
@@ -409,11 +412,11 @@ class Player:
         except Exception as e:
             self.plugin.report("menu", e)
 
-    def add_playlist_item(self, menu, path=CURRENT_SONG):
-        """"To a playlist" with its list of playlists. path: the song's file, None for a chat's song, by default what plays."""
+    def add_playlist_item(self, menu, path=CURRENT_SONG, message=None):
+        """"To a playlist" with its list of playlists. path: the song's file; for a song from a chat None and its message."""
         if path is CURRENT_SONG:
-            playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
-            path = local_path(playing) if playing is not None else None
+            message = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+            path = local_path(message) if message is not None else None
         store = self.plugin.playlists
         res = self.context.getResources()
         package = self.context.getPackageName()
@@ -422,38 +425,43 @@ class Player:
             return res.getIdentifier(name, "drawable", package)
 
         submenu = menu.makeSwipeback()
-        submenu.add(icon("ic_ab_back"), "Назад", self.run_later(menu.closeSwipeback))
+        submenu.add(icon("ic_ab_back"), tr("Назад"), self.run_later(menu.closeSwipeback))
 
         def say(text):
             self.plugin.bulletin(self.sheet, "info", text)
 
-        def no_chat_songs():
-            say("Песни из Telegram сюда не добавляются: для них будет отдельный плейлист.")
+        def to_telegram():
+            menu.dismiss()
+            if message is None:
+                say(tr("Сначала включи песню."))
+            elif store.add_telegram(message):
+                say(tr("Добавлено в «Песни из Telegram»."))
+            else:
+                say(tr("Эта песня уже есть в «Песни из Telegram»."))
 
         def added_to(item):
-            say("Добавлено в «%s»." % item["name"])
+            say(tr("Добавлено в «%s».") % item["name"])
 
         def create():
             menu.dismiss()
-            if path is None:
-                no_chat_songs()
-                return
-            ask_name(self, "Новый плейлист", "", lambda name: added_to(store.create(name, [path])), "Создать")
+            ask_name(self, tr("Новый плейлист"), "", lambda name: added_to(store.create(name, [path])), tr("Создать"))
 
         def add_to(item):
             menu.dismiss()
-            if path is None:
-                no_chat_songs()
-            elif store.add(item["id"], [path]):
+            if store.add(item["id"], [path]):
                 added_to(item)
             else:
-                say("Эта песня уже есть в «%s»." % item["name"])
+                say(tr("Эта песня уже есть в «%s».") % item["name"])
 
         submenu.addGap()
-        submenu.add(icon("msg_add"), "Создать плейлист", self.run_later(create))
-        for item in store.items:
-            submenu.add(0, item["name"], self.run_later(lambda chosen=item: add_to(chosen)))
-        menu.add(icon("msg_addfolder"), "В плейлист", self.run_later(lambda: menu.openSwipeback(submenu)))
+        if path is None:
+            # songs from chats have a list of their own, so that the two kinds do not mix
+            submenu.add(0, tr("Песни из Telegram"), self.run_later(to_telegram))
+        else:
+            submenu.add(icon("msg_add"), tr("Создать плейлист"), self.run_later(create))
+            for item in store.items:
+                submenu.add(0, item["name"], self.run_later(lambda chosen=item: add_to(chosen)))
+        menu.add(icon("msg_addfolder"), tr("В плейлист"), self.run_later(lambda: menu.openSwipeback(submenu)))
         last = menu.getLast()
         if last is not None:
             last.setRightIcon(icon("msg_arrowright"))

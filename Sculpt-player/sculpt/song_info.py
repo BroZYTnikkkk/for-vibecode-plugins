@@ -11,6 +11,7 @@ import time
 from android_utils import copy_to_clipboard, run_on_ui_thread
 from java import dynamic_proxy, jclass
 
+from .i18n import plural, tr
 from .common import _dp, _log
 
 try:
@@ -18,7 +19,7 @@ try:
 except Exception:
     mutagen = None
 
-MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+MONTHS = (tr("января"), tr("февраля"), tr("марта"), tr("апреля"), tr("мая"), tr("июня"), tr("июля"), tr("августа"), tr("сентября"), tr("октября"), tr("ноября"), tr("декабря"))
 TAG_KEYS = ("title", "album", "artist", "albumartist", "composer", "genre", "tracknumber", "discnumber", "date",
             "isrc", "lyricist", "organization", "copyright", "bpm")
 SYNCED = re.compile(r"\[\d{1,3}:\d{2}")
@@ -98,7 +99,7 @@ def _codec(raw, info):
     if kind == "MP4":
         return str(getattr(info, "codec_description", "") or getattr(info, "codec", "") or "MP4")
     name = {"FLAC": "FLAC", "OggVorbis": "Vorbis", "OggOpus": "Opus", "WAVE": "PCM", "AIFF": "PCM"}.get(kind, kind)
-    return "%s %d бит" % (name, bits) if bits else name
+    return tr("%s %d бит") % (name, bits) if bits else name
 
 
 def read_file(path):
@@ -162,9 +163,7 @@ def read_file(path):
 
 
 def times_label(count):
-    tail = count % 100
-    word = "раз" if 11 <= tail <= 14 else {2: "раза", 3: "раза", 4: "раза"}.get(count % 10, "раз")
-    return "%d %s" % (count, word)
+    return tr("один раз") if count == 1 else plural(count, tr("%d раз"), tr("%d раза"), tr("%d раз")) % count
 
 
 def date_label(stamp):
@@ -185,7 +184,7 @@ def place_label(path):
     """The folder as a person sees it: "Внутренняя память › Music › FLAC"."""
     folder = os.path.dirname(path)
     if folder.startswith(STORAGE):
-        parts = ["Внутренняя память"] + [p for p in folder[len(STORAGE):].split("/") if p]
+        parts = [tr("Внутренняя память")] + [p for p in folder[len(STORAGE):].split("/") if p]
     else:
         parts = [p for p in folder.split("/") if p]
     return " › ".join(parts)
@@ -197,7 +196,7 @@ def number_label(value):
     first, total = first.strip(), total.strip()
     if first in ("", "0"):
         return ""
-    return "%s из %s" % (first, total) if total not in ("", "0") else first
+    return tr("%s из %s") % (first, total) if total not in ("", "0") else first
 
 
 def year_label(value):
@@ -207,8 +206,8 @@ def year_label(value):
 
 def size_label(size):
     if size >= 1048576:
-        return "%.2f МБ" % (size / 1048576.0)
-    return "%d КБ" % (size // 1024)
+        return tr("%.2f МБ") % (size / 1048576.0)
+    return tr("%d КБ") % (size // 1024)
 
 
 # -- the dialog --------------------------------------------------------------------------------
@@ -272,7 +271,7 @@ class SongInfoScreen(_info_base()):
     folded under "Details"."""
 
     def __init__(self, owner, path, library_path, fallback, close):
-        super().__init__(owner, "О песне")
+        super().__init__(owner, tr("О песне"))
         self.close_window = close
         self.path = path
         self.library_path = library_path
@@ -284,7 +283,7 @@ class SongInfoScreen(_info_base()):
         self.last_view = None
         self.page()
         self.start_body()
-        self.note(self.body, "Читаю файл…", size=15, top=16)
+        self.note(self.body, tr("Читаю файл…"), size=15, top=16)
         if not path:
             self.draw(None)
             return
@@ -306,7 +305,7 @@ class SongInfoScreen(_info_base()):
         row.setOrientation(0)
         row.setGravity(16)
         row.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
-        row.addView(self.icon_button(("ic_ab_back",), "Закрыть", self.close_window), owner.params(40, 40))
+        row.addView(self.icon_button(("ic_ab_back",), tr("Закрыть"), self.close_window), owner.params(40, 40))
         self.title_view = self.label(20, "text", True)
         self.title_view.setText(self.title_text)
         place = jclass("android.widget.LinearLayout$LayoutParams")(0, -2, 1.0)
@@ -321,7 +320,7 @@ class SongInfoScreen(_info_base()):
 
     # -- building blocks
 
-    def value_row(self, plate, label, value, action=None, empty="не указано"):
+    def value_row(self, plate, label, value, action=None, empty=tr("не указано")):
         """A name over its value, on a plate; a row that leads somewhere has an arrow and opens on a tap."""
         owner = self.owner
         trailing = None
@@ -370,7 +369,7 @@ class SongInfoScreen(_info_base()):
             place.topMargin = _dp(8)
             self.body.addView(cover, place)
         name = self.label(24, "text", True)
-        name.setText(title or "Без названия")
+        name.setText(title or tr("Без названия"))
         name.setGravity(17)
         name.setSingleLine(False)
         name.setMaxLines(3)
@@ -397,28 +396,28 @@ class SongInfoScreen(_info_base()):
             place.setMargins(_dp(24), _dp(2), _dp(24), 0)
             self.body.addView(line, place)
         if library:
-            edit = self.pill("Изменить теги", True, self.edit_tags)
+            edit = self.pill(tr("Изменить теги"), True, self.edit_tags)
             place = Params(-2, -2)
             place.gravity = 1
             place.setMargins(0, _dp(16), 0, 0)
             self.body.addView(edit, place)
         if not self.path:
-            self.note(self.body, "Песня из чата ещё не скачана, поэтому о самом файле пока ничего не известно.", size=14, top=16)
+            self.note(self.body, tr("Песня из чата ещё не скачана, поэтому о самом файле пока ничего не известно."), size=14, top=16)
 
         # what matters
-        main = self.plate("Основное")
-        self.value_row(main, "Жанр", genre, (lambda: self.open_group("genres", genre)) if library else None)
+        main = self.plate(tr("Основное"))
+        self.value_row(main, tr("Жанр"), genre, (lambda: self.open_group("genres", genre)) if library else None)
         if data:
             seconds = data["length"] or fallback.get("seconds") or track.get("duration") or 0
-            self.value_row(main, "Длительность", clock(seconds) if seconds else "")
-            self.value_row(main, "Формат", sound_label(data))
+            self.value_row(main, tr("Длительность"), clock(seconds) if seconds else "")
+            self.value_row(main, tr("Формат"), sound_label(data))
         if library:
             count = music.play_count(self.library_path)
-            self.plays_view = self.value_row(main, "Сколько раз играла", times_label(count) if count else "", empty="ни разу")
-            self.last_view = self.value_row(main, "Последний раз", date_label(music.last_played(self.library_path)), empty="ещё не играла")
+            self.plays_view = self.value_row(main, tr("Сколько раз играла"), times_label(count) if count else "", empty=tr("ни разу"))
+            self.last_view = self.value_row(main, tr("Последний раз"), date_label(music.last_played(self.library_path)), empty=tr("ещё не играла"))
 
         # the rest, folded
-        self.details_row, _, _ = self.item_row(self.body, "Подробнее", "Файл, номера, ISRC, лейбл, звук, история",
+        self.details_row, _, _ = self.item_row(self.body, tr("Подробнее"), tr("Файл, номера, ISRC, лейбл, звук, история"),
                                                self.toggle_details, icons=("arrow_more", "msg_arrow_more"))
         self.details = jclass("android.widget.LinearLayout")(owner.context)
         self.details.setOrientation(1)
@@ -434,51 +433,51 @@ class SongInfoScreen(_info_base()):
 
     def draw_details(self, data, tags, track, library):
         if self.path:
-            files = self.plate("Файл")
-            self.value_row(files, "Имя файла", os.path.basename(self.path), self.copy_path)
-            self.value_row(files, "Папка", place_label(self.path), self.copy_path)
+            files = self.plate(tr("Файл"))
+            self.value_row(files, tr("Имя файла"), os.path.basename(self.path), self.copy_path)
+            self.value_row(files, tr("Папка"), place_label(self.path), self.copy_path)
             if data and data["size"]:
-                self.value_row(files, "Размер", size_label(data["size"]))
-        more = self.plate("Теги")
+                self.value_row(files, tr("Размер"), size_label(data["size"]))
+        more = self.plate(tr("Теги"))
         album_artist = tags.get("albumartist") or track.get("album_artist") or ""
-        self.value_row(more, "Исполнитель альбома", album_artist,
+        self.value_row(more, tr("Исполнитель альбома"), album_artist,
                        (lambda: self.open_group("artists", album_artist)) if library else None)
-        self.value_row(more, "Номер дорожки", number_label(tags.get("tracknumber") or track.get("track")))
-        self.value_row(more, "Номер диска", number_label(tags.get("discnumber")))
-        for key, label in (("isrc", "ISRC"), ("composer", "Композитор"), ("lyricist", "Автор слов"),
-                           ("organization", "Лейбл"), ("copyright", "Копирайт"), ("bpm", "BPM")):
+        self.value_row(more, tr("Номер дорожки"), number_label(tags.get("tracknumber") or track.get("track")))
+        self.value_row(more, tr("Номер диска"), number_label(tags.get("discnumber")))
+        for key, label in (("isrc", "ISRC"), ("composer", tr("Композитор")), ("lyricist", tr("Автор слов")),
+                           ("organization", tr("Лейбл")), ("copyright", tr("Копирайт")), ("bpm", "BPM")):
             if tags.get(key):
                 self.value_row(more, label, tags.get(key))
         lyrics = data["lyrics"] if data else ""
         if lyrics:
             lines = len([line for line in lyrics.splitlines() if line.strip()])
-            kind = "синхронизированный" if SYNCED.search(lyrics) else "обычный"
-            self.value_row(more, "Текст в файле", "есть, %s, строк: %d" % (kind, lines) if lines > 1 else "есть, %s" % kind)
+            kind = tr("синхронизированный") if SYNCED.search(lyrics) else tr("обычный")
+            self.value_row(more, tr("Текст в файле"), tr("есть, %s, строк: %d") % (kind, lines) if lines > 1 else tr("есть, %s") % kind)
         else:
-            self.value_row(more, "Текст в файле", "", empty="нет")
+            self.value_row(more, tr("Текст в файле"), "", empty=tr("нет"))
         comment = data["comment"] if data else ""
         if comment:
             link = comment if comment.startswith(("http://", "https://")) else None
-            shown = self.value_row(more, "Комментарий", comment, (lambda: self.open_link(link)) if link else None)
+            shown = self.value_row(more, tr("Комментарий"), comment, (lambda: self.open_link(link)) if link else None)
             if not link:
                 shown.setTextIsSelectable(True)
         if data:
-            sound = self.plate("Звук")
+            sound = self.plate(tr("Звук"))
             if data["bitrate"]:
-                self.value_row(sound, "Битрейт", "~%d кбит/с" % round(data["bitrate"] / 1000.0))
+                self.value_row(sound, tr("Битрейт"), tr("~%d кбит/с") % round(data["bitrate"] / 1000.0))
             if data["sample_rate"]:
-                self.value_row(sound, "Частота дискретизации", "%d Гц" % data["sample_rate"])
+                self.value_row(sound, tr("Частота дискретизации"), tr("%d Гц") % data["sample_rate"])
             if data["bits"]:
-                self.value_row(sound, "Битность", "%d бит" % data["bits"])
+                self.value_row(sound, tr("Битность"), tr("%d бит") % data["bits"])
             if data["codec"]:
-                self.value_row(sound, "Кодирование", data["codec"])
+                self.value_row(sound, tr("Кодирование"), data["codec"])
             if data["channels"]:
-                self.value_row(sound, "Каналы", {1: "1, моно", 2: "2, стерео"}.get(data["channels"], str(data["channels"])))
+                self.value_row(sound, tr("Каналы"), {1: tr("1, моно"), 2: tr("2, стерео")}.get(data["channels"], str(data["channels"])))
         if library:
-            history = self.plate("В медиатеке")
-            self.value_row(history, "Добавлена", date_label(track.get("added")))
-            self.value_row(history, "Изменена", date_label((data or {}).get("mtime") or track.get("mtime")))
-            clear = self.pill("Очистить историю воспроизведения", False, self.clear_history)
+            history = self.plate(tr("В медиатеке"))
+            self.value_row(history, tr("Добавлена"), date_label(track.get("added")))
+            self.value_row(history, tr("Изменена"), date_label((data or {}).get("mtime") or track.get("mtime")))
+            clear = self.pill(tr("Очистить историю воспроизведения"), False, self.clear_history)
             place = jclass("android.widget.LinearLayout$LayoutParams")(-2, -2)
             place.setMargins(_dp(20), _dp(12), 0, 0)
             self.body.addView(clear, place)
@@ -487,7 +486,7 @@ class SongInfoScreen(_info_base()):
         shown = self.details.getVisibility() == 0
         self.details.setVisibility(8 if shown else 0)
         self.details_row.getChildAt(0).setRotation(0.0 if shown else 180.0)
-        self.details_row.setContentDescription("Подробнее, %s" % ("развернуть" if shown else "свернуть"))
+        self.details_row.setContentDescription(tr("Подробнее, %s") % (tr("развернуть") if shown else tr("свернуть")))
 
     def cover_image(self):
         known, jpg = self.owner.plugin.music.covers.cached(self.path) if self.path else (True, None)
@@ -507,7 +506,7 @@ class SongInfoScreen(_info_base()):
 
     def copy_path(self):
         copy_to_clipboard(self.path)
-        self.say("Путь к файлу скопирован")
+        self.say(tr("Путь к файлу скопирован"))
 
     def open_link(self, url):
         context = self.owner.context
@@ -522,10 +521,10 @@ class SongInfoScreen(_info_base()):
     def clear_history(self):
         music = self.owner.plugin.music
         music.clear_history(self.library_path)
-        for view, text in ((self.plays_view, "ни разу"), (self.last_view, "ещё не играла")):
+        for view, text in ((self.plays_view, tr("ни разу")), (self.last_view, tr("ещё не играла"))):
             if view is not None:
                 view.setText(text)
-        self.say("История воспроизведения песни очищена", "ic_delete")
+        self.say(tr("История воспроизведения песни очищена"), "ic_delete")
 
     def refresh(self):
         pass
@@ -535,9 +534,9 @@ def sound_label(data):
     """One line for the sound: the format, then its depth and rate when the file has them."""
     parts = [data.get("format") or ""]
     if data.get("bits"):
-        parts.append("%d бит" % data["bits"])
+        parts.append(tr("%d бит") % data["bits"])
     if data.get("sample_rate"):
-        parts.append(("%.1f кГц" % (data["sample_rate"] / 1000.0)).replace(".0 ", " ").replace(".", ","))
+        parts.append((tr("%.1f кГц") % (data["sample_rate"] / 1000.0)).replace(".0 ", " ").replace(".", ","))
     if not data.get("bits") and data.get("bitrate"):
-        parts.append("~%d кбит/с" % round(data["bitrate"] / 1000.0))
+        parts.append(tr("~%d кбит/с") % round(data["bitrate"] / 1000.0))
     return " · ".join(p for p in parts if p)

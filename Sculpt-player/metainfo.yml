@@ -2,7 +2,7 @@ id: sculpt_player
 name: Sculpt Player
 description: "Перекраивает родной M3E-плеер exteraGram: большая обложка, визуализатор под цвет обложки, текст по центру, ряд кнопок под ним, прогресс в одну строку. Вкладка «Медиатека» читает песни с телефона: все песни, любимые, недавние, авторы, альбомы и жанры."
 author: "@BroZYTnikkkk"
-version: "0.35.1"
+version: "0.37.1"
 icon: MeruTheSuccubus7/44
 app_version: ">=13.1.1"
 sdk_version: ">=1.4.5.3"

@@ -25,13 +25,14 @@ import urllib.parse
 
 import requests
 from requests.adapters import HTTPAdapter
+from .i18n import tr
 
 PORT = 47710
 SERVICE_TYPE = "_mornye._tcp"
 PAIR_CONTEXT = "mornye-link-pair-v1:"
 TIMEOUT = 6
-UNREACHABLE = "Компьютер не отвечает. Проверь, что Mornye на нём открыт и он в той же сети, что и телефон."
-CHANGED = "Сертификат компьютера изменился. Забудь компьютер и подключись заново."
+UNREACHABLE = tr("Компьютер не отвечает. Проверь, что Mornye на нём открыт и он в той же сети, что и телефон.")
+CHANGED = tr("Сертификат компьютера изменился. Забудь компьютер и подключись заново.")
 
 
 class LinkError(Exception):
@@ -59,7 +60,7 @@ def parse_address(text):
     found = re.fullmatch(r"([^\s:/]+)(?::(\d{1,5}))?", (text or "").strip())
     port = int(found.group(2) or PORT) if found else 0
     if not found or not 0 < port < 65536:
-        raise LinkError("Адрес пишется так: 192.168.0.10 или 192.168.0.10:47710.")
+        raise LinkError(tr("Адрес пишется так: 192.168.0.10 или 192.168.0.10:47710."))
     return found.group(1), port
 
 
@@ -104,9 +105,9 @@ def probe(host, port, timeout=TIMEOUT):
         said = str(info["fingerprint"]).lower()
         server_id = str(info["serverId"])
     except (ValueError, KeyError, TypeError):
-        raise LinkError("По этому адресу отвечает не Mornye.") from None
+        raise LinkError(tr("По этому адресу отвечает не Mornye.")) from None
     if said != fingerprint:
-        raise LinkError("Компьютер назвал не тот сертификат, который показал. Подключаться к нему небезопасно.")
+        raise LinkError(tr("Компьютер назвал не тот сертификат, который показал. Подключаться к нему небезопасно."))
     return {"host": host, "port": port, "name": str(info.get("name") or host), "serverId": server_id,
             "fingerprint": fingerprint, "pairing": bool(info.get("pairing"))}
 
@@ -131,12 +132,12 @@ def pair(server, pin, device_id, name):
                 "apiKey": str(data["apiKey"])}
     error = data.get("error")
     if error == "bad_proof":
-        raise LinkError("Код не подходит. Проверь цифры на экране компьютера.")
+        raise LinkError(tr("Код не подходит. Проверь цифры на экране компьютера."))
     if error == "pairing_closed":
-        raise LinkError("На компьютере не открыто окно подключения или код устарел. Нажми там «Pair a phone» ещё раз.")
+        raise LinkError(tr("На компьютере не открыто окно подключения или код устарел. Нажми там «Pair a phone» ещё раз."))
     if error == "rate_limited":
-        raise LinkError("Слишком часто. Подожди несколько секунд и попробуй снова.")
-    raise LinkError("Компьютер не принял подключение. Попробуй ещё раз.")
+        raise LinkError(tr("Слишком часто. Подожди несколько секунд и попробуй снова."))
+    raise LinkError(tr("Компьютер не принял подключение. Попробуй ещё раз."))
 
 
 def subsonic_auth(api_key):
@@ -153,12 +154,12 @@ def ping(saved):
     try:
         body = answer.json()["subsonic-response"]
     except (ValueError, KeyError, TypeError):
-        raise LinkError("Компьютер ответил непонятно. Попробуй ещё раз.") from None
+        raise LinkError(tr("Компьютер ответил непонятно. Попробуй ещё раз.")) from None
     if body.get("status") == "ok":
         return True
     if (body.get("error") or {}).get("code") in (40, 44):
-        raise Forgotten("Компьютер больше не знает этот телефон. Забудь его и подключись заново.")
-    raise LinkError("Компьютер не ответил на проверку. Попробуй ещё раз.")
+        raise Forgotten(tr("Компьютер больше не знает этот телефон. Забудь его и подключись заново."))
+    raise LinkError(tr("Компьютер не ответил на проверку. Попробуй ещё раз."))
 
 
 def stream_query(api_key):
@@ -176,9 +177,9 @@ def songs(saved, offset=0, count=500):
     try:
         body = answer.json()["subsonic-response"]
     except (ValueError, KeyError, TypeError):
-        raise LinkError("Компьютер ответил непонятно. Попробуй ещё раз.") from None
+        raise LinkError(tr("Компьютер ответил непонятно. Попробуй ещё раз.")) from None
     if body.get("status") != "ok":
-        raise LinkError("Компьютер не отдал список песен. Попробуй ещё раз.")
+        raise LinkError(tr("Компьютер не отдал список песен. Попробуй ещё раз."))
     return (body.get("searchResult3") or {}).get("song") or []
 
 
@@ -199,10 +200,10 @@ def _answer(response):
     except ValueError:
         data = None
     if response.status_code == 401:
-        raise Forgotten("Компьютер больше не знает этот телефон. Забудь его и подключись заново.")
+        raise Forgotten(tr("Компьютер больше не знает этот телефон. Забудь его и подключись заново."))
     if response.status_code >= 400:
         code = data.get("error") if isinstance(data, dict) else None
-        raise LinkError("Компьютер отказал: %s." % (code or response.status_code))
+        raise LinkError(tr("Компьютер отказал: %s.") % (code or response.status_code))
     return data
 
 
@@ -270,7 +271,7 @@ class Socket:
         lines = head.decode("latin-1").split("\r\n")
         status = lines[0].split(" ")
         if len(status) > 1 and status[1] == "401":
-            raise Forgotten("Компьютер больше не знает этот телефон. Забудь его и подключись заново.")
+            raise Forgotten(tr("Компьютер больше не знает этот телефон. Забудь его и подключись заново."))
         headers = {k.strip().lower(): v.strip() for k, _, v in (line.partition(":") for line in lines[1:])}
         accept = base64.b64encode(hashlib.sha1((key + self.MAGIC).encode()).digest()).decode()
         if len(status) < 2 or status[1] != "101" or headers.get("sec-websocket-accept") != accept:

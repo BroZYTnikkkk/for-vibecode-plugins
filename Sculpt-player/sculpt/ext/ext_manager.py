@@ -15,6 +15,7 @@ import shutil
 import threading
 import time
 from urllib.parse import urlsplit
+from ..i18n import tr
 from .logs import log
 from .ext_runtime import (
     ExtError,
@@ -624,7 +625,7 @@ class ExtensionManager:
                 return ext, value.get("tracks") or []
             except Exception as e:
                 self.log(ext, "WARN", "search failed: %s" % e)
-        raise ExtError("Нет расширений для поиска. Установите их в разделе «Расширения».")
+        raise ExtError(tr("Нет расширений для поиска. Установите их в разделе «Расширения»."))
 
     def search_metadata(self, query, limit=5):
         for ext in self.priorities("metadata"):

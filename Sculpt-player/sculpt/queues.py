@@ -3,17 +3,19 @@
 """Several queues, as in Musicolet: every list the music was started from keeps its own song and place.
 
 A queue from the media library is known by the list it came from ("Все песни", an album, an author) and is
-saved with the plugin's files. A queue from a chat is known by the chat; its songs are Telegram messages, so
-it lives until Telegram restarts (keeping the player across restarts is a later step of the plan).
+saved with the plugin's files. A queue from a chat is known by the chat; its songs are Telegram messages, kept as
+references and asked of Telegram again after a restart.
 """
 
 from client_utils import run_on_queue
 from java import jclass
 
-from .common import MEDIA_CONTROLLER, QUEUES_MAX
+from .i18n import source, tr
+from . import chat_songs
+from .common import MEDIA_CONTROLLER, QUEUES_MAX, _log
 from .music import local_path
 
-LIBRARY_TITLE = "Медиатека"
+LIBRARY_TITLE = tr("Медиатека")
 
 
 class QueueStore:
@@ -28,7 +30,7 @@ class QueueStore:
         self.starting = False
         saved = plugin.music._load("queues.json", {})
         for entry in saved.get("entries", []) if isinstance(saved, dict) else []:
-            if entry.get("kind") == "library" and entry.get("paths"):
+            if (entry.get("kind") == "library" and entry.get("paths")) or (entry.get("kind") == "telegram" and entry.get("songs")):
                 self.entries.append(entry)
         if self.find(saved.get("active") if isinstance(saved, dict) else None) is not None:
             self.active = saved["active"]
@@ -42,9 +44,38 @@ class QueueStore:
         return None
 
     def save(self):
-        data = {"active": self.active,
-                "entries": [{k: v for k, v in e.items() if k != "java"} for e in self.entries if e["kind"] == "library"]}
-        run_on_queue(lambda: self.plugin.music._save("queues.json", data))
+        def work():
+            for entry in list(self.entries):
+                java = entry.get("java")
+                # made only when the chat's queue changed in size: every song is several calls into Java
+                if entry["kind"] == "telegram" and java is not None and len(entry.get("songs") or []) != java.size():
+                    try:
+                        entry["songs"] = [chat_songs.ref_of(java.get(i)) for i in range(java.size())]
+                    except Exception as e:
+                        _log("queue refs: %s" % type(e).__name__)  # the other queues are still saved
+            data = {"active": self.active, "entries": [{k: v for k, v in e.items() if k not in ("java", "loading", "tried")} for e in self.entries]}
+            self.plugin.music._save("queues.json", data)
+
+        run_on_queue(work)
+
+    def ensure_java(self, entry, done):
+        """A chat's queue saved before a restart: its messages are asked of Telegram once; done() when they answered."""
+        if entry.get("java") is not None or entry.get("loading") or entry.get("tried") or not entry.get("songs"):
+            return
+        entry["loading"] = True
+
+        def loaded(found):
+            entry["loading"] = False
+            entry["tried"] = True  # all of them deleted: not asked again and again
+            kept = [found[chat_songs.key_of(ref)] for ref in entry["songs"] if chat_songs.key_of(ref) in found]
+            if kept:
+                java = jclass("java.util.ArrayList")()
+                for message in kept:
+                    java.add(message)
+                entry["java"] = java
+            done()
+
+        chat_songs.load(entry["songs"], loaded)
 
     def changed(self):
         self.save()
@@ -117,7 +148,7 @@ class QueueStore:
 
     def library_started(self, title, tracks, index, progress=0.0):
         self.snapshot()
-        title = title or LIBRARY_TITLE
+        title = source(title or LIBRARY_TITLE)  # saved in one language, so a queue stays the same one when the language changes
         self.put({"key": "lib:" + title, "kind": "library", "title": title, "paths": [t["path"] for t in tracks],
                   "current": tracks[index]["path"], "progress": float(progress)})
 
@@ -159,7 +190,10 @@ class QueueStore:
                     return str(chat.title)
         except Exception:
             pass
-        return "Чат"
+        return tr("Чат")
+
+    def gone(self):
+        self.plugin.bulletin(self.plugin.player.sheet, "info", tr("Песни этой очереди больше недоступны в Telegram."))
 
     # -- switching ---------------------------------------------------------------------
 
@@ -174,14 +208,20 @@ class QueueStore:
             by_path = self.plugin.music.by_path
             tracks = [by_path[p] for p in entry["paths"] if p in by_path]
             if not tracks:
-                self.plugin.bulletin(self.plugin.player.sheet, "info", "Песен этой очереди больше нет на телефоне.")
+                self.plugin.bulletin(self.plugin.player.sheet, "info", tr("Песен этой очереди больше нет на телефоне."))
                 return
             index = next((i for i, t in enumerate(tracks) if t["path"] == entry.get("current")), 0)
             if tracks[index]["path"] != entry.get("current"):
                 progress = 0.0
-            self.plugin.music.play(tracks, index, entry["title"], progress)
+            self.plugin.music.play_in_place(tracks, index, tr(entry["title"]), progress)
             return
         java = entry.get("java")
+        if java is None and entry.get("songs"):
+            if entry.get("tried"):
+                self.gone()
+            else:
+                self.ensure_java(entry, lambda: self.switch(key))
+            return
         if java is None or java.isEmpty():
             return
         message = java.get(0)

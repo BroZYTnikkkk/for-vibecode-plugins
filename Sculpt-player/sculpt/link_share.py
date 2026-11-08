@@ -17,6 +17,7 @@ import threading
 from android_utils import run_on_ui_thread
 from java import jclass
 
+from .i18n import tr
 from . import link
 from .common import VERSION, _log
 from .link_remote import Remote
@@ -106,7 +107,7 @@ class Share:
         self.timer = None
         self.on_status = None
         self.desktop_listener = None
-        self.status = "Песни телефона появятся в Mornye на компьютере, пока Telegram открыт."
+        self.status = tr("Песни телефона появятся в Mornye на компьютере, пока Telegram открыт.")
         self.uploads = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="sculpt-link-up")
 
     def path_of(self, file_id):
@@ -142,7 +143,7 @@ class Share:
         if sock is not None:
             sock.close()
         if clear:
-            self.say("Выключено. Песни телефона пропадут из Mornye на компьютере.")
+            self.say(tr("Выключено. Песни телефона пропадут из Mornye на компьютере."))
         if clear and saved is not None:
             def forget():
                 try:
@@ -169,7 +170,7 @@ class Share:
         while not stopping.is_set():
             saved = saved_server(self.plugin)
             if saved is None:
-                self.say("Сначала подключи компьютер.")
+                self.say(tr("Сначала подключи компьютер."))
                 return
             sock = None
             try:
@@ -178,7 +179,7 @@ class Share:
                 sock.send({"type": "hello", "deviceId": device_id(self.plugin), "name": device_name(), "platform": "android",
                            "appVersion": VERSION, "protocol": 1})
                 delay = 1
-                self.say("Подключаюсь к компьютеру…")
+                self.say(tr("Подключаюсь к компьютеру…"))
                 while not stopping.is_set():
                     message = sock.receive()
                     if message is None:
@@ -198,7 +199,7 @@ class Share:
                     sock.close()
             if stopping.is_set():
                 return
-            self.say("Нет связи с компьютером. Пробую снова…")
+            self.say(tr("Нет связи с компьютером. Пробую снова…"))
             stopping.wait(delay)
             delay = min(BACKOFF_MAX, delay * 2)
 
@@ -234,7 +235,7 @@ class Share:
             path = self.files.get(name) if NAME.match(name) else None
             if path is None:
                 _log("link: not in the list (%d songs known): %s" % (len(self.files), name))
-                self.say("Компьютер попросил песню, которой нет в списке.")
+                self.say(tr("Компьютер попросил песню, которой нет в списке."))
                 sock.send({"type": "files.failed", "name": name, "reason": "not_found"})
                 return
             suffix = name.rsplit(".", 1)[1]
@@ -245,7 +246,7 @@ class Share:
             _log("link: sent %s" % name)
         except Exception as e:
             _log("link: upload %s: %s" % (type(e).__name__, e))
-            self.say("Не удалось отправить песню: %s" % e)
+            self.say(tr("Не удалось отправить песню: %s") % e)
             try:
                 sock.send({"type": "files.failed", "name": name, "reason": "unavailable"})
             except Exception:
@@ -330,13 +331,13 @@ class Share:
                 self.send_covers(saved, covers, run)
                 self.send_songs(saved, songs, version, run)
             if run == self.run_id:
-                self.say("Показано на компьютере: песен %d." % len(songs))
+                self.say(tr("Показано на компьютере: песен %d.") % len(songs))
         except link.LinkError as e:
             _log("link: list refused")
             self.say(str(e))
         except Exception as e:
             _log("link: list %s" % type(e).__name__)
-            self.say("Не получилось отправить список песен. Попробую при следующем подключении.")
+            self.say(tr("Не получилось отправить список песен. Попробую при следующем подключении."))
 
     def send_covers(self, saved, covers, run):
         if not covers:

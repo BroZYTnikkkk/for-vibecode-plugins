@@ -7,6 +7,7 @@ from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger,
 from ui.bulletin import BulletinHelper
 from ui.settings import Divider
 
+from .i18n import tr
 from .common import CHECKS, ID_OPEN_SETTINGS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
 from .music import ListenTimer, MusicData, local_path
 from .library_ui import Run
@@ -15,7 +16,7 @@ from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
 from .playlists import PlaylistStore
-from .hooks import ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -104,6 +105,8 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(_java_class("org.telegram.ui.Components.VideoPlayer"), "preparePlayer",
                          (_java_class("android.net.Uri"), _java_class("java.lang.String")), LinkSourceHook(self, "preparePlayer"))
             lyrics_view = _java_class("com.exteragram.messenger.player.ui.LyricsView")
+            self.install(lyrics_view, "setState", (i, _java_class("java.lang.CharSequence"), _java_class("java.lang.CharSequence"),
+                                                   _java_class("java.lang.CharSequence")), LyricsStateHook(self, "setState"))
             self.install(lyrics_view, "setPosition", (JLong.TYPE, b), LyricsPositionHook(self, "lyricsPosition"))
             self.install(lyrics_view, "setLyrics", (_java_class("com.exteragram.messenger.player.lyrics.Lyrics"), _java_class("java.lang.CharSequence")),
                          LyricsSetHook(self, "setLyrics"))
@@ -117,7 +120,7 @@ class SculptPlayerPlugin(BasePlugin):
             ))
             self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
-                text="Установить расширение",
+                text=tr("Установить расширение"),
                 icon="msg_plugins",
                 condition=SFLX_CONDITION,
                 on_click=self.extensions.install_message,
@@ -126,7 +129,7 @@ class SculptPlayerPlugin(BasePlugin):
             tags = music_module.mutagen
             _log("loaded %s, mutagen %s" % (VERSION, getattr(tags, "version_string", None) if tags else "missing"))
         except Exception as e:
-            _show_error("Sculpt Player: не удалось загрузиться", e)
+            _show_error(tr("Sculpt Player: не удалось загрузиться"), e)
 
     def on_plugin_unload(self):
         for handle in self.hooks:
@@ -164,7 +167,7 @@ class SculptPlayerPlugin(BasePlugin):
             if jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject() is None:
                 run_on_ui_thread(self.open_library, 150)
         except Exception as e:
-            _show_error("Sculpt Player: не удалось открыть плеер", e)
+            _show_error(tr("Sculpt Player: не удалось открыть плеер"), e)
 
     def open_library(self):
         from .common import PANEL_LIBRARY
@@ -217,7 +220,7 @@ class SculptPlayerPlugin(BasePlugin):
         # Layout hooks fire many times a second: one bulletin per failing hook is enough.
         if name not in self.reported:
             self.reported.add(name)
-            _show_error("Sculpt Player: ошибка в %s" % name, exc)
+            _show_error(tr("Sculpt Player: ошибка в %s") % name, exc)
 
     def sheet_method(self, name, *types):
         method = self.sheet_methods.get(name)
@@ -320,7 +323,7 @@ class SculptPlayerPlugin(BasePlugin):
         message = controller.getPlayingMessageObject()
         if local_path(message) is None:
             return
-        self.sheet_fields.get(sheet, "headerTitle").setText(self.music.queue_title or "Медиатека")
+        self.sheet_fields.get(sheet, "headerTitle").setText(self.music.queue_title or tr("Медиатека"))
         subtitle = self.sheet_fields.get(sheet, "headerSubtitle")
         playlist = controller.getPlaylist()
         index = playlist.indexOf(message)
@@ -353,7 +356,7 @@ class SculptPlayerPlugin(BasePlugin):
         run = Run(action)
         factory = self.sheet_method("bulletins").invoke(sheet)
         # long enough to read and reach the button: the default short one is gone in under three seconds
-        factory.createSimpleBulletin(resource, text, "Отменить", run).setDuration(5000).show()
+        factory.createSimpleBulletin(resource, text, tr("Отменить"), run).setDuration(5000).show()
 
     def cover_radius(self):
         index = self.get_setting("cover_radius", 1)
@@ -385,7 +388,7 @@ class SculptPlayerPlugin(BasePlugin):
             activity = jclass("org.telegram.ui.LaunchActivity").instance
             activity.startActivityForResult(intent, 0)
         except Exception:
-            run_on_ui_thread(lambda: BulletinHelper.show_error("На этом телефоне нет системного эквалайзера"))
+            run_on_ui_thread(lambda: BulletinHelper.show_error(tr("На этом телефоне нет системного эквалайзера")))
 
     def settings_changed(self):
         player = self.player
@@ -423,8 +426,8 @@ class SculptPlayerPlugin(BasePlugin):
         """exteraGram's player settings sheet: this plugin's settings moved to its own tab; a link leads there."""
         UItem = jclass("org.telegram.ui.Components.UItem")
         items.add(UItem.asHeader("Sculpt Player"))
-        items.add(UItem.asButton(ID_OPEN_SETTINGS, "Настройки Sculpt Player"))
-        items.add(UItem.asShadow("Вид плеера, скачивание и расширения — во вкладке ⚙ в нижней панели плеера."))
+        items.add(UItem.asButton(ID_OPEN_SETTINGS, tr("Настройки Sculpt Player")))
+        items.add(UItem.asShadow(tr("Вид плеера, скачивание и расширения — во вкладке ⚙ в нижней панели плеера.")))
 
     def open_settings_tab(self):
         from .common import PANEL_SETTINGS
@@ -433,6 +436,6 @@ class SculptPlayerPlugin(BasePlugin):
 
     def create_settings(self):
         return [
-            Divider(text="Все настройки теперь в самом плеере: ⚙ в нижней панели. "
-                         "Пока плагин включён, в exteraGram работает новый плеер, даже если его переключатель выключен."),
+            Divider(text=tr("Все настройки теперь в самом плеере: ⚙ в нижней панели. "
+                         "Пока плагин включён, в exteraGram работает новый плеер, даже если его переключатель выключен.")),
         ]

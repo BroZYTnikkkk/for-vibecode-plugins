@@ -11,23 +11,25 @@ from android_utils import run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 from ui.bulletin import BulletinHelper
 
+from .i18n import tr
 from .common import PANEL_LIBRARY, _ctx, _log
 
 # shown on a message only when it is a Mornye extension package
 SFLX_CONDITION = ("message != null && message.getDocumentName() != null"
                   " && message.getDocumentName().toLowerCase().endsWith('.sflx')")
 
-TYPE_NAMES = {"download_provider": "Скачивание", "metadata_provider": "Метаданные", "lyrics_provider": "Тексты"}
+FROM_NETWORK = 1  # Lyrics.source: found online, 0 is the song's own tags
+TYPE_NAMES = {"download_provider": tr("Скачивание"),"metadata_provider": tr("Метаданные"), "lyrics_provider": tr("Тексты")}
 
 # what the extension code says when something fails, in the words this plugin uses
 ERRORS = (
-    ("checksum mismatch", "Файл расширения не совпал с каталогом. Попробуй ещё раз позже."),
-    ("cannot downgrade", "Установлена более новая версия этого расширения."),
-    ("registry not found", "По этой ссылке нет каталога расширений. Нужна ссылка на GitHub-репозиторий или registry.json."),
-    ("invalid registry", "По этой ссылке не каталог расширений: в файле нет списка extensions."),
-    ("must use https", "Ссылка должна начинаться с https://."),
-    ("manifest", "Файл не похож на расширение Mornye: в нём нет верного manifest.json."),
-    ("too large", "Расширение слишком большое: больше 256 МБ."),
+    ("checksum mismatch", tr("Файл расширения не совпал с каталогом. Попробуй ещё раз позже.")),
+    ("cannot downgrade", tr("Установлена более новая версия этого расширения.")),
+    ("registry not found", tr("По этой ссылке нет каталога расширений. Нужна ссылка на GitHub-репозиторий или registry.json.")),
+    ("invalid registry", tr("По этой ссылке не каталог расширений: в файле нет списка extensions.")),
+    ("must use https", tr("Ссылка должна начинаться с https://.")),
+    ("manifest", tr("Файл не похож на расширение Mornye: в нём нет верного manifest.json.")),
+    ("too large", tr("Расширение слишком большое: больше 256 МБ.")),
 )
 
 
@@ -38,7 +40,7 @@ def describe(error):
         if key in low:
             return message
     if "timed out" in low or "connection" in low or "resolve" in low or "network" in low:
-        return "Нет связи с сервером. Проверь интернет и попробуй ещё раз."
+        return tr("Нет связи с сервером. Проверь интернет и попробуй ещё раз.")
     return text
 
 
@@ -46,10 +48,10 @@ def type_names(types):
     return ", ".join(TYPE_NAMES.get(t, t) for t in types)
 
 
-STAGES = {"checking_session": "Проверяю сессию", "resolving_metadata": "Ищу данные песни", "resolving_stream": "Ищу поток",
-          "downloading": "Скачиваю", "finalizing": "Сохраняю"}
-QUALITIES = (("LOSSLESS", "Lossless, 16 бит"), ("HI_RES_LOSSLESS", "Hi-Res Lossless, 24 бит"), ("HI_RES", "Hi-Res"),
-             ("HIGH", "Высокое, до 320 кбит/с"), ("LOW", "Низкое"))
+STAGES = {"checking_session": tr("Проверяю сессию"), "resolving_metadata": tr("Ищу данные песни"), "resolving_stream": tr("Ищу поток"),
+          "downloading": tr("Скачиваю"), "finalizing": tr("Сохраняю")}
+QUALITIES = (("LOSSLESS", tr("Lossless, 16 бит")), ("HI_RES_LOSSLESS", tr("Hi-Res Lossless, 24 бит")), ("HI_RES", "Hi-Res"),
+             ("HIGH", tr("Высокое, до 320 кбит/с")), ("LOW", tr("Низкое")))
 
 
 HEALTH_TTL = 600  # seconds a service's health is trusted; an unknown one is asked again sooner
@@ -244,9 +246,9 @@ class Extensions:
             if play and track is not None and player is not None:
                 if player.library is None:
                     player.show_tab(PANEL_LIBRARY)
-                player.library.play([track], 0, "Скачанное")
+                player.library.play([track], 0, tr("Скачанное"))
             elif player is None:
-                BulletinHelper.show_success("Скачано: «%s». Песня уже в медиатеке." % title)
+                BulletinHelper.show_success(tr("Скачано: «%s». Песня уже в медиатеке.") % title)
 
         def index():
             try:
@@ -277,11 +279,11 @@ class Extensions:
         if not value:
             return None
         Lyrics = jclass("com.exteragram.messenger.player.lyrics.Lyrics")
-        name = str(value.get("provider") or "Расширение")
+        name = str(value.get("provider") or tr("Расширение"))
         if value.get("instrumental") is True:
-            return Lyrics.instrumental(duration, name)
+            return Lyrics.instrumental(FROM_NETWORK, name)
         text = lyrics_text(value)
-        return Lyrics.parse(text, duration, name) if text else None
+        return Lyrics.parse(text, FROM_NETWORK, name) if text else None
 
     def work(self, task, done=None, failed=None):
         """task(manager) on its own thread; done(result) or failed(message) back on the UI thread."""
@@ -327,14 +329,14 @@ class Extensions:
         except Exception:
             file = None
         if file is None or not file.exists():
-            BulletinHelper.show_info("Сначала скачай файл расширения в чате, потом установи его.")
+            BulletinHelper.show_info(tr("Сначала скачай файл расширения в чате, потом установи его."))
             return
         path = str(file.getAbsolutePath())
 
         def installed(ext):
             manifest = self.get().manifest(ext)
             name = manifest.display_name if manifest is not None else ext
-            BulletinHelper.show_success("Расширение «%s» установлено. Оно во вкладке Mornye плеера." % name)
+            BulletinHelper.show_success(tr("Расширение «%s» установлено. Оно во вкладке Mornye плеера.") % name)
             player = self.plugin.player
             if player is not None:
                 for _, stack in player.stacks():
@@ -342,4 +344,4 @@ class Extensions:
                         stack.data_changed()
 
         self.work(lambda manager: manager.install_file(path), installed,
-                  lambda text: BulletinHelper.show_error("Расширение не установлено. " + text))
+                  lambda text: BulletinHelper.show_error(tr("Расширение не установлено. ") + text))
