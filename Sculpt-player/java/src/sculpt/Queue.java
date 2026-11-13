@@ -27,6 +27,38 @@ public final class Queue {
         return out;
     }
 
+    /** The same, for songs whose ids do not go one after another: a queue that plays mixed keeps the ids of its list. */
+    public static ArrayList<MessageObject> buildIds(int account, long userId, int[] ids, int date,
+                                                    String[] paths, String[] titles, String[] artists, int[] durations) {
+        ArrayList<MessageObject> out = new ArrayList<>(paths.length);
+        for (int i = 0; i < paths.length; i++) {
+            out.add(message(account, userId, ids[i], date, paths[i], titles[i], artists[i], durations[i]));
+        }
+        return out;
+    }
+
+    /**
+     * The files of a queue's songs, one per line and in the list's order, in one call across the bridge; an
+     * empty line for a song from a chat. Null when a path has a line break in it: the caller then asks one by one.
+     */
+    public static String paths(ArrayList<MessageObject> list) {
+        StringBuilder out = new StringBuilder(list.size() * 64);
+        for (int i = 0; i < list.size(); i++) {
+            MessageObject message = list.get(i);
+            String path = message != null && message.getId() < 0 && message.messageOwner != null ? message.messageOwner.attachPath : null;
+            if (path != null && path.indexOf('\n') >= 0) {
+                return null;
+            }
+            if (i > 0) {
+                out.append('\n');
+            }
+            if (path != null) {
+                out.append(path);
+            }
+        }
+        return out.toString();
+    }
+
     public static MessageObject message(int account, long userId, int id, int date,
                                         String path, String title, String artist, int duration) {
         TLRPC.TL_message message = new TLRPC.TL_message();

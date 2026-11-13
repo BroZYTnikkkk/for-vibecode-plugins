@@ -14,6 +14,7 @@ from file_utils import get_files_dir
 from java import jarray, jbyte, jclass, jint
 from java.lang import Integer as JInteger, Long as JLong
 
+from . import storage
 from .i18n import plural, tr
 from .common import ARTIST_SEP, COVER_SIZE, GENERIC_FOLDERS, HISTORY_MAX, LISTEN_SECONDS, LISTEN_TICK_MS, NO_TRACK_NUMBER, QUEUE_MAX, UNKNOWN_ARTIST, _ctx, _log, sculpt_method, MEDIA_CONTROLLER, QUEUE_HEAD, QUEUE_CHUNK
 
@@ -200,6 +201,7 @@ class CoverCache:
         base = self._name(path)
         if base is None:
             return
+        os.makedirs(self.dir, exist_ok=True)  # the cache folder may have been cleared while the plugin runs
         retriever = jclass("android.media.MediaMetadataRetriever")()
         data = None
         try:
@@ -253,9 +255,10 @@ class MusicData:
 
     def __init__(self, plugin):
         self.plugin = plugin
-        self.dir = os.path.join(get_files_dir(), "sculpt_player")
-        os.makedirs(self.dir, exist_ok=True)
-        self.covers = CoverCache(self.dir)
+        # user data lives in the internal files dir (Telegram's Clear Cache empties get_files_dir()); covers are a cache
+        self.dir = storage.data_dir()
+        storage.migrate(os.path.join(get_files_dir(), "sculpt_player"), self.dir)
+        self.covers = CoverCache(storage.cache_dir())
         self.tracks = []
         self.by_path = {}
         self.queue_settling = False  # a saved queue is being built around the song it started from

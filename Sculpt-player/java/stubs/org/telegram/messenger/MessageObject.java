@@ -4,6 +4,12 @@ package org.telegram.messenger;
 import org.telegram.tgnet.TLRPC;
 
 public class MessageObject {
+    public TLRPC.Message messageOwner;
+
+    public int getId() {
+        return 0;
+    }
+
     public MessageObject(int account, TLRPC.Message message, boolean generateLayout, boolean checkMediaExists) {
     }
 }

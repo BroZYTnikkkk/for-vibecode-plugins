@@ -16,6 +16,13 @@ from .music import first_letter, format_time, local_path, songs_label, sort_text
 # Media library: the screens
 # ---------------------------------------------------------------------------
 
+# The row a search tap lands on: where it sits under the top edge, and how its highlight holds and fades
+REVEAL_TOP_DP = 96
+FLASH_HOLD_MS = 500
+FLASH_FADE_MS = 900
+FLASH_STEP_MS = 50
+FLASH_ALPHA = 96
+
 
 class Run(dynamic_proxy(jclass("java.lang.Runnable"))):
     def __init__(self, action):
@@ -579,6 +586,9 @@ class SongsScreen(ListScreen):
         self.list_id = list_id
         self.default_sort = default_sort
         self.fav_dates = fav_dates
+        self.flash_path = None  # the song whose row glows for a moment after a search took the user to it
+        self.flash_start = 0.0
+        self.flash_token = 0  # a newer glow (or the screen's end) retires the older one's timer
         self.tracks = []
         self.sort_mode, self.reverse = self.read_sort()
         trailing = None
@@ -698,6 +708,8 @@ class SongsScreen(ListScreen):
                 pass
 
     def dispose(self):
+        self.flash_token += 1
+        self.flash_path = None
         if self.filter_watcher is not None:
             self.close_keyboard()
             self.filter_watcher.action = None
@@ -812,14 +824,88 @@ class SongsScreen(ListScreen):
         holder["title"].setTypeface(owner.bold if playing else owner.regular)
         holder["subtitle"].setTextColor(owner.color("textSecondary"))
         holder["time"].setTextColor(owner.color("textSecondary"))
+        self.paint_flash(convert, holder, path)
         return convert
 
     def row_clicked(self, index, view):
         self.close_keyboard()
+        if self.FILTERED and self.filter_query:
+            # a found song: the search ends and the whole list shows it, so starting it plays the list
+            self.leave_filter(self.tracks[index]["path"])
+            return
         self.owner.play(self.tracks, index, self.title_text)
 
     def row_long_clicked(self, index, view):
         self.owner.song_menu(view, self.tracks[index])
+
+    def leave_filter(self, path):
+        """Drops the query without the usual jump to the top, then shows the song in the full list."""
+        self.filter_query = ""
+        if self.filter_field is not None:
+            self.filter_field.setText("")  # the watcher finds nothing new to do
+        if self.filter_clear is not None:
+            self.filter_clear.setVisibility(8)
+        self.refresh()
+        if not self.reveal(path):
+            self.list.setSelection(0)
+
+    def reveal(self, path):
+        """Scrolls the list so the song is in view, a little below the top, and makes its row glow."""
+        for index, track in enumerate(self.tracks):
+            if track["path"] == path:
+                position = index + self.list.getHeaderViewsCount()
+                self.list.setSelectionFromTop(position, _dp(REVEAL_TOP_DP))
+                # the list is laid out again with its full rows, and once more when the keyboard leaves: both
+                # passes can put it back at the top, so the place is set again after each
+                for delay in (80, 400):
+                    run_on_ui_thread(lambda: self.guarded(self.keep_revealed, path, position), delay)
+                self.flash_path = path
+                self.flash_start = time.monotonic()
+                self.flash_token += 1
+                self.flash_step(self.flash_token)
+                return True
+        return False
+
+    def keep_revealed(self, path, position):
+        if self.flash_path == path and not self.filter_query:
+            first, last = int(self.list.getFirstVisiblePosition()), int(self.list.getLastVisiblePosition())
+            if not first <= position < last:
+                self.list.setSelectionFromTop(position, _dp(REVEAL_TOP_DP))
+
+    def flash_color(self):
+        """The glow's color right now; None once it has faded."""
+        if self.flash_path is None:
+            return None
+        passed = (time.monotonic() - self.flash_start) * 1000.0 - FLASH_HOLD_MS
+        if passed >= FLASH_FADE_MS:
+            return None
+        alpha = FLASH_ALPHA if passed <= 0 else int(FLASH_ALPHA * (1.0 - passed / FLASH_FADE_MS))
+        return jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(self.owner.color("accent"), max(1, alpha))
+
+    def paint_flash(self, row, holder, path):
+        color = self.flash_color() if path == self.flash_path else None
+        if color is not None:
+            row.setBackground(self.owner.rounded(color, 0))
+            holder["glow"] = True
+        elif holder.get("glow"):
+            row.setBackground(None)  # a recycled row never keeps the glow of the song it showed before
+            holder["glow"] = False
+
+    def flash_step(self, token):
+        """Repaints the visible rows until the glow is gone; the rows' own binding covers the recycled ones."""
+        if token != self.flash_token or self.list is None or self.flash_path is None:
+            return
+        first = self.list.getFirstVisiblePosition() - self.list.getHeaderViewsCount()
+        for at in range(self.list.getChildCount()):
+            index = first + at
+            row = self.list.getChildAt(at)
+            holder = self.holders.get(row.hashCode())
+            if holder is not None and 0 <= index < len(self.tracks):
+                self.paint_flash(row, holder, self.tracks[index]["path"])
+        if self.flash_color() is None:
+            self.flash_path = None
+        else:
+            run_on_ui_thread(lambda: self.guarded(self.flash_step, token), FLASH_STEP_MS)
 
 
 class GroupsScreen(ListScreen):
@@ -894,6 +980,7 @@ class SearchScreen(SongsScreen):
         self.query = ""
         self.field = None
         self.watcher = None
+        self.leaving = False
         super().__init__(owner, tr("Поиск"), self.matches, None, "title", self.HINT)
         run_on_ui_thread(self.open_keyboard, 250)
 
@@ -971,8 +1058,14 @@ class SearchScreen(SongsScreen):
                 pass
 
     def row_clicked(self, index, view):
+        """A found song leads into "All songs" at that song; nothing starts, and Back goes past the search."""
+        if self.leaving:
+            return
+        self.leaving = True
         self.close_keyboard()
-        self.owner.play(self.tracks, index, tr("Поиск: %s") % self.query)
+        path = self.tracks[index]["path"]
+        # the search closes after the tap has been handled, not from inside its own list's click
+        run_on_ui_thread(lambda: self.guarded(self.owner.open_all_at, path, self), 0)
 
     def dispose(self):
         self.close_keyboard()
@@ -1563,8 +1656,23 @@ class LibraryView:
     def open_search(self):
         self.push(SearchScreen(self))
 
+    def all_screen(self):
+        return SongsScreen(self, tr("Все песни"), lambda: self.data.tracks, "all", "title")
+
     def open_all(self):
-        self.push(SongsScreen(self, tr("Все песни"), lambda: self.data.tracks, "all", "title"))
+        self.push(self.all_screen())
+
+    def open_all_at(self, path, search):
+        """The first screen's "All songs" scrolled to a song, in place of the search it was found in."""
+        if not self.stack or self.stack[-1] is not search:
+            search.leaving = False
+            return
+        gone = self.stack.pop()
+        self.root.removeView(gone.view)
+        gone.dispose()
+        screen = self.all_screen()
+        self.push(screen)
+        screen.reveal(path)
 
     def open_favorites(self):
         self.push(SongsScreen(self, tr("Любимые"), self.data.favorite_tracks, "favorites", "added",

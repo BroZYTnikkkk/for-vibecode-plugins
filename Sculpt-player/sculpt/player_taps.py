@@ -273,6 +273,9 @@ class Taps:
             self.say(tr("Обложку можно изменить только у песни с телефона."))
             return
         self.player.edit_tags(path)
+        screen = self.player.library.stack[-1] if self.player.library is not None and self.player.library.stack else None
+        if hasattr(screen, "choose_cover"):
+            screen.choose_cover()  # the picture is asked for at once; the editor shows it and writes it with "Save"
 
 
 # -- the full-screen cover ------------------------------------------------------------------------------------

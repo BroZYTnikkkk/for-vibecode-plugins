@@ -6,12 +6,14 @@
 
 import os
 import re
+import threading
 
-from java import jclass
+from android_utils import run_on_ui_thread
+from java import jarray, jbyte, jclass
 
 from .i18n import tr
 from . import tags
-from .common import UNKNOWN_ARTIST, _dp
+from .common import UNKNOWN_ARTIST, _dp, _log
 from .dl_ui import EditorAction, RemoteRows, seconds_of
 from .library_ui import TextChanged
 
@@ -20,6 +22,21 @@ CANDIDATES = 8
 PILL_KEYS = ("title", "artist", "album", "albumartist", "date", "genre", "tracknumber", "discnumber", "isrc", "cover")
 PILL_NAMES = {"title": tr("Название"), "artist": tr("Исполнитель"), "album": tr("Альбом"), "albumartist": tr("Исполнитель альбома"),
               "date": tr("Год"), "genre": tr("Жанр"), "tracknumber": tr("Дорожка"), "discnumber": tr("Диск"), "isrc": "ISRC", "cover": tr("Обложка")}
+
+
+def background(task, done, failed):
+    """task() on its own thread (saving a tag needs no extension manager); done(result) or failed(text) on the UI thread."""
+    def run():
+        try:
+            result = task()
+        except Exception as e:
+            _log("tags: task failed: %s: %s" % (type(e).__name__, e))
+            text = str(e) or type(e).__name__
+            run_on_ui_thread(lambda: failed(text))
+            return
+        run_on_ui_thread(lambda: done(result))
+
+    threading.Thread(target=run, name="sculpt-tags", daemon=True).start()
 
 
 def broken(text):
@@ -46,6 +63,8 @@ class TagScreen(RemoteRows):
         self.before = tags.read(path)
         self.fields = {}
         self.cover_url = None
+        self.cover_bytes = None
+        self.access_asked = False
         self.saving = False
         self.query_field = None
         self.query_action = None
@@ -251,6 +270,7 @@ class TagScreen(RemoteRows):
                 taken += 1
         if "cover" in self.chosen and item.get("cover_url"):
             self.cover_url = str(item["cover_url"])
+            self.cover_bytes = None
             self.paint_cover()
             taken += 1
         self.say(tr("Взято из «%s»: %d. Проверь и нажми «Сохранить».") % (item.get("service_name") or tr("сервиса"), taken))
@@ -350,6 +370,11 @@ class TagScreen(RemoteRows):
         self.cover_row.setPadding(_dp(20), _dp(4), _dp(16), _dp(4))
         self.body.addView(self.cover_row, Params(-1, -2))
         self.paint_cover()
+        choose = self.pill(tr("Выбрать обложку"), False, self.choose_cover)
+        choose.setContentDescription(tr("Выбрать картинку обложки из памяти телефона"))
+        place = Params(-2, -2)
+        place.setMargins(_dp(20), _dp(8), _dp(20), 0)
+        self.body.addView(choose, place)
         # the rest of the tags, folded: most songs need only the main ones
         self.advanced_box = jclass("android.widget.LinearLayout")(owner.context)
         self.advanced_box.setOrientation(1)
@@ -386,14 +411,24 @@ class TagScreen(RemoteRows):
         self.cover_row.removeAllViews()
         old = owner.cover_view(8, 72)
         owner.bind_cover(old, self.path, 72)
+        old.setContentDescription(tr("Выбрать обложку"))
+        self.click(old, self.choose_cover)
         self.cover_row.addView(old, owner.params(72, 72))
-        if not self.cover_url:
+        if not self.cover_url and not self.cover_bytes:
             return
         arrow = self.label(20, "textSecondary")
         arrow.setText("→")
         arrow.setPadding(_dp(12), 0, _dp(12), 0)
         self.cover_row.addView(arrow)
-        self.cover_row.addView(self.remote_image({"cover_url": self.cover_url}, size=72), owner.params(72, 72))
+        if self.cover_bytes:
+            new = owner.cover_view(8, 72)
+            data = self.cover_bytes
+            bitmap = jclass("android.graphics.BitmapFactory").decodeByteArray(jarray(jbyte)(data), 0, len(data))
+            if bitmap is not None:
+                new.setImageBitmap(bitmap)
+        else:
+            new = self.remote_image({"cover_url": self.cover_url}, size=72)
+        self.cover_row.addView(new, owner.params(72, 72))
         undo = self.icon_button(("msg_close", "ic_close_white"), tr("Оставить прежнюю обложку"), self.keep_cover)
         at = owner.params(40, 40)
         at.setMarginStart(_dp(12))
@@ -401,7 +436,39 @@ class TagScreen(RemoteRows):
 
     def keep_cover(self):
         self.cover_url = None
+        self.cover_bytes = None
         self.paint_cover()
+
+    def choose_cover(self):
+        """The system picker; the picture it returns is shown as "will be" and is written with "Save"."""
+        if not tags.pick_image(self.owner.plugin, self.picked):
+            self.say(tr("Не получилось открыть выбор картинки."))
+
+    def picked(self, code, data):
+        if not self.alive:
+            return
+        uri = data.getData() if code == -1 and data is not None else None
+        if uri is None:
+            _log("tags: no picture chosen, result %s" % code)
+            return
+        self.say(tr("Читаю картинку…"))
+
+        def failed(text):
+            if self.alive:
+                self.say(tr("Не получилось прочитать картинку. %s") % text)
+
+        background(lambda: tags.read_image(uri), self.cover_read, failed)
+
+    def cover_read(self, data):
+        if not self.alive:
+            return
+        if not data:
+            self.say(tr("Этот файл не картинка или её не удалось прочитать."))
+            return
+        self.cover_bytes = bytes(data)
+        self.cover_url = None
+        self.paint_cover()
+        self.say(tr("Обложка выбрана. Нажми «Сохранить»."))
 
     # -- saving
 
@@ -413,45 +480,81 @@ class TagScreen(RemoteRows):
             return
         values = self.values()
         changed = {key: value for key, value in values.items() if value != (self.before.get(key) or "")}
-        cover_url = self.cover_url
-        if not changed and not cover_url:
+        cover_url, cover_bytes = self.cover_url, self.cover_bytes
+        if not changed and not cover_url and not cover_bytes:
             self.say(tr("Ничего не изменилось."))
             return
         self.saving = True
         self.save_button.setText(tr("Сохраняю…"))
         path = self.path
+        _log("tags: save %s, fields %s, cover %s" % (os.path.basename(path), sorted(changed), "picked" if cover_bytes else bool(cover_url)))
 
-        def task(manager):
-            cover = tags.fetch_cover(cover_url) if cover_url else None
+        def task():
+            cover = cover_bytes
+            if cover is None and cover_url:
+                cover = tags.fetch_cover(cover_url)
+                if cover is None:
+                    raise ValueError(tr("Не получилось скачать обложку. Выбери другую или сохрани без неё."))
             try:
                 tags.save(path, changed, cover)
-                self.owner.data.covers.forget(path)
             except PermissionError:
                 return "permission"
             return "saved"
 
         def done(result):
             self.saving = False
-            self.save_button.setText(tr("Сохранить"))
+            if self.alive:
+                self.save_button.setText(tr("Сохранить"))
             if result == "permission":
-                if tags.request_access(path):
-                    self.say(tr("Android спрашивает, можно ли изменить этот файл. Разреши и нажми «Сохранить» ещё раз."))
+                if self.access_asked:
+                    self.access_asked = False
+                    self.say(tr("Android не дал изменить этот файл."))
+                elif tags.request_access(path, self.access_answer, self.owner.plugin):
+                    self.access_asked = True
+                    self.say(tr("Android спрашивает, можно ли изменить этот файл. Разреши, и теги запишутся сами."))
                 else:
                     self.say(tr("Android не дал изменить этот файл."))
                 return
-            self.before = values
-            self.say(tr("Теги записаны"), "saved_messages")
-            self.owner.data.scan()
-            self.owner.back()
+            self.access_asked = False
+            self.saved(path, values, changed)
 
         def failed(text):
             self.saving = False
-            self.save_button.setText(tr("Сохранить"))
+            if self.alive:
+                self.save_button.setText(tr("Сохранить"))
             self.say(tr("Теги не записаны. %s") % text)
 
-        self.run(task, done, failed)
+        background(task, done, failed)
+
+    def access_answer(self, code, data):
+        if not self.alive:
+            return
+        if code == -1:
+            self.save()
+        else:
+            self.access_asked = False
+            self.say(tr("Доступ не дан, теги не записаны."))
+
+    def saved(self, path, values, changed):
+        """The file is written: the lists and the cover cache learn of it, the media scanner is told."""
+        owner = self.owner
+        self.before = values
+        owner.data.covers.forget(path)
+        track = owner.data.by_path.get(path)
+        if track is not None:
+            for key in ("title", "artist", "album"):
+                if key in changed:
+                    track[key] = changed[key] or {"title": track["title"], "artist": UNKNOWN_ARTIST, "album": ""}[key]
+            owner.data.grouped = None
+            owner.data_changed()
+        self.say(tr("Теги записаны"), "saved_messages")
+        owner.data.covers.warm([path], first=True)
+        tags.rescan(path, owner.data.scan)
+        if self.alive:
+            owner.back()
 
     def dispose(self):
+        tags.drop_pending()
         if self.query_action is not None:
             self.query_action.action = None
             try:
