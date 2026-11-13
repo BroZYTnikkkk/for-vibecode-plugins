@@ -1,0 +1,4 @@
+metainfo: metainfo.yml
+main: main.py
+assets: assets
+wheels: wheels
