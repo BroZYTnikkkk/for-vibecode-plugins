@@ -597,9 +597,11 @@ class MusicData:
 
     # -- playback -----------------------------------------------------------
 
-    def java_queue(self, tracks, first=None):
-        """MessageObjects for the tracks, built by sculpt.Queue in one call; None when the DEX is not there."""
-        builder = sculpt_method("sculpt.Queue", "build")
+    def java_queue(self, tracks, first=None, ids=None):
+        """MessageObjects for the tracks, built by sculpt.Queue in one call; None when the DEX is not there.
+
+        ids: an id for every track, when they do not go one after another."""
+        builder = sculpt_method("sculpt.Queue", "build" if ids is None else "buildIds")
         if builder is None:
             return None
         UserConfig = jclass("org.telegram.messenger.UserConfig")
@@ -610,7 +612,8 @@ class MusicData:
             self.id_seq += len(tracks)
         strings = jarray(jclass("java.lang.String"))
         # Method.invoke boxes plain Python ints as Long: every int parameter gets its own Integer
-        return builder.invoke(None, JInteger(account), JLong(user_id), JInteger(first), JInteger(int(time.time())),
+        return builder.invoke(None, JInteger(account), JLong(user_id),
+                              JInteger(first) if ids is None else jarray(jint)([int(i) for i in ids]), JInteger(int(time.time())),
                               strings([t["path"] for t in tracks]), strings([t.get("title") or "" for t in tracks]),
                               strings([t.get("artist") or "" for t in tracks]), jarray(jint)([int(t.get("duration") or 0) for t in tracks]))
 
@@ -664,9 +667,9 @@ class MusicData:
         document.attributes.add(name)
         return jclass("org.telegram.messenger.MessageObject")(account, message, False, True)
 
-    def _messages(self, tracks, first=None):
+    def _messages(self, tracks, first=None, ids=None):
         """(ArrayList of MessageObjects, "java" or "python"). first: the id of the first one, when they are given ahead."""
-        items = self.java_queue(tracks, first)
+        items = self.java_queue(tracks, first, ids)
         if items is not None:
             return items, "java"
         items = jclass("java.util.ArrayList")()
@@ -674,18 +677,31 @@ class MusicData:
             items.add(self.message_for(track))
         return items, "python"
 
-    def play_in_place(self, tracks, index, title="", progress=0.0):
-        """A saved queue from one of its songs: its order stays, with the songs before that one built after it."""
+    def play_in_place(self, tracks, index, title="", progress=0.0, order=None):
+        """A saved queue from one of its songs: its order stays, with the songs before that one built after it.
+
+        order: the same songs in the order they play with shuffle on. MediaController would mix a queue anew
+        each time it starts; given this, it plays on in the order the queue had (and showed) before."""
         if not tracks:
             return
+        queue = tracks[:QUEUE_MAX]
+        index = listed = min(index, len(queue) - 1)
+        base = self.id_seq + 1
+        ids = played = None  # the songs' ids and places in the list, in their playing order, when that is not the list's
+        if order is not None and jclass("org.telegram.messenger.SharedConfig").shuffleMusic is True and sculpt_method("sculpt.Queue", "buildIds") is not None:
+            place = {t["path"]: i for i, t in enumerate(queue)}
+            line = [t for t in order if t["path"] in place]
+            if len(place) == len(queue) and len(line) == len(queue) and len({t["path"] for t in line}) == len(queue):
+                played = [place[t["path"]] for t in line]
+                # ids go by the place in the list, so the list itself stays in order under the mixed one
+                ids = [base + i for i in played]
+                index = played.index(listed)
+                queue = line
         queues = getattr(self.plugin, "queues", None)
         if queues is not None:
-            queues.library_started(title, tracks, index, progress)
-        queue = tracks[:QUEUE_MAX]
-        index = min(index, len(queue) - 1)
+            queues.library_started(title, tracks, listed, progress, played)
         self.queue_generation += 1
         generation = self.queue_generation
-        base = self.id_seq + 1
         self.id_seq += len(queue)
         self.queue_settling = True
         self.covers.warm([t["path"] for t in queue[index:index + 8]], first=True)
@@ -695,12 +711,12 @@ class MusicData:
 
         def head():
             try:
-                items, way = self._messages(queue[index:end], base + index)
+                items, way = self._messages(queue[index:end], base + index, None if ids is None else ids[index:end])
                 first = items.get(0)
                 timing = {"songs": items.size(), "way": way, "waited": 0.0, "built": 0.0}
                 first_id = first.getId()
-                run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress))
-                run_on_queue(lambda: self._build_around(generation, queue, base, parts, first_id))
+                run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress, ids is not None))
+                run_on_queue(lambda: self._build_around(generation, queue, base, parts, first_id, ids))
             except Exception as e:
                 failure = e
                 self.queue_settling = False
@@ -708,7 +724,7 @@ class MusicData:
 
         run_on_queue(head)
 
-    def _build_around(self, generation, queue, base, parts, first_id):
+    def _build_around(self, generation, queue, base, parts, first_id, ids=None):
         if generation != self.queue_generation:
             return
         if not parts:
@@ -717,9 +733,9 @@ class MusicData:
             return
         try:
             start, end, earlier = parts[0]
-            items, _ = self._messages(queue[start:end], base + start)
-            run_on_ui_thread(lambda: self._append(generation, items, first_id, earlier))
-            run_on_queue(lambda: self._build_around(generation, queue, base, parts[1:], first_id))
+            items, _ = self._messages(queue[start:end], base + start, None if ids is None else ids[start:end])
+            run_on_ui_thread(lambda: self._append(generation, items, first_id, earlier, ids is not None))
+            run_on_queue(lambda: self._build_around(generation, queue, base, parts[1:], first_id, ids))
         except Exception as e:
             _log("queue part failed to build: %s" % type(e).__name__)
             self.queue_settling = False
@@ -742,6 +758,7 @@ class MusicData:
         if queues is not None:
             queues.library_started(title, tracks, index, progress)
         queue = (tracks[index:] + tracks[:index])[:QUEUE_MAX]
+        self.queue_settling = False  # a queue still being built around its song is dropped by this one
         self.covers.warm([t["path"] for t in queue[:8]], first=True)
         self.queue_generation += 1
         generation = self.queue_generation
@@ -765,7 +782,7 @@ class MusicData:
 
         run_on_queue(head)
 
-    def _start(self, generation, items, first, title, total, timing, progress=0.0):
+    def _start(self, generation, items, first, title, total, timing, progress=0.0, kept=False):
         if generation != self.queue_generation:
             return
         queues = getattr(self.plugin, "queues", None)
@@ -785,6 +802,16 @@ class MusicData:
             finally:
                 if queues is not None:
                     queues.starting = False
+            if kept and jclass("org.telegram.messenger.SharedConfig").shuffleMusic is True:
+                # setPlaylist has just mixed these songs; they go back into the order the queue played in. The mixed
+                # list is walked towards index 0, so the first song stands at its end
+                mixed = self.plugin.media_fields.get(controller, "shuffledPlaylist")
+                if mixed is not None:
+                    backwards = jclass("java.util.ArrayList")(items)
+                    jclass("java.util.Collections").reverse(backwards)
+                    mixed.clear()
+                    mixed.addAll(backwards)
+                    self.plugin.media_fields.set_int(controller, "currentPlaylistNum", items.size() - 1)
             # This overload forces looping; the repeat button stays in charge.
             self.plugin.media_fields.field("forceLoopCurrentPlaylist").setBoolean(controller, False)
             _log("queue: %d of %d songs via %s, waited %.0f ms, built %.0f ms, setPlaylist %.0f ms" % (
@@ -807,7 +834,7 @@ class MusicData:
             failure = e
             run_on_ui_thread(lambda: self.plugin.report("queue", failure))
 
-    def _append(self, generation, items, first_id, earlier=False):
+    def _append(self, generation, items, first_id, earlier=False, kept=False):
         """Songs that come after everything already queued, in the order the list had them.
 
         MediaController keeps a library queue sorted by id from the largest down and walks it towards index 0,
@@ -830,7 +857,23 @@ class MusicData:
             Collections.reverse(newest_first)
             count = items.size()
             number = controller.getPlayingMessageObjectNum()
-            if earlier and not config.shuffleMusic:
+            if kept:
+                # a queue in the order it played mixed: the list stays sorted by id, the mixed one takes the songs as
+                # they come, the later ones in front of the playing song and the earlier ones behind everything
+                playlist.addAll(items)
+                sculpt_method("sculpt.Queue", "sortNewestFirst").invoke(None, playlist)
+                if config.shuffleMusic is True:
+                    if earlier:
+                        active.addAll(newest_first)
+                    else:
+                        active.addAll(0, newest_first)
+                        self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + count)
+                else:
+                    # shuffle was switched off while the queue was still being built
+                    at = playlist.indexOf(controller.getPlayingMessageObject())
+                    if at >= 0:
+                        self.plugin.media_fields.set_int(controller, "currentPlaylistNum", at)
+            elif earlier and not config.shuffleMusic:
                 # songs of a smaller id: behind the others in the list that goes from the largest down
                 if config.playOrderReversed:
                     playlist.addAll(0, items)

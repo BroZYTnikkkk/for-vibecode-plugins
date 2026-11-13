@@ -7,12 +7,14 @@ saved with the plugin's files. A queue from a chat is known by the chat; its son
 references and asked of Telegram again after a restart.
 """
 
+import random
+
 from client_utils import run_on_queue
 from java import jclass
 
 from .i18n import source, tr
 from . import chat_songs
-from .common import MEDIA_CONTROLLER, QUEUES_MAX, _log
+from .common import MEDIA_CONTROLLER, QUEUES_MAX, _log, sculpt_method
 from .music import local_path
 
 LIBRARY_TITLE = tr("Медиатека")
@@ -136,6 +138,7 @@ class QueueStore:
             if path is None:
                 return  # a chat's song plays: this queue was left before
             entry["current"] = path
+            self.keep_order(entry, controller)
         else:
             if path is not None or message.getDialogId() != entry["dialog"]:
                 return
@@ -144,13 +147,59 @@ class QueueStore:
             entry["java"] = jclass("java.util.ArrayList")(controller.getPlaylist())
         entry["progress"] = float(message.audioProgress)
 
+    # -- the order a mixed queue plays in ---------------------------------------------
+
+    @staticmethod
+    def shuffle_on():
+        return jclass("org.telegram.messenger.SharedConfig").shuffleMusic is True
+
+    def keep_order(self, entry, controller):
+        """With shuffle on, the active library queue remembers the order it plays in, as places in its list."""
+        if not self.shuffle_on():
+            entry.pop("played", None)
+            return
+        reader = sculpt_method("sculpt.Queue", "paths")
+        mixed = self.plugin.media_fields.get(controller, "shuffledPlaylist")
+        if reader is None or mixed is None or mixed.isEmpty():
+            return
+        text = reader.invoke(None, mixed)
+        if text is None:
+            return
+        place = {path: i for i, path in enumerate(entry["paths"])}
+        order, seen = [], set()
+        # the mixed list is walked towards index 0: its last song plays first
+        for path in reversed(str(text).split("\n")):
+            i = place.get(path)
+            if i is not None and i not in seen:
+                seen.add(i)
+                order.append(i)
+        if len(order) == len(entry["paths"]):  # not while the queue is still being built
+            entry["played"] = order
+
+    def play_order(self, entry):
+        """The paths of a library queue in the order it plays with shuffle on; None when it plays as listed.
+
+        A queue that has none yet is mixed here once: what the Queue tab shows is then what plays."""
+        if entry["kind"] != "library" or not self.shuffle_on():
+            return None
+        paths = entry["paths"]
+        played = entry.get("played")
+        if not (isinstance(played, list) and len(played) == len(paths) and sorted(played) == list(range(len(paths)))):
+            played = list(range(len(paths)))
+            random.shuffle(played)
+            entry["played"] = played
+        return [paths[i] for i in played]
+
     # -- where queues come from -------------------------------------------------------
 
-    def library_started(self, title, tracks, index, progress=0.0):
+    def library_started(self, title, tracks, index, progress=0.0, played=None):
         self.snapshot()
         title = source(title or LIBRARY_TITLE)  # saved in one language, so a queue stays the same one when the language changes
-        self.put({"key": "lib:" + title, "kind": "library", "title": title, "paths": [t["path"] for t in tracks],
-                  "current": tracks[index]["path"], "progress": float(progress)})
+        entry = {"key": "lib:" + title, "kind": "library", "title": title, "paths": [t["path"] for t in tracks],
+                 "current": tracks[index]["path"], "progress": float(progress)}
+        if played is not None:
+            entry["played"] = list(played)
+        self.put(entry)
 
     def before_playlist(self):
         """Before MediaController.setPlaylist from anywhere: the queue it replaces keeps its place."""
@@ -213,7 +262,9 @@ class QueueStore:
             index = next((i for i, t in enumerate(tracks) if t["path"] == entry.get("current")), 0)
             if tracks[index]["path"] != entry.get("current"):
                 progress = 0.0
-            self.plugin.music.play_in_place(tracks, index, tr(entry["title"]), progress)
+            order = self.play_order(entry)
+            self.plugin.music.play_in_place(tracks, index, tr(entry["title"]), progress,
+                                            order=None if order is None else [by_path[p] for p in order if p in by_path])
             return
         java = entry.get("java")
         if java is None and entry.get("songs"):

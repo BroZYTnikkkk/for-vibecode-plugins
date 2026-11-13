@@ -114,13 +114,11 @@ class QueueScreen:
         head.addView(self.close, LinearLayout.LayoutParams(_dp(48), _dp(48)))
         column.addView(head, LinearLayout.LayoutParams(-1, -2))
 
-        # ▶  ≡   position / count, ⏱ length   💾  ⋯
+        # ≡   position / count, length   ⋯ (to a playlist is in it)
         bar = LinearLayout(context)
         bar.setOrientation(0)
         bar.setGravity(16)
         bar.setPadding(_dp(8), 0, _dp(8), 0)
-        self.play_button = self.icon(("player_new_play", "msg_play_mini", "msg_played"), tr("Играть эту очередь"), self.play_queue)
-        bar.addView(self.play_button, LinearLayout.LayoutParams(_dp(48), _dp(48)))
         self.sort_button = self.icon(("msg_sort", "msg2_sort", "msg_list"), tr("Упорядочить"), self.sort_menu)
         bar.addView(self.sort_button, LinearLayout.LayoutParams(_dp(48), _dp(48)))
         counts = LinearLayout(context)
@@ -133,8 +131,6 @@ class QueueScreen:
         counts.addView(self.position_text, LinearLayout.LayoutParams(-1, -2))
         counts.addView(self.length_text, LinearLayout.LayoutParams(-1, -2))
         bar.addView(counts, LinearLayout.LayoutParams(0, -2, 1.0))
-        self.save_button = self.icon(("msg_saved", "msg_download", "msg_save"), tr("Сохранить как плейлист"), self.save_queue)
-        bar.addView(self.save_button, LinearLayout.LayoutParams(_dp(48), _dp(48)))
         self.more_button = self.icon(("ic_ab_other", "msg_more"), tr("Меню очереди"), self.queue_menu)
         bar.addView(self.more_button, LinearLayout.LayoutParams(_dp(48), _dp(48)))
         column.addView(bar, LinearLayout.LayoutParams(-1, _dp(60)))
@@ -275,8 +271,7 @@ class QueueScreen:
         self.root.setBackgroundColor(tab_scrim(colors))
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
         mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
-        for view in (self.chevron, self.close, self.play_button, self.sort_button, self.save_button, self.more_button,
-                     self.search_icon):
+        for view in (self.chevron, self.close, self.sort_button, self.more_button, self.search_icon):
             view.setColorFilter(PorterDuffColorFilter(colors.icon, mode))
         frame = jclass("android.graphics.drawable.GradientDrawable")()
         frame.setCornerRadius(float(_dp(14)))
@@ -349,8 +344,9 @@ class QueueScreen:
             return [self.message_row(m) for m in self.in_play_order(*self.active_list())]
         if entry["kind"] == "library":
             by_path = self.music.by_path
+            # with shuffle on, in the order the queue played and will play again
             return [Row(t.get("title") or "", t.get("artist") or "", t.get("album") or "", t.get("duration") or 0, t["path"])
-                    for t in (by_path.get(p) for p in entry["paths"]) if t is not None]
+                    for t in (by_path.get(p) for p in self.store.play_order(entry) or entry["paths"]) if t is not None]
         java = entry.get("java")
         if java is None:
             # saved before a restart: shown from what was kept, and the messages are on their way
@@ -390,7 +386,7 @@ class QueueScreen:
         self.apply_filter()
         current = self.current_index()
         self.position_text.setText("%d / %d" % (current + 1 if current >= 0 else 0, len(self.rows)))
-        self.length_text.setText("⏱ " + clock(sum(r.seconds for r in self.rows)))
+        self.length_text.setText(clock(sum(r.seconds for r in self.rows)))
         self.show_rows(current, scroll)
 
     def refresh_soon(self):
@@ -490,9 +486,13 @@ class QueueScreen:
             return
         # a song of another queue: that queue plays, from this song
         if entry["kind"] == "library":
-            tracks = [self.music.by_path[r.path] for r in self.rows if r.path in self.music.by_path]
+            by_path = self.music.by_path
+            shown = [by_path[r.path] for r in self.rows if r.path in by_path]
+            mixed = self.store.play_order(entry) is not None
+            # mixed: the rows are the order it plays in, and the list keeps its own order under them
+            tracks = [by_path[p] for p in entry["paths"] if p in by_path] if mixed else shown
             position = next((i for i, t in enumerate(tracks) if t["path"] == row.path), 0)
-            self.music.play_in_place(tracks, position, tr(entry["title"]))
+            self.music.play_in_place(tracks, position, tr(entry["title"]), order=shown if mixed else None)
         elif row.message is None:
             self.say(tr("Песни этой очереди ещё загружаются."))
         else:
@@ -512,9 +512,12 @@ class QueueScreen:
             playlist.add(target, message)
             self.keep_position()
         elif entry["kind"] == "library":
-            shown = [r.path for r in self.rows]
-            shown.insert(second, shown.pop(first))
-            entry["paths"] = shown
+            if self.store.play_order(entry) is not None:
+                entry["played"].insert(second, entry["played"].pop(first))  # the order it plays in, not the list
+            else:
+                shown = [r.path for r in self.rows]
+                shown.insert(second, shown.pop(first))
+                entry["paths"] = shown
             self.store.save()
         self.rows.insert(second, self.rows.pop(first))
         self.order = list(range(len(self.rows)))
@@ -570,16 +573,6 @@ class QueueScreen:
 
         self.plugin.bulletin_undo(self.player.sheet, tr("Очередь «%s» убрана.") % tr(entry["title"]), lambda: self.guarded(undo))
 
-    def play_queue(self):
-        entry = self.shown_entry()
-        controller = self.controller()
-        if entry is None or self.is_active():
-            playing = controller.getPlayingMessageObject()
-            if playing is not None and controller.isMessagePaused():
-                controller.playMessage(playing)
-            return
-        self.store.switch(entry["key"])
-
     def save_queue(self):
         tracks = self.library_tracks()
         if not tracks:
@@ -622,6 +615,7 @@ class QueueScreen:
         entry = self.shown_entry()
         if entry is not None and not self.is_active():
             entry["paths"] = [t["path"] for t in tracks]
+            entry["played"] = list(range(len(tracks)))  # with shuffle on it plays in the new order too
             self.store.save()
             self.refresh(scroll=True)
             return
@@ -629,7 +623,11 @@ class QueueScreen:
         playing = self.controller().getPlayingMessageObject()
         progress = float(playing.audioProgress) if playing is not None and current_path else 0.0
         index = next((i for i, t in enumerate(tracks) if t["path"] == current_path), 0)
-        self.music.play(tracks, index, title, progress)
+        if self.config().shuffleMusic is True:
+            # shuffle would mix the queue again at once: it takes the chosen order and plays on in it
+            self.music.play_in_place(tracks, index, title, progress, order=tracks)
+        else:
+            self.music.play(tracks, index, title, progress)
 
     def sort_menu(self):
         menu = self.plugin.sheet_menu(self.player.sheet, self.sort_button, False)
@@ -642,11 +640,36 @@ class QueueScreen:
         self.player.show_menu(menu)
 
     def queue_menu(self):
-        menu = self.plugin.sheet_menu(self.player.sheet, self.more_button, False)
+        menu = self.plugin.sheet_menu(self.player.sheet, self.more_button, True)  # "To a playlist" opens a second page
         later = self.player.start_menu()
         menu.add(self.resource("msg_go_up") or self.resource("msg_arrowright"), tr("К текущей песне"), later(lambda: self.refresh(scroll=True)))
+        self.add_playlist_items(menu, later)
         menu.add(self.resource("msg_delete"), tr("Убрать очередь"), later(self.remove_queue))
         self.player.show_menu(menu)
+
+    def add_playlist_items(self, menu, later):
+        """"To a playlist": a new one made of the whole queue, or all its songs added to one that exists."""
+        store = self.plugin.playlists
+        submenu = menu.makeSwipeback()
+        submenu.add(self.resource("ic_ab_back"), tr("Назад"), later(menu.closeSwipeback))
+        submenu.addGap()
+        submenu.add(self.resource("msg_add"), tr("Создать плейлист"), later(self.save_queue))
+        for item in store.items:
+            submenu.add(0, item["name"], later(lambda chosen=item: self.add_queue_to(chosen)))
+        menu.add(self.resource("msg_addfolder"), tr("В плейлист"), later(lambda: menu.openSwipeback(submenu)))
+        last = menu.getLast()
+        if last is not None:
+            last.setRightIcon(self.resource("msg_arrowright"))
+
+    def add_queue_to(self, item):
+        tracks = self.library_tracks()
+        if not tracks:
+            self.say(tr("Очередь из чата пока нельзя сохранить: для песен Telegram будет отдельный плейлист."))
+            return
+        if self.plugin.playlists.add(item["id"], [t["path"] for t in tracks]):
+            self.say(tr("Добавлено в «%s».") % item["name"])
+        else:
+            self.say(tr("Эти песни уже есть в «%s».") % item["name"])
 
     # -- a song's menu ----------------------------------------------------------------------
 

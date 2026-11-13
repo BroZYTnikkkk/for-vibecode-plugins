@@ -165,8 +165,12 @@ class DrawHook(_Hook):
                 progress = self.plugin.sheet_fields.float(player.sheet, "modeProgress")
                 if progress > 0.003 and player.effects is not None and not (player.library_visible() or player.queue_visible()):
                     player.effects.draw(canvas, min(1.0, progress))
-                visualizer.draw(canvas)
-                if player.peeks is not None and not (player.library_visible() or player.queue_visible()):
+                # over a Spotify Canvas video the cover is only a thumbnail: bars and peeks at its old place would
+                # hang over the video
+                video = progress < 0.5 and player.canvas_amount() > 0.01
+                if not video:
+                    visualizer.draw(canvas)
+                if player.peeks is not None and not video and not (player.library_visible() or player.queue_visible()):
                     player.peeks.draw(canvas, visualizer.colors)
                 # the file's tags arrive after bindMessage, with nothing to tell when
                 now = time.monotonic()
@@ -474,6 +478,31 @@ class PlayHook(_Hook):
             self.plugin.song_started()
         except Exception as e:
             self.fail(e)
+
+
+class SheetTouchHook(_Hook):
+    """MusicPlayerSheet.dispatchTouchEvent: every touch of the player, for the gestures on its empty places."""
+
+    def before_hooked_method(self, param):
+        try:
+            player = self.plugin.player
+            if player is not None and player.gestures is not None:
+                player.gestures.touch(param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+
+class NextSongHook(_Hook):
+    """MediaController.playNextMessageWithoutOrder: tells a song that ended by itself from a press of "next"."""
+
+    def before_hooked_method(self, param):
+        try:
+            self.plugin.song_ended = bool(param.args[0])
+        except Exception as e:
+            self.fail(e)
+
+    def after_hooked_method(self, param):
+        self.plugin.song_ended = False
 
 
 class DetachHook(_Hook):

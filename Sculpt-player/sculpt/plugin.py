@@ -16,7 +16,8 @@ from .queues import QueueStore
 from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
 from .playlists import PlaylistStore
-from .hooks import LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .sleep_timer import SleepTimer
+from .hooks import SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -35,7 +36,9 @@ class SculptPlayerPlugin(BasePlugin):
         # "stop after this song": the song's identity, and the one that played last
         self.stop_after = None
         self.last_song = None
+        self.song_ended = False  # inside MediaController's move to the next song after one played to its end
         self.listen = None
+        self.sleep_timer = SleepTimer(self)
         self.media_fields = None
         self.sheet_methods = {}
         self.extensions = None
@@ -85,11 +88,16 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(sheet, "onBackPressed", (), BackHook(self, "onBackPressed"))
             self.install_predictive_back()
             self.install(sheet, "isSwipeDismissArea", (f, f), SwipeAreaHook(self, "isSwipeDismissArea"))
+            self.install(sheet, "dispatchTouchEvent", (_java_class("android.view.MotionEvent"),), SheetTouchHook(self, "sheetTouch"))
             self.install(sheet, "getNeighborMessage", (i,), NeighborHook(self, "getNeighborMessage"))
             message = _java_class(MESSAGE_OBJECT)
             self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
             self.install(_java_class(PLAYER_COVERS), "needsArtwork", (message,), NeedsArtworkHook(self, "needsArtwork"))
             self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", PlayHook(self, "playMessage")))
+            try:
+                self.install(self.media_fields.cls, "playNextMessageWithoutOrder", (b,), NextSongHook(self, "nextSong"))
+            except Exception as e:
+                _log("next song hook: %s" % type(e).__name__)  # "stop after this song" then never pauses, the rest works
             self.install(self.media_fields.cls, "setPlaylist", (_java_class("java.util.ArrayList"), message, JLong.TYPE, b,
                                                                 _java_class(MEDIA_CONTROLLER + "$PlaylistGlobalSearchParams")),
                          PlaylistHook(self, "setPlaylist"))
@@ -132,6 +140,7 @@ class SculptPlayerPlugin(BasePlugin):
             _show_error(tr("Sculpt Player: не удалось загрузиться"), e)
 
     def on_plugin_unload(self):
+        self.sleep_timer.cancel()  # a pause posted for later must not outlive the plugin
         for handle in self.hooks:
             try:
                 self.unhook_method(handle)
@@ -282,7 +291,12 @@ class SculptPlayerPlugin(BasePlugin):
         now = self.song_identity(playing)
         if self.stop_after is not None and self.last_song == self.stop_after and now != self.stop_after:
             self.stop_after = None
-            run_on_ui_thread(lambda: controller.pauseMessage(controller.getPlayingMessageObject()))
+            if self.song_ended:
+                # at once and without the fade: posted for later, or faded out, the next song is heard for a moment
+                if not controller.pauseMessage(playing, False):
+                    # not open yet (a chat's song still loading): it is paused as soon as it is
+                    run_on_ui_thread(lambda: controller.pauseMessage(controller.getPlayingMessageObject(), False), 400)
+            # a press of "next" or of another song is the listener's own choice: the mark goes, the music stays
         self.last_song = now
         self.warm_neighbors()
 

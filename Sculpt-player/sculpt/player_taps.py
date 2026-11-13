@@ -135,6 +135,7 @@ class Taps:
             player = self.player
             mode = self.plugin.sheet_fields.float(player.sheet, "modeProgress")
             self.inside = (cover.getCoverRect().contains(event.getX(), event.getY()) and mode < 0.01
+                           and player.canvas_amount() < 0.5  # a video fills the screen: the cover is a thumbnail
                            and not (player.library_visible() or player.queue_visible()))
         if self.inside:
             self.detector.onTouchEvent(event)

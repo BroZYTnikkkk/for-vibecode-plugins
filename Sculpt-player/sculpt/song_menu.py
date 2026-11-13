@@ -13,6 +13,7 @@ from .i18n import tr
 from .common import MEDIA_CONTROLLER, _ctx, _dp, _java_class, _log
 from .library_ui import Run
 from .music import local_path
+from .sleep_timer import PRESETS
 
 
 TITLE_MAX_DP = 220
@@ -347,6 +348,31 @@ class PlayerSongMenu(SongMenu):
                               seconds=int(float(message.getDuration() or 0)), path=path, message=message)
         super().__init__(PlayerMenuScreen(player), row, player.moreButton)
 
+    def sleep_items(self, menu, later):
+        """The sleep timer: minutes to choose, and how many are left while it runs."""
+        timer = self.plugin.sleep_timer
+        left = timer.minutes_left()
+        submenu = menu.makeSwipeback()
+        submenu.add(self.icon("ic_ab_back"), tr("Назад"), later(menu.closeSwipeback))
+        submenu.addGap()
+        if left is not None:
+            submenu.add(self.icon("msg_cancel", "msg_close"), tr("Выключить таймер"), later(self.sleep_off))
+        for minutes in PRESETS:
+            submenu.add(0, tr("%d минут") % minutes, later(lambda m=minutes: self.sleep_in(m)))
+        title = tr("Таймер сна") if left is None else tr("Таймер сна: %d мин.") % left
+        menu.add(self.icon("msg_mute_period", "msg_timer", "msg_clear_recent"), title, later(lambda: menu.openSwipeback(submenu)))
+        last = menu.getLast()
+        if last is not None:
+            last.setRightIcon(self.icon("msg_arrowright"))
+
+    def sleep_in(self, minutes):
+        self.plugin.sleep_timer.start(minutes)
+        self.screen.say(tr("Музыка остановится через %d мин.") % minutes)
+
+    def sleep_off(self):
+        self.plugin.sleep_timer.cancel()
+        self.screen.say(tr("Таймер сна выключен."))
+
     def stock(self, name, menu, message):
         """One of the player's own builders, for what only Telegram knows how to do with a song in a chat."""
         method = self.plugin.sheet_method(name, _java_class(self.ITEM_OPTIONS), _java_class(self.MESSAGE))
@@ -381,6 +407,7 @@ class PlayerSongMenu(SongMenu):
         stopping = self.plugin.stop_after is not None and self.plugin.stop_after == self.identity()
         menu.add(self.icon("msg_round_pause_m", "player_pause", "ic_pause"),
                  tr("Не останавливаться после этой песни") if stopping else tr("Остановиться после этой песни"), later(self.stop_after))
+        self.sleep_items(menu, later)
         if on_phone:
             menu.addGap()
             menu.add(self.icon("msg_delete"), tr("Удалить навсегда"), later(self.delete))

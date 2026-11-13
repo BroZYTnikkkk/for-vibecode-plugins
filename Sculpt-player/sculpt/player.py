@@ -10,6 +10,7 @@ from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
 from .lyrics_fx import LyricsEffects
+from .gestures import EmptyPlaceGestures
 from .link_stream import saved_server
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
@@ -45,6 +46,7 @@ class Player:
         self.peeks = None
         self.taps = None
         self.effects = None
+        self.gestures = None
         self.album_checked = 0.0
         self.tabs = []
         self.panel_top = 0
@@ -137,6 +139,7 @@ class Player:
         self.taps.attach()
         self.effects = LyricsEffects(self.plugin, self)
         self.effects.align()
+        self.gestures = EmptyPlaceGestures(self)
         # the covers a first swipe shows are read now too: after Telegram restarts, no song starts to do it
         run_on_ui_thread(lambda: self.plugin.warm_neighbors(), 600)
         self.update_like()
@@ -241,6 +244,13 @@ class Player:
         """The tag editor, in the library tab: it is the library's songs whose tags it writes."""
         self.show_tab(PANEL_LIBRARY)
         self.library.edit_tags(path)
+
+    def canvas_amount(self):
+        """How far Spotify Canvas has taken over the cover: a video fills the screen, the cover is a thumbnail."""
+        try:
+            return float(self.coverView.getCurrentCanvas())
+        except Exception:
+            return 0.0
 
     def queue_visible(self):
         return self.queue_screen is not None and self.queue_screen.visible
@@ -399,6 +409,7 @@ class Player:
         if self.effects is not None:
             self.effects.dispose()
         self.effects = None
+        self.gestures = None
         self.menu_runs = []
 
     def run_later(self, action):

@@ -3,6 +3,7 @@ package sculpt;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 
 import org.telegram.messenger.MessageObject;
 import org.telegram.tgnet.TLRPC;
@@ -35,6 +36,11 @@ public final class Queue {
             out.add(message(account, userId, ids[i], date, paths[i], titles[i], artists[i], durations[i]));
         }
         return out;
+    }
+
+    /** The list MediaController keeps for a library queue: by id, the largest first. */
+    public static void sortNewestFirst(ArrayList<MessageObject> list) {
+        Collections.sort(list, (a, b) -> Integer.compare(b.getId(), a.getId()));
     }
 
     /**
