@@ -168,10 +168,16 @@ class DrawHook(_Hook):
                 # over a Spotify Canvas video the cover is only a thumbnail: bars and peeks at its old place would
                 # hang over the video
                 video = progress < 0.5 and player.canvas_amount() > 0.01
+                shift = player.player_shift
+                if shift:
+                    canvas.save()
+                    canvas.translate(shift, 0.0)
                 if not video:
                     visualizer.draw(canvas)
                 if player.peeks is not None and not video and not (player.library_visible() or player.queue_visible()):
                     player.peeks.draw(canvas, visualizer.colors)
+                if shift:
+                    canvas.restore()
                 # the file's tags arrive after bindMessage, with nothing to tell when
                 now = time.monotonic()
                 if now - player.album_checked > 1.0:
@@ -458,6 +464,32 @@ class ArtworkHook(_Hook):
             self.fail(e)
 
 
+class CoverSourceHook(_Hook):
+    """PlayerCovers.setCover: the playing song's big cover would come from the file's own picture, cut to a square
+    by the view; a song from the phone shows the square cover kept by this plugin instead, the whole picture in it."""
+
+    def before_hooked_method(self, param):
+        try:
+            message = param.args[1]
+            path = local_path(message) if bool(param.args[3]) else None
+            self.plugin.cover_from_cache = path is not None and self.plugin.music.covers.cached(path)[1] is not None
+        except Exception as e:
+            self.plugin.cover_from_cache = False
+            self.fail(e)
+
+    def after_hooked_method(self, param):
+        self.plugin.cover_from_cache = False
+
+
+class AudioInfoHook(_Hook):
+    """PlayerCovers.getPlayingAudioInfo, while setCover runs for a kept cover: none, so the cover comes from the
+    artwork url, which is the kept square file (ArtworkHook). Lyrics and the rest still read the file's tags."""
+
+    def before_hooked_method(self, param):
+        if self.plugin.cover_from_cache:
+            param.setResult(None)
+
+
 class NeedsArtworkHook(_Hook):
     """PlayerCovers.needsArtwork: a small cover in a phone's file is still that song's cover, so no looking online."""
 
@@ -486,8 +518,8 @@ class SheetTouchHook(_Hook):
     def before_hooked_method(self, param):
         try:
             player = self.plugin.player
-            if player is not None and player.gestures is not None:
-                player.gestures.touch(param.args[0])
+            if player is not None and player.gestures is not None and player.gestures.touch(param.args[0]):
+                param.setResult(JBoolean(True))  # a finger paging between tabs: the views do not get it
         except Exception as e:
             self.fail(e)
 

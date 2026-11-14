@@ -91,22 +91,44 @@ def track_number(track):
         return NO_TRACK_NUMBER
 
 
+COVER_VERSION = 2  # 2: a cover that is not square is fitted into a square, not cut by the views that show it
+
+
 class CoverCache:
-    """Covers read from the files once and kept as small JPEGs, so a list never decodes a whole picture."""
+    """Covers read from the files once and kept as small square JPEGs, so a list never decodes a whole picture."""
 
     def __init__(self, directory):
         self.dir = os.path.join(directory, "covers")
         os.makedirs(self.dir, exist_ok=True)
+        self._drop_older()
         self.lock = threading.Lock()
         self.wanted = collections.deque()
         self.queued = set()
         self.working = False
-        self.on_ready = None
+        # called on the covers' thread for every cover asked for, once it is known; every list that shows covers
+        # is here, each finds its own rows
+        self.listeners = []
         # called on the covers' thread for every cover read from a file, whoever asked for it
         self.on_extracted = None
         # path -> jpeg path or None, for the files whose cover is read: a scrolling list asks this for every row
         self.known = {}
         self.names = {}  # path -> the cache file's base name
+
+    def _drop_older(self):
+        """Covers kept by an older way of keeping them are made again, as they are shown."""
+        marker = os.path.join(self.dir, ".v%d" % COVER_VERSION)
+        if os.path.exists(marker):
+            return
+        dropped = 0
+        for name in os.listdir(self.dir):
+            if name.endswith((".jpg", ".none", ".tmp")):
+                try:
+                    os.remove(os.path.join(self.dir, name))
+                    dropped += 1
+                except OSError:
+                    pass
+        open(marker, "w").close()
+        _log("covers: %d of an older version dropped" % dropped)
 
     def _name(self, path):
         # the song's mtime is read once: a stat on /storage goes through FUSE and costs a list row its frame
@@ -117,7 +139,7 @@ class CoverCache:
             mtime = int(os.path.getmtime(path))
         except OSError:
             return None
-        name = os.path.join(self.dir, hashlib.sha1(("%s|%d" % (path, mtime)).encode("utf-8")).hexdigest())
+        name = os.path.join(self.dir, hashlib.sha1(("%s|%d|%d" % (path, mtime, COVER_VERSION)).encode("utf-8")).hexdigest())
         self.names[path] = name
         return name
 
@@ -190,8 +212,7 @@ class CoverCache:
                 extracted = self.on_extracted
                 if extracted is not None:
                     extracted(path)
-            callback = self.on_ready
-            if callback is not None:
+            for callback in list(self.listeners):
                 callback(path)
         except Exception as e:
             _log("cover %s: %s" % (os.path.basename(path), e))
@@ -239,6 +260,11 @@ class CoverCache:
             if small is not bitmap:
                 bitmap.recycle()
             bitmap = small
+            width, height = bitmap.getWidth(), bitmap.getHeight()
+        if abs(width - height) > max(width, height) * 0.02:
+            square = CoverCache._squared(bitmap, width, height)
+            bitmap.recycle()
+            bitmap = square
         temp = "%s.%d.tmp" % (out, threading.get_ident())
         stream = jclass("java.io.FileOutputStream")(temp)
         try:
@@ -248,6 +274,28 @@ class CoverCache:
             bitmap.recycle()
         os.replace(temp, out)
         return True
+
+    @staticmethod
+    def _squared(bitmap, width, height):
+        """The whole picture in a square, the rest of it filled with the same picture blurred, the way players show
+        a cover that is not square: every view cuts its cover to a square, which loses the sides."""
+        Bitmap = jclass("android.graphics.Bitmap")
+        side = min(max(width, height), COVER_SIZE)
+        middle = min(width, height)
+        crop = Bitmap.createBitmap(bitmap, (width - middle) // 2, (height - middle) // 2, middle, middle)
+        tiny = Bitmap.createScaledBitmap(crop, 12, 12, True)
+        if crop is not bitmap:
+            crop.recycle()
+        out = Bitmap.createScaledBitmap(tiny, side, side, True).copy(jclass("android.graphics.Bitmap$Config").ARGB_8888, True)
+        tiny.recycle()
+        canvas = jclass("android.graphics.Canvas")(out)
+        canvas.drawARGB(70, 0, 0, 0)
+        fit = float(side) / max(width, height)
+        w, h = width * fit, height * fit
+        left, top = (side - w) / 2.0, (side - h) / 2.0
+        paint = jclass("android.graphics.Paint")(2 | 1)  # FILTER_BITMAP_FLAG | ANTI_ALIAS_FLAG
+        canvas.drawBitmap(bitmap, None, jclass("android.graphics.RectF")(left, top, left + w, top + h), paint)
+        return out
 
 
 class MusicData:

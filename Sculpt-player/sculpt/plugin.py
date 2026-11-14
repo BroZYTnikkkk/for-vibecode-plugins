@@ -17,7 +17,7 @@ from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
 from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
-from .hooks import SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -36,6 +36,7 @@ class SculptPlayerPlugin(BasePlugin):
         # "stop after this song": the song's identity, and the one that played last
         self.stop_after = None
         self.last_song = None
+        self.cover_from_cache = False  # inside PlayerCovers.setCover for a song whose square cover is kept
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
         self.listen = None
         self.sleep_timer = SleepTimer(self)
@@ -93,6 +94,10 @@ class SculptPlayerPlugin(BasePlugin):
             message = _java_class(MESSAGE_OBJECT)
             self.install(message, "getArtworkUrl", (b,), ArtworkHook(self, "getArtworkUrl"))
             self.install(_java_class(PLAYER_COVERS), "needsArtwork", (message,), NeedsArtworkHook(self, "needsArtwork"))
+            covers_cls = _java_class(PLAYER_COVERS)
+            self.install(covers_cls, "setCover", (_java_class("org.telegram.messenger.ImageReceiver"), message, i, b),
+                         CoverSourceHook(self, "coverSource"))
+            self.install(covers_cls, "getPlayingAudioInfo", (message,), AudioInfoHook(self, "audioInfo"))
             self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", PlayHook(self, "playMessage")))
             try:
                 self.install(self.media_fields.cls, "playNextMessageWithoutOrder", (b,), NextSongHook(self, "nextSong"))

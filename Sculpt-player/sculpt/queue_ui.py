@@ -426,9 +426,13 @@ class QueueScreen:
                   jarray(String)(cover_paths), JInteger(shown_current),
                   jarray(jclass("java.lang.Object"))([r.message if r.path is None else None for r in rows]))
         self.call("setDragEnabled", JBoolean(not self.query))
-        missing = [r.path for r, c in zip(rows, cover_paths) if r.path and c is None]
+        # the rows around the one on the screen first, ahead of the whole library a scan asks for
+        middle = max(shown_current, 0)
+        missing = [rows[i].path for i in sorted(range(len(rows)), key=lambda i: abs(i - middle))
+                   if rows[i].path and cover_paths[i] is None]
         if missing:
-            covers.warm(missing[:200])
+            covers.warm(list(reversed(missing[:40])), first=True)
+            covers.warm(missing[40:300])
         if not rows:
             self.empty.setText(tr("Ничего не нашлось.") if self.query else tr("Очередь пуста. Включите песню в Медиатеке или в чате."))
         self.empty.setVisibility(0 if not rows else 8)

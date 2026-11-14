@@ -240,7 +240,6 @@ class TelegramSongsScreen(SongsScreen):
 
 
 class PlaylistsView(LibraryView):
-    OWNS_COVERS = False
 
     def first_screen(self):
         return PlaylistsRoot(self)

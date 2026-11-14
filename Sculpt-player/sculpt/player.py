@@ -10,7 +10,7 @@ from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
 from .lyrics_fx import LyricsEffects
-from .gestures import EmptyPlaceGestures
+from .gestures import TabPager
 from .link_stream import saved_server
 from .music import local_path
 from .library_ui import LibraryView, Run, release_on_dismiss
@@ -47,6 +47,7 @@ class Player:
         self.taps = None
         self.effects = None
         self.gestures = None
+        self.player_shift = 0.0  # how far the player's own views are moved while a finger pages between tabs
         self.album_checked = 0.0
         self.tabs = []
         self.panel_top = 0
@@ -139,7 +140,7 @@ class Player:
         self.taps.attach()
         self.effects = LyricsEffects(self.plugin, self)
         self.effects.align()
-        self.gestures = EmptyPlaceGestures(self)
+        self.gestures = TabPager(self)
         # the covers a first swipe shows are read now too: after Telegram restarts, no song starts to do it
         run_on_ui_thread(lambda: self.plugin.warm_neighbors(), 600)
         self.update_like()
@@ -183,7 +184,8 @@ class Player:
         elif index == PANEL_QUEUE and self.queue_visible() and self.queue_screen.query:
             self.queue_screen.search.setText("")
 
-    def show_tab(self, index):
+    def show_tab(self, index, swiped=False):
+        """swiped: the tab is on the screen already, brought in by a finger: it does not fade in again."""
         if index == self.active_tab:
             return
         self.active_tab = index
@@ -205,9 +207,83 @@ class Player:
             self.queue_screen.show()
         if self.mode() == MODE_QUEUE:
             self.set_mode(MODE_PLAYER)
+        if swiped:
+            for root in self.tab_views(index) if index != PANEL_ACTIVE else ():
+                root.animate().cancel()
+                root.setAlpha(1.0)
         self.cover_player(index in PANEL_STACKS or index == PANEL_QUEUE)
         self.paint_tabs(colors)
         self.place_indicator()
+
+    # -- paging between tabs with a finger (gestures.TabPager)
+
+    def own_views(self):
+        """The player's own views: everything in its layout but the panel and the tabs' screens."""
+        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator]}
+        for screen in [stack for _, stack in self.stacks()] + [self.queue_screen]:
+            if screen is not None:
+                keep.add(screen.root.hashCode())
+        children = (self.layout.getChildAt(i) for i in range(self.layout.getChildCount()))
+        return [child for child in children if child.hashCode() not in keep]
+
+    def tab_views(self, index):
+        if index == PANEL_ACTIVE:
+            return self.own_views()
+        if index == PANEL_QUEUE:
+            return [self.queue_screen.root] if self.queue_screen is not None else []
+        for panel, stack in self.stacks():
+            if panel == index:
+                return [stack.root] if stack is not None else []
+        return []
+
+    def peek(self, index):
+        """The tab beside the open one, drawn under a finger that pages to it; it is not the open tab yet."""
+        if index == PANEL_ACTIVE:
+            for view in self.own_views():
+                view.setTransitionAlpha(1.0)
+            return
+        if index == PANEL_QUEUE:
+            if self.queue_screen is None:
+                self.queue_screen = QueueScreen(self, self.context)
+                self.layout.requestLayout()
+            screen = self.queue_screen
+        else:
+            screen = self.ensure_stack(index, self.plugin.sheet_fields.get(self.sheet, "colors"))
+        if screen is None:
+            return
+        if not screen.visible:
+            screen.show()
+        screen.root.animate().cancel()
+        screen.root.setAlpha(1.0)
+
+    def end_peek(self, index):
+        """The finger went back: the tab it brought in goes away again."""
+        if index == self.active_tab:
+            return
+        if index == PANEL_ACTIVE:
+            for view in self.own_views():
+                view.setTransitionAlpha(0.0)
+        elif index == PANEL_QUEUE:
+            if self.queue_screen is not None and self.queue_screen.visible:
+                self.queue_screen.hide()
+        else:
+            for panel, stack in self.stacks():
+                if panel == index and stack is not None and stack.visible:
+                    stack.hide()
+        self.layout.postInvalidateOnAnimation()
+
+    def shift_tab(self, index, x):
+        for view in self.tab_views(index):
+            view.setTranslationX(float(x))
+        if index == PANEL_ACTIVE:
+            self.player_shift = float(x)
+            self.layout.invalidate()  # the visualizer is drawn by the layout itself and moves with the views
+
+    def move_indicator(self, fraction):
+        """The line under the open tab slides along with the finger; 1.0 is one tab to the right."""
+        if self.indicator is not None:
+            slot = self.plugin.layout_fields.int(self.layout, "paneWidth") / float(len(self.tabs))
+            self.indicator.setTranslationX(float(fraction * slot))
 
     def cover_player(self, hidden):
         """A tab over the player: the player's own views step aside, its glow (drawn under all of them) stays.
@@ -409,6 +485,8 @@ class Player:
         if self.effects is not None:
             self.effects.dispose()
         self.effects = None
+        if getattr(self, "gestures", None) is not None:
+            self.gestures.dispose()
         self.gestures = None
         self.menu_runs = []
 

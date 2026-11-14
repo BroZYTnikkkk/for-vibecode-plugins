@@ -1261,7 +1261,6 @@ class LibraryView:
     The Mornye tab is the same kind of stack: it overrides the first screen and what showing it starts.
     """
 
-    OWNS_COVERS = True  # the covers' single "ready" callback belongs to the library
 
     def __init__(self, player, context):
         self.player = player
@@ -1288,8 +1287,7 @@ class LibraryView:
         self.root.setClickable(True)
         self.root.setVisibility(8)
         player.layout.addOwnView(self.root)
-        if self.OWNS_COVERS:
-            self.data.covers.on_ready = self.cover_ready
+        self.data.covers.listeners.append(self.cover_ready)
 
     # -- small helpers --------------------------------------------------------
 
@@ -1616,8 +1614,8 @@ class LibraryView:
         self.slots = {}
         self.waiters = {}
         self.ready_paths = set()
-        if self.data.covers.on_ready == self.cover_ready:
-            self.data.covers.on_ready = None
+        if self.cover_ready in self.data.covers.listeners:
+            self.data.covers.listeners.remove(self.cover_ready)
 
     def data_changed(self):
         if not self.visible:

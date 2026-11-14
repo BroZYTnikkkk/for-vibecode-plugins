@@ -159,7 +159,6 @@ class AboutScreen(Screen):
 class MornyeView(LibraryView):
     """The Mornye tab: the same stack of screens as the library, with its own first screen."""
 
-    OWNS_COVERS = False
 
     def first_screen(self):
         return MornyeRoot(self)
