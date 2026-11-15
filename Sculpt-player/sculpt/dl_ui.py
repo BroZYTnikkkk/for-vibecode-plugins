@@ -130,7 +130,8 @@ class RemoteRows(ExtScreen):
     def fetch_popular(self):
         waiting, self.popular_waiting = self.popular_waiting or [], []
         plugin = self.owner.plugin
-        if not waiting or not (plugin.get_setting("popularity_deezer", True) or plugin.get_setting("lastfm_key", "")):
+        if not waiting or not (plugin.get_setting("popularity_spotify", True) or plugin.get_setting("popularity_deezer", True)
+                               or plugin.get_setting("lastfm_key", "")):
             return
         artists = [w for w in waiting if w[0] == "artist"][:POPULAR_ARTISTS]
         tracks = [w for w in waiting if w[0] == "track"][:POPULAR_TRACKS]
@@ -315,7 +316,7 @@ class RemoteRows(ExtScreen):
             at.setMarginStart(_dp(6))
             line.addView(folder, at)
         column.addView(line)
-        if number is None:
+        if True:  # in albums and playlists too, not only in the search
             def apply(found, line=line):
                 view = self.popular_view(found)
                 if view is not None:
@@ -800,7 +801,11 @@ class DownloadSearchScreen(RemoteRows):
         run_on_ui_thread(lambda: self.alive and mark == self.typed and self.guarded(self.search, True), LIVE_SEARCH_MS)
 
     def focused(self, focused):
-        self.draw_suggestions(focused)
+        if focused:
+            self.draw_suggestions(True)
+        else:
+            # a tap on a recent search takes the focus from the field first: the list waits for the tap to land
+            run_on_ui_thread(lambda: self.alive and not self.field.hasFocus() and self.guarded(self.draw_suggestions, False), 300)
 
     def draw_suggestions(self, focused=None):
         """Under the field while it is pressed: the recent searches that fit what is typed."""
@@ -955,6 +960,7 @@ class DownloadSearchScreen(RemoteRows):
         chip.setPadding(_dp(14), 0, _dp(16), 0)
         tint = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(owner.color("accent"), 60 if chosen else 22)
         chip.setBackground(owner.rounded(tint, _dp(20)))
+        chip.setForeground(owner.selector(_dp(20)))  # a press shows on the chip, as on every other button
         key = str(option["id"] or "").lower()
         icon_name = next((name for word, name in FILTER_ICONS.items() if word in key), None)
         if icon_name:
@@ -1353,6 +1359,10 @@ class DownloadSettingsScreen(ExtScreen):
         """Where the popularity of found authors and songs comes from, when the extension gives none."""
         plugin = self.owner.plugin
         self.section(self.body, tr("Популярность в поиске"))
+        spotify = self.switch(plugin.get_setting("popularity_spotify", True),
+                              lambda on: plugin.set_setting("popularity_spotify", bool(on)), tr("Из Spotify"))
+        self.item_row(self.body, tr("Из Spotify"), tr("Слушатели в месяц и прослушивания, как в Spotify, когда ты вошёл в него "
+                                                      "для Canvas в настройках плеера."), trailing=spotify)
         deezer = self.switch(plugin.get_setting("popularity_deezer", True),
                              lambda on: plugin.set_setting("popularity_deezer", bool(on)), tr("Из Deezer"))
         self.item_row(self.body, tr("Из Deezer"), tr("Фанаты исполнителей и место песен в топе, когда расширение их не даёт. "

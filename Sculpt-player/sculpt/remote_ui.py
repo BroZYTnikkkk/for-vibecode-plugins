@@ -310,6 +310,7 @@ class RemoteScreen(RemoteRows):
             self.draw_artist(data, tracks)
         else:
             self.draw_album(data, tracks)
+        self.fetch_popular()
 
     def draw_header(self, data, loading=False):
         """The picture, the name, a line under it, the buttons. It is part of the body, rebuilt with the data.
@@ -326,8 +327,17 @@ class RemoteScreen(RemoteRows):
             title.setShadowLayer(float(_dp(12)), 0.0, 0.0, jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(-16777216, 120))
             if artist:
                 line = listeners_text(data.get("listeners") or data.get("monthly_listeners"))
-                if line:
-                    self.centered(14, "textSecondary", line, top=4)
+                label = self.centered(14, "textSecondary", line or "", top=4)
+                if loading is False:
+                    # a service's "listeners" are often its fans (Deezer's): Spotify's monthly listeners replace them
+                    # when it answers; Last.fm or Deezer fill the line when the service gave nothing (dl_ui.popular)
+
+                    def apply(found, label=label):
+                        from . import popularity
+                        words = popularity.describe(found)
+                        if words:
+                            label.setText(words)
+                    self.popular("artist", {"name": name}, apply)
             else:
                 who = data.get("artists") or data.get("owner")
                 if who:
