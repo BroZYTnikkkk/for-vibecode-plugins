@@ -389,7 +389,10 @@ class SculptPlayerPlugin(BasePlugin):
         factory.createSimpleBulletin(resource, text, tr("Отменить"), run).setDuration(5000).show()
 
     def cover_radius(self):
-        index = self.get_setting("cover_radius", 1)
+        radius = self.get_setting("cover_radius_dp", None)
+        if radius is not None:
+            return float(radius)
+        index = self.get_setting("cover_radius", 1)  # a choice of four, before the slider
         return RADIUS_VALUES[index if 0 <= index < len(RADIUS_VALUES) else 1]
 
     def open_player(self, sheet, context):

@@ -220,8 +220,12 @@ class Visualizer:
         """Reading settings goes through Java: once per second is enough, a change in the sheet resets it."""
         if self.settings is None or now - self.settings_at > 1.0:
             get = self.plugin.get_setting
-            self.settings = (get("vis_top", True), get("vis_bottom", True), get("vis_density", 1), get("vis_color_mode", 0),
-                             get("vis_height", 1), get("vis_style", 0), self.plugin.cover_radius())
+            density, height = get("vis_density", 1), get("vis_height", 1)
+            # the sliders' values; before them, a choice of three
+            bars = get("vis_bars", None) or VIS_BARS[density if 0 <= density < len(VIS_BARS) else 1]
+            height_dp = get("vis_height_dp", None) or VIS_HEIGHT_DP[height if 0 <= height < len(VIS_HEIGHT_DP) else 1]
+            self.settings = (get("vis_top", True), get("vis_bottom", True), int(bars), get("vis_color_mode", 0),
+                             float(height_dp), get("vis_style", 0), self.plugin.cover_radius())
             self.strip_on_top = int(get("lyrics_vis", 0)) == 1
             self.settings_at = now
         return self.settings
@@ -448,7 +452,7 @@ class Visualizer:
 
     def _build(self, lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
                height_index, show_top, show_bottom, cover_radius, strip=False):
-        count = VIS_BARS[density]
+        count = density  # the number of bars itself, since the slider
         layered = color_mode == 0
         self._check_cover(self.built_at)
         bands = self.spectrum.poll(playing)
@@ -457,7 +461,7 @@ class Visualizer:
                                                    JBoolean(layered), JDouble(time.monotonic())))
         else:
             self.moving = self._advance(count, bands, layered)
-        wanted = _dp(48) if strip else _dp(VIS_HEIGHT_DP[height_index])
+        wanted = _dp(48) if strip else _dp(height_index)  # dp, since the slider
         full_top = top - inset
         ceiling = f.int(lay, "headerBottom") + _dp(4)
         above = max(0.0, min(wanted, full_top - ceiling)) if show_top else 0.0

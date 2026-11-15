@@ -252,18 +252,13 @@ class ExtScreen(Screen):
     def pill(self, text, filled, action):
         """A small button at the end of a row. While its work runs, it keeps its strength and changes its words."""
         owner = self.owner
-        button = self.label(14, "onAccent" if filled else "accent", True)
+        # the main action on the accent, the others on the tonal color: both from the cover, as in Mornye
+        button = self.label(14, "onAccent" if filled else "onTonal", True)
         button.setText(text)
         button.setGravity(17)
         button.setPadding(_dp(16), _dp(8), _dp(16), _dp(8))
         button.setMinHeight(_dp(36))
-        if filled:
-            button.setBackground(owner.rounded(owner.color("accent"), _dp(18)))
-        else:
-            frame = jclass("android.graphics.drawable.GradientDrawable")()
-            frame.setCornerRadius(float(_dp(18)))
-            frame.setStroke(_dp(1), owner.color("accent"))
-            button.setBackground(frame)
+        self.back(button, "accent" if filled else "tonal", _dp(18))
         if action is not None:
             self.click(button, action)
         return button

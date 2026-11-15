@@ -198,6 +198,8 @@ class Screen:
         self.view = None
         self.title_view = None
         self.subtitle_view = None
+        self.backs = []  # (view, role, radius): plates in a color of the player, painted again with it
+        self.sliders = []  # kit.slider_row's sliders and their listeners
 
     def guarded(self, action, *args):
         try:
@@ -231,6 +233,15 @@ class Screen:
                 pass
         self.keep = []
         self.tints = []
+        self.backs = []
+        from .kit import release_sliders
+        release_sliders(self)
+
+    def back(self, view, role, radius):
+        """A plate in one of the player's colors behind the view; it follows the cover's colors."""
+        self.backs.append((view, role, radius))
+        view.setBackground(self.owner.rounded(self.owner.color(role), radius))
+        return view
 
     def tint_text(self, view, role):
         self.tints.append((True, view, role))
@@ -249,6 +260,8 @@ class Screen:
                 view.setTextColor(owner.color(role))
             else:
                 owner.tint(view, owner.color(role))
+        for view, role, radius in self.backs:
+            view.setBackground(owner.rounded(owner.color(role), radius))
         self.colors_changed()
 
     def colors_changed(self):
@@ -336,12 +349,16 @@ class Screen:
         row.setBackground(owner.selector(0))
         icon = ImageView(owner.context)
         owner.set_icon(icon, icons)
-        self.tint_icon(icon, "icon")
-        row.addView(icon, owner.params(24, 24))
+        # the icon on a round plate in the cover's tonal color, the way Mornye marks its places to go
+        icon.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER_INSIDE)
+        icon.setPadding(_dp(8), _dp(8), _dp(8), _dp(8))
+        self.back(icon, "tonal", _dp(18))
+        self.tint_icon(icon, "onTonal")
+        row.addView(icon, owner.params(36, 36))
         name = self.label(16, "text")
         name.setText(title)
         name_at = Params(0, -2, 1.0)
-        name_at.setMarginStart(_dp(16))
+        name_at.setMarginStart(_dp(14))
         row.addView(name, name_at)
         count = self.label(14, "textSecondary")
         row.addView(count)
