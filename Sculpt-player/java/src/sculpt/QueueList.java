@@ -39,7 +39,7 @@ import java.util.concurrent.Executors;
 
 /**
  * The songs of one queue, as Musicolet shows them: a handle to drag, the cover, title, author and album, the
- * length, and a menu button; the current song in a frame of the accent colour.
+ * length, and a menu button; the current song on a plate of the accent colour, faint, as Mornye marks it.
  *
  * The Python side owns the data and gets events through a Handler.Callback (an interface Chaquopy can
  * implement): ROW (arg1 = position), MENU (arg1 = position, obj = the button), MOVED (arg1 = from, arg2 = to,
@@ -502,8 +502,9 @@ public class QueueList extends RecyclerView {
             artist.setTextColor(playing ? accentColor : secondaryColor);
             album.setTextColor(playing ? accentColor : secondaryColor);
             time.setTextColor(playing ? accentColor : secondaryColor);
-            frame.setColor(0);
-            frame.setStroke(playing ? dp(2) : 0, accentColor);
+            // a faint plate of the accent behind the row instead of a frame around it
+            frame.setColor(playing ? (accentColor & 0x00ffffff) | 0x2e000000 : 0);
+            frame.setStroke(0, 0);
             coverBack.setColor(coverColor);
             PorterDuffColorFilter tint = new PorterDuffColorFilter(playing ? accentColor : iconColor, PorterDuff.Mode.SRC_IN);
             handle.setImageResource(handleIcon);
