@@ -108,8 +108,9 @@ class QualityPill:
             x = cover_left + size - width - _dp(10)
             y = cover_top + size - _dp(HEIGHT) - _dp(10)
         else:
+            # right above the title: in the middle of the gap the visualizer's bars could cover it
             x = cover_left + (size - width) / 2
-            y = (cover_top + size + title_top) / 2 - _dp(HEIGHT) / 2
+            y = title_top - _dp(HEIGHT) - _dp(4)
         put(self.view, int(x), int(y))
 
     def colors(self, colors):

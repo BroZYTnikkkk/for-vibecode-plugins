@@ -13,10 +13,9 @@ import calendar
 import datetime
 import time
 
-from client_utils import run_on_queue
 from java import jclass
 
-from .common import _dp, _log
+from .common import _dp, _log, run_on_work
 from .i18n import language, plural, tr
 from .library_ui import Screen
 from .music import local_path, split_artists
@@ -144,7 +143,7 @@ class StatsStore:
         data = {"version": 2, "songs": dict(self.songs), "days": {k: dict(v) for k, v in self.days.items()},
                 "sessions": [list(s) for s in self.sessions], "plays": {k: dict(v) for k, v in self.plays.items()},
                 "plays_recounted": not self.recount}
-        run_on_queue(lambda: self.plugin.music._save("stats.json", data))
+        run_on_work(lambda: self.plugin.music._save("stats.json", data))
 
     # -- reading, for the screen
 

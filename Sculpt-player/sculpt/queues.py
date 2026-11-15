@@ -9,12 +9,11 @@ references and asked of Telegram again after a restart.
 
 import random
 
-from client_utils import run_on_queue
 from java import jclass
 
 from .i18n import source, tr
 from . import chat_songs
-from .common import MEDIA_CONTROLLER, QUEUES_MAX, _log, sculpt_method
+from .common import MEDIA_CONTROLLER, QUEUES_MAX, _log, sculpt_method, run_on_work
 from .music import local_path
 
 LIBRARY_TITLE = tr("Медиатека")
@@ -58,7 +57,7 @@ class QueueStore:
             data = {"active": self.active, "entries": [{k: v for k, v in e.items() if k not in ("java", "loading", "tried")} for e in self.entries]}
             self.plugin.music._save("queues.json", data)
 
-        run_on_queue(work)
+        run_on_work(work)
 
     def ensure_java(self, entry, done):
         """A chat's queue saved before a restart: its messages are asked of Telegram once; done() when they answered."""

@@ -7,8 +7,8 @@ Every song is stored with its kind: a song from a chat will need other fields, a
 import time
 import uuid
 
-from client_utils import run_on_queue
 
+from .common import run_on_work
 from . import chat_songs
 
 FILE = "playlists.json"
@@ -28,7 +28,7 @@ class PlaylistStore:
 
     def changed(self):
         data = {"version": VERSION, "items": [dict(item, songs=list(item["songs"])) for item in self.items], "telegram": list(self.telegram)}
-        run_on_queue(lambda: self.plugin.music._save(FILE, data))
+        run_on_work(lambda: self.plugin.music._save(FILE, data))
         player = self.plugin.player
         view = getattr(player, "playlists", None) if player is not None else None
         if view is not None:

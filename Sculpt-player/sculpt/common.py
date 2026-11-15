@@ -11,7 +11,7 @@ from ui.bulletin import BulletinHelper
 from .i18n import tr
 
 
-VERSION = "0.49.0"
+VERSION = "0.49.4"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -130,6 +130,51 @@ COLORS_SECONDS = 0.15
 COVERS_DELIVERY_MS = 120
 PERMISSION_REQUEST = 4731
 PERMISSION_POLLS = 240  # half-second looks at whether the answer came
+
+
+_work = {"queue": None, "runnable": None}
+
+
+def run_on_work(action):
+    """The plugin's own background thread, in order. exteraGram's shared plugins queue is held up for seconds at a
+    time by other plugins: the library, the queues and the saves wait for nobody there."""
+    queue = _work["queue"]
+    if queue is None:
+        queue = _work["queue"] = jclass("org.telegram.messenger.DispatchQueue")("sculptWork")
+    if "mock" in type(queue).__module__:
+        action()  # the offline checks have no threads: the job runs at once, as their fake plugins queue does
+        return
+    runnable = _work["runnable"]
+    if runnable is None:
+        from java import dynamic_proxy
+
+        class Work(dynamic_proxy(jclass("java.lang.Runnable"))):
+            def __init__(self, job):
+                super().__init__()
+                self.job = job
+
+            def run(self):
+                job, self.job = self.job, None
+                try:
+                    if job is not None:
+                        job()
+                except Exception as e:
+                    _log("work: %s" % e)
+        runnable = _work["runnable"] = Work
+    queue.postRunnable(runnable(action))
+
+
+def stop_work():
+    """After what waits in it (the last saves), the thread ends."""
+    queue = _work["queue"]
+    if queue is None:
+        return
+    _work["queue"] = None
+    run = _work["runnable"]
+    try:
+        queue.postRunnable(run(lambda: queue.recycle()))
+    except Exception:
+        pass
 
 
 def _log(text):

@@ -57,6 +57,9 @@ class SculptPlayerPlugin(BasePlugin):
             self.sheet_fields = Fields(SHEET)
             self.media_fields = Fields(MEDIA_CONTROLLER)
             self.music = MusicData(self)
+            # the library is read soon after the start, not when its tab is first opened: the player's album line,
+            # the statistics and the queues need it from the first song on
+            run_on_ui_thread(lambda: self.music is not None and self.music.scan(), 1500)
             self.music.covers.on_extracted = self.cover_extracted
             self.queues = QueueStore(self)
             self.playlists = PlaylistStore(self)
@@ -248,6 +251,8 @@ class SculptPlayerPlugin(BasePlugin):
             self.listen.stopped = True
         if self.music is not None:
             self.music.covers.close()  # the covers' own thread ends with the plugin
+        from .common import stop_work
+        stop_work()  # its last saves still run
         release = sculpt_method("sculpt.CanvasFx", "release")
         if release is not None:
             try:

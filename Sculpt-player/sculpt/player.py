@@ -765,7 +765,8 @@ class Player:
         margin. A long title moves right just enough to clear the cover.
         """
         sf, f = self.plugin.sheet_fields, self.plugin.layout_fields
-        progress = max(sf.float(self.sheet, "modeProgress"), sf.float(self.sheet, "canvasTitleProgress"))
+        # only the lyrics and the queue make the cover small now: over a Canvas video it stays big (CanvasLayoutHook)
+        progress = sf.float(self.sheet, "modeProgress")
         # the ⋯ beside the title gives way to the small cover's text
         self.moreButton.setAlpha(max(0.0, 1.0 - 2.0 * progress))
         self.moreButton.setEnabled(progress < 0.5)

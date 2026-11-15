@@ -9,14 +9,13 @@ import threading
 import time
 
 from android_utils import run_on_ui_thread
-from client_utils import run_on_queue
 from file_utils import get_files_dir
 from java import dynamic_proxy, jarray, jbyte, jclass, jint
 from java.lang import Integer as JInteger, Long as JLong
 
 from . import storage
 from .i18n import plural, tr
-from .common import ARTIST_SEP, COVER_SIZE, GENERIC_FOLDERS, HISTORY_MAX, LISTEN_SECONDS, LISTEN_TICK_MS, NO_TRACK_NUMBER, QUEUE_MAX, UNKNOWN_ARTIST, _ctx, _log, sculpt_method, MEDIA_CONTROLLER, QUEUE_HEAD, QUEUE_CHUNK
+from .common import ARTIST_SEP, COVER_SIZE, GENERIC_FOLDERS, HISTORY_MAX, LISTEN_SECONDS, LISTEN_TICK_MS, NO_TRACK_NUMBER, QUEUE_MAX, UNKNOWN_ARTIST, _ctx, _log, sculpt_method, MEDIA_CONTROLLER, QUEUE_HEAD, QUEUE_CHUNK, run_on_work
 
 try:
     import mutagen
@@ -167,7 +166,14 @@ class CoverCache:
     def cached(self, path):
         """(known, jpeg path or None): known is False while the file has not been read yet."""
         if path in self.known:
-            return True, self.known[path]
+            jpg = self.known[path]
+            if jpg is None or os.path.exists(jpg):
+                return True, jpg
+            # the kept square was deleted (the cache folder was cleaned): the player and the lists were pointed at
+            # a missing file and stayed without a cover; now the cover is read from the song again
+            self.known.pop(path, None)
+            with self.lock:
+                self.queued.discard(path)
         base = self._name(path)
         if base is None:
             return True, None
@@ -481,7 +487,7 @@ class MusicData:
                 self.scanning = False
                 run_on_ui_thread(lambda: self._finished(waiting))
 
-        run_on_queue(work)
+        run_on_work(work)
 
     def _finished(self, waiting=()):
         self.loaded = True
@@ -677,7 +683,7 @@ class MusicData:
         else:
             self.favorites[path] = int(time.time())
         data = dict(self.favorites)
-        run_on_queue(lambda: self._save("favorites.json", data))
+        run_on_work(lambda: self._save("favorites.json", data))
         return path in self.favorites
 
     def add_history(self, path):
@@ -687,7 +693,7 @@ class MusicData:
         # a song heard before the counter existed has played at least once already
         self.plays[path] = self.plays.get(path, 1 if known else 0) + 1
         data, plays = list(self.history), dict(self.plays)
-        run_on_queue(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
+        run_on_work(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
         self._notify()
 
     def last_played(self, path):
@@ -701,7 +707,7 @@ class MusicData:
         self.history = [h for h in self.history if h["path"] != path]
         self.plays.pop(path, None)
         data, plays = list(self.history), dict(self.plays)
-        run_on_queue(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
+        run_on_work(lambda: (self._save("history.json", data), self._save("plays.json", plays)))
         self._notify()
 
     # -- playback -----------------------------------------------------------
@@ -825,13 +831,13 @@ class MusicData:
                 timing = {"songs": items.size(), "way": way, "waited": 0.0, "built": 0.0}
                 first_id = first.getId()
                 run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress, ids is not None))
-                run_on_queue(lambda: self._build_around(generation, queue, base, parts, first_id, ids))
+                run_on_work(lambda: self._build_around(generation, queue, base, parts, first_id, ids))
             except Exception as e:
                 failure = e
                 self.queue_settling = False
                 run_on_ui_thread(lambda: self.plugin.report("play", failure))
 
-        run_on_queue(head)
+        run_on_work(head)
 
     def _build_around(self, generation, queue, base, parts, first_id, ids=None):
         if generation != self.queue_generation:
@@ -844,7 +850,7 @@ class MusicData:
             start, end, earlier = parts[0]
             items, _ = self._messages(queue[start:end], base + start, None if ids is None else ids[start:end])
             run_on_ui_thread(lambda: self._append(generation, items, first_id, earlier, ids is not None))
-            run_on_queue(lambda: self._build_around(generation, queue, base, parts[1:], first_id, ids))
+            run_on_work(lambda: self._build_around(generation, queue, base, parts[1:], first_id, ids))
         except Exception as e:
             _log("queue part failed to build: %s" % type(e).__name__)
             self.queue_settling = False
@@ -884,12 +890,12 @@ class MusicData:
                 timing = {"songs": items.size(), "way": way, "waited": started - tapped, "built": time.monotonic() - started}
                 run_on_ui_thread(lambda: self._start(generation, items, first, title, len(queue), timing, progress))
                 if len(queue) > QUEUE_HEAD:
-                    run_on_queue(lambda: self._build_rest(generation, queue, QUEUE_HEAD, first.getId()))
+                    run_on_work(lambda: self._build_rest(generation, queue, QUEUE_HEAD, first.getId()))
             except Exception as e:
                 failure = e
                 run_on_ui_thread(lambda: self.plugin.report("play", failure))
 
-        run_on_queue(head)
+        run_on_work(head)
 
     def _start(self, generation, items, first, title, total, timing, progress=0.0, kept=False):
         if generation != self.queue_generation:
@@ -937,7 +943,7 @@ class MusicData:
             items, _ = self._messages(queue[offset:offset + QUEUE_CHUNK])
             run_on_ui_thread(lambda: self._append(generation, items, first_id))
             if offset + QUEUE_CHUNK < len(queue):
-                run_on_queue(lambda: self._build_rest(generation, queue, offset + QUEUE_CHUNK, first_id))
+                run_on_work(lambda: self._build_rest(generation, queue, offset + QUEUE_CHUNK, first_id))
         except Exception as e:
             _log("queue part %d failed to build: %s" % (offset, e))
             failure = e

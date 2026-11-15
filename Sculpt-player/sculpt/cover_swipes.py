@@ -7,7 +7,6 @@ A finger that goes sideways first is left to the cover view: that is a swipe to 
 closes by a drag that starts on the cover (SwipeAreaHook); it closes from anywhere else."""
 
 from java import jarray, jclass
-from java.lang import Integer as JInteger
 
 from .i18n import tr
 from .common import _dp
@@ -130,7 +129,7 @@ class CoverSwipes:
             top = max(1, int(audio.getStreamMaxVolume(STREAM_MUSIC)))
             steps = int(round(value * top))
             if steps != audio.getStreamVolume(STREAM_MUSIC):
-                audio.setStreamVolume(STREAM_MUSIC, JInteger(steps), JInteger(0))
+                audio.setStreamVolume(STREAM_MUSIC, steps, 0)  # plain ints: the method takes int, not Integer
             value = steps / float(top)
         elif self.kind == ALPHA:
             value = round(value * 20) / 20.0  # steps of 5%, like the slider in the settings

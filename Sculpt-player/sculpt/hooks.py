@@ -556,11 +556,22 @@ class CoverSourceHook(_Hook):
     """PlayerCovers.setCover: the playing song's big cover would come from the file's own picture, cut to a square
     by the view; a song from the phone shows the square cover kept by this plugin instead, the whole picture in it."""
 
+    def __init__(self, plugin, name):
+        super().__init__(plugin, name)
+        self.told = set()  # songs whose missing cover was written to the log once
+
     def before_hooked_method(self, param):
         try:
             message = param.args[1]
             path = local_path(message) if bool(param.args[3]) else None
-            self.plugin.cover_from_cache = path is not None and self.plugin.music.covers.cached(path)[1] is not None
+            covers = self.plugin.music.covers
+            known, jpg = covers.cached(path) if path is not None else (True, None)
+            self.plugin.cover_from_cache = jpg is not None
+            if path is not None and jpg is None and path not in self.told:
+                # one line per song for the next time a cover stays empty: what the cache and its queue knew
+                self.told.add(path)
+                _log("cover: %s not ready (read %s, queue %s, waiting %d, last step %.0f s ago)" % (
+                    path.rsplit("/", 1)[-1], known, covers.working, len(covers.wanted), time.time() - covers.beat))
         except Exception as e:
             self.plugin.cover_from_cache = False
             self.fail(e)
