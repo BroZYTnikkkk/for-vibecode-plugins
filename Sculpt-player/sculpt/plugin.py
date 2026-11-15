@@ -42,6 +42,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.last_song = None
         self.landscape = False
         self.landscape_at = 0.0
+        self.canvas_alpha_live = None  # the cover's alpha over a Canvas video while a finger sets it (CoverSwipes)
         self.cover_from_cache = False  # inside PlayerCovers.setCover for a song whose square cover is kept
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
         self.listen = None
@@ -399,6 +400,8 @@ class SculptPlayerPlugin(BasePlugin):
 
     def canvas_cover_alpha(self):
         """How solid the big cover stays over a Spotify Canvas video, 0..1."""
+        if self.canvas_alpha_live is not None:
+            return self.canvas_alpha_live
         return max(0.0, min(100.0, float(self.get_setting("canvas_cover_alpha", 50)))) / 100.0
 
     def cover_radius(self):

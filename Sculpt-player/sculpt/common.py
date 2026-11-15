@@ -11,7 +11,7 @@ from ui.bulletin import BulletinHelper
 from .i18n import tr
 
 
-VERSION = "0.42.0"
+VERSION = "0.42.1"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"

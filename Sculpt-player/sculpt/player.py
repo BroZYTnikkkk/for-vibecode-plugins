@@ -9,6 +9,7 @@ from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARG
 from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
+from .cover_swipes import CoverSwipes
 from .lyrics_fx import LyricsEffects
 from .gestures import TabPager
 from .link_stream import saved_server
@@ -139,6 +140,8 @@ class Player:
         self.peeks = Peeks(self.plugin, self)
         self.taps = Taps(self.plugin, self)
         self.taps.attach()
+        self.swipes = CoverSwipes(self.plugin, self)
+        self.swipes.build(self.layout)  # added after the cover view, so its hint is drawn over the cover
         self.effects = LyricsEffects(self.plugin, self)
         self.effects.align()
         self.gestures = TabPager(self)
@@ -513,6 +516,9 @@ class Player:
         if self.taps is not None:
             self.taps.detach()
             self.taps = None
+        if getattr(self, "swipes", None) is not None:
+            self.swipes.dispose()
+            self.swipes = None
         if self.effects is not None:
             self.effects.dispose()
         self.effects = None
@@ -776,6 +782,8 @@ class Player:
         measure(self.divider, pane, max(1, _dp(1) // 2))
         measure(self.lyricsView, self.lyricsView.getMeasuredWidth(), self.lyricsView.getMeasuredHeight() + _dp(LYRICS_SHIFT))
         measure(self.indicator, slot, _dp(2))
+        if getattr(self, "swipes", None) is not None:
+            self.swipes.measure(measure)
         for _, stack in self.stacks():
             if stack is not None:
                 measure(stack.root, pane, self.panel_top)
@@ -880,6 +888,8 @@ class Player:
         for index, tab in enumerate(self.tabs):
             put(tab, pane_left + index * slot, self.panel_top)
         self.place_indicator()
+        if getattr(self, "swipes", None) is not None:
+            self.swipes.place(put, f.float(lay, "coverLeft"), f.float(lay, "coverTop"), f.float(lay, "coverSize"))
         for _, stack in self.stacks():
             if stack is not None:
                 put(stack.root, pane_left, 0)

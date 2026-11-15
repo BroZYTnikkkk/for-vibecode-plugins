@@ -702,6 +702,7 @@ UK = {
     'Настройки плеера exteraGram и плагины': 'Налаштування плеєра exteraGram і плагіни',
     'Обложка над Spotify Canvas': 'Обкладинка над Spotify Canvas',
     'Скрыта': 'Прихована',
+    'Яркость': 'Яскравість',
 }
 
 EN = {
@@ -1404,4 +1405,5 @@ EN = {
     'Настройки плеера exteraGram и плагины': 'exteraGram player settings and plugins',
     'Обложка над Spotify Canvas': 'Cover over Spotify Canvas',
     'Скрыта': 'Hidden',
+    'Яркость': 'Brightness',
 }

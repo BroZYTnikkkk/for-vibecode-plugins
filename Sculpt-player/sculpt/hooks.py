@@ -368,8 +368,13 @@ class CoverTouchHook(_Hook):
     def before_hooked_method(self, param):
         try:
             player = self.plugin.player
-            if player is not None and player.taps is not None and param.thisObject.hashCode() == player.coverView.hashCode():
-                player.taps.cover_touch(param.thisObject, param.args[0])
+            if player is not None and param.thisObject.hashCode() == player.coverView.hashCode():
+                swipes = getattr(player, "swipes", None)
+                if swipes is not None and swipes.touch(param.thisObject, param.args[0]):
+                    param.setResult(JBoolean.TRUE)  # up or down: the volume, the brightness, the cover's alpha
+                    return
+                if player.taps is not None:
+                    player.taps.cover_touch(param.thisObject, param.args[0])
         except Exception as e:
             self.fail(e)
 
@@ -515,6 +520,13 @@ class SwipeAreaHook(_Hook):
             player = self.plugin.player
             if player is not None and (player.library_visible() or player.queue_visible()):
                 if float(param.args[1]) >= self.plugin.layout_fields.int(player.layout, "headerBottom"):
+                    param.setResult(JBoolean.FALSE)
+            elif player is not None and self.plugin.sheet_fields.float(player.sheet, "modeProgress") < 0.01:
+                # up and down on the cover set the volume and the rest (CoverSwipes): the player closes from elsewhere
+                cover = player.coverView
+                x = float(param.args[0]) - player.layout.getX() - cover.getX()
+                y = float(param.args[1]) - player.layout.getY() - cover.getY()
+                if cover.getCoverRect().contains(x, y):
                     param.setResult(JBoolean.FALSE)
         except Exception as e:
             self.fail(e)
