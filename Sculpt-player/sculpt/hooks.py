@@ -172,6 +172,8 @@ class TransitionsHook(_Hook):
                 player.add.setAlpha(alpha)
                 player.recenter()
                 player.lyrics_layout(max(0.0, min(1.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress"))))
+                if getattr(player, "quality", None) is not None:
+                    player.quality.mode(max(0.0, min(1.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress"))))
                 player.hide_panel(self.plugin.layout_fields.bool(player.layout, "keyboardLayout"))
         except Exception as e:
             self.fail(e)
@@ -369,6 +371,10 @@ class CoverTouchHook(_Hook):
         try:
             player = self.plugin.player
             if player is not None and param.thisObject.hashCode() == player.coverView.hashCode():
+                quality = getattr(player, "quality", None)
+                if quality is not None and quality.touch(param.thisObject, param.args[0]):
+                    param.setResult(JBoolean.TRUE)  # a tap on the quality pill, which lies under the cover view
+                    return
                 swipes = getattr(player, "swipes", None)
                 if swipes is not None and swipes.touch(param.thisObject, param.args[0]):
                     param.setResult(JBoolean.TRUE)  # up or down: the volume, the brightness, the cover's alpha
@@ -427,6 +433,8 @@ class BindHook(_Hook):
             if player is not None:
                 player.update_album()
                 player.update_like()
+                if getattr(player, "quality", None) is not None:
+                    player.quality.update()
                 if player.queue_visible():
                     player.queue_screen.playing_changed()
         except Exception as e:

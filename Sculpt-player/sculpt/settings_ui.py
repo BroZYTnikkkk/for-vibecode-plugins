@@ -265,6 +265,7 @@ class LookScreen(ExtScreen):
                    lambda v: tr("Нет") if v == 0 else "%d dp" % v, lambda v: self.save("cover_radius_dp", int(v)))
         slider_row(self, self.body, tr("Обложка над Spotify Canvas"), 0, 100, 5, float(get("canvas_cover_alpha", 50)),
                    lambda v: tr("Скрыта") if v == 0 else "%d%%" % v, lambda v: self.canvas_alpha(int(v)))
+        self.choice("quality_pill", tr("Качество песни"), [tr("Не показывать"), tr("Под обложкой"), tr("В углу обложки")], 1)
         self.native("getPlayerCoverColors", "setPlayerCoverColors", tr("Цвета обложки в плеере"),
                     tr("Плеер окрашивается в цвета обложки."), "onCoverColorsChanged")
         self.native("getPlayerMiniCoverColors", "setPlayerMiniCoverColors", tr("Цвета обложки в мини-плеере"),

@@ -705,6 +705,10 @@ UK = {
     'Яркость': 'Яскравість',
     'раз': 'раз',
     'раза': 'рази',
+    'Качество песни': 'Якість пісні',
+    'Не показывать': 'Не показувати',
+    'В углу обложки': 'У куті обкладинки',
+    'Качество: %s': 'Якість: %s',
 }
 
 EN = {
@@ -1199,7 +1203,7 @@ EN = {
     'Плеер окрашивается в цвета обложки.': 'The player takes its colors from the cover.',
     'По вертикали': 'Vertically',
     'По горизонтали': 'Horizontally',
-    'Под обложкой': 'Below cover',
+    'Под обложкой': 'Under the cover',
     'Показывает форматы и качество (FLAC, Hi-Res, битность, частота), порядок сервисов и источников метаданных, репозитории и журналы расширений. Без него всё названо простыми словами.': 'Shows formats and quality (FLAC, Hi-Res, bit depth, sample rate), the order of services and metadata sources, extension repositories and logs. Without it, everything has plain names.',
     'Прогресс': 'Progress',
     'Прогресс строки': 'Line progress',
@@ -1410,4 +1414,8 @@ EN = {
     'Яркость': 'Brightness',
     'раз': 'plays',
     'раза': 'plays',
+    'Качество песни': 'Song quality',
+    'Не показывать': "Don't show",
+    'В углу обложки': "In the cover's corner",
+    'Качество: %s': 'Quality: %s',
 }

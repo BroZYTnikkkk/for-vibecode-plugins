@@ -453,6 +453,9 @@ class SculptPlayerPlugin(BasePlugin):
         if player.effects is not None:
             player.effects.align()
         player.apply_wave()
+        if getattr(player, "quality", None) is not None:
+            player.quality.message_id = None
+            player.quality.update()
         player.layout.requestLayout()
         player.layout.invalidate()
         try:

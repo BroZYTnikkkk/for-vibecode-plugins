@@ -10,6 +10,7 @@ from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
 from .cover_swipes import CoverSwipes
+from .quality import QualityPill
 from .lyrics_fx import LyricsEffects
 from .gestures import TabPager
 from .link_stream import saved_server
@@ -142,6 +143,9 @@ class Player:
         self.taps.attach()
         self.swipes = CoverSwipes(self.plugin, self)
         self.swipes.build(self.layout)  # added after the cover view, so its hint is drawn over the cover
+        self.quality = QualityPill(self.plugin, self)
+        self.quality.build(self.layout)
+        self.quality.update()
         self.effects = LyricsEffects(self.plugin, self)
         self.effects.align()
         self.gestures = TabPager(self)
@@ -519,6 +523,9 @@ class Player:
         if getattr(self, "swipes", None) is not None:
             self.swipes.dispose()
             self.swipes = None
+        if getattr(self, "quality", None) is not None:
+            self.quality.dispose()
+            self.quality = None
         if self.effects is not None:
             self.effects.dispose()
         self.effects = None
@@ -624,6 +631,8 @@ class Player:
     def apply_colors(self, colors):
         if self.album is None or colors is None:
             return
+        if getattr(self, "quality", None) is not None:
+            self.quality.colors(colors)
         self.album.setTextColor(colors.textSecondary)
         PorterDuffColorFilter = jclass("android.graphics.PorterDuffColorFilter")
         mode = jclass("android.graphics.PorterDuff$Mode").SRC_IN
@@ -784,6 +793,8 @@ class Player:
         measure(self.indicator, slot, _dp(2))
         if getattr(self, "swipes", None) is not None:
             self.swipes.measure(measure)
+        if getattr(self, "quality", None) is not None:
+            self.quality.measure(measure)
         for _, stack in self.stacks():
             if stack is not None:
                 measure(stack.root, pane, self.panel_top)
@@ -890,6 +901,8 @@ class Player:
         self.place_indicator()
         if getattr(self, "swipes", None) is not None:
             self.swipes.place(put, f.float(lay, "coverLeft"), f.float(lay, "coverTop"), f.float(lay, "coverSize"))
+        if getattr(self, "quality", None) is not None:
+            self.quality.place(put, f.float(lay, "coverLeft"), f.float(lay, "coverTop"), f.float(lay, "coverSize"), title_top)
         for _, stack in self.stacks():
             if stack is not None:
                 put(stack.root, pane_left, 0)
