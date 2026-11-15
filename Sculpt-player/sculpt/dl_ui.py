@@ -693,6 +693,8 @@ class DownloadSearchScreen(RemoteRows):
         self.root_tab = root
         self.field = None
         self.suggest = None
+        self.chips = []
+        self.suggest_rows = []
         self.action = None
         self.watcher = None
         self.clear_button = None
@@ -813,6 +815,9 @@ class DownloadSearchScreen(RemoteRows):
             return
         if focused is None:
             focused = self.field is not None and self.field.hasFocus()
+        for row, _ in self.suggest_rows:
+            row.setOnClickListener(None)
+        self.suggest_rows = []
         self.suggest.removeAllViews()
         typed = str(self.field.getText()).strip().casefold() if self.field is not None else ""
         queries = [q for q in self.history() if typed in q.casefold() and q.casefold() != typed][:SUGGESTIONS]
@@ -823,8 +828,14 @@ class DownloadSearchScreen(RemoteRows):
         plate.setOrientation(1)
         plate.setPadding(0, _dp(4), 0, _dp(4))
         plate.setBackground(self.owner.rounded(self.owner.color("surfaceContainer"), _dp(20)))
+        from android_utils import OnClickListener
         for query in queries:
-            self.item_row(plate, query, None, lambda q=query: self.search_again(q), icons=("msg_recent", "msg_clock", "msg_search"))
+            row, _, _ = self.item_row(plate, query, None, None, icons=("msg_recent", "msg_clock", "msg_search"))
+            row.setBackground(self.owner.selector(0))
+            # its own listener, like the chips: a live answer arriving under the open list would let go of it
+            listener = OnClickListener(lambda _, q=query: self.guarded(self.search_again, q))
+            row.setOnClickListener(listener)
+            self.suggest_rows.append((row, listener))
         self.suggest.addView(plate)
         self.suggest.setVisibility(0)
 
@@ -940,6 +951,7 @@ class DownloadSearchScreen(RemoteRows):
         owner.player.show_menu(menu)
 
     def draw_filters(self):
+        self.release_chips()
         self.filters.removeAllViews()
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         current = self.current()
@@ -974,8 +986,21 @@ class DownloadSearchScreen(RemoteRows):
         name.setText(option["label"])
         chip.addView(name)
         chip.setContentDescription(option["label"] + (tr(", выбрано") if chosen else ""))
-        self.click(chip, self.pick_filter, option["id"])
+        # not self.click: those listeners belong to the results, and every new answer let go of them, so the chips
+        # (above the results, made after them) stopped answering after the first search
+        from android_utils import OnClickListener
+        listener = OnClickListener(lambda _, f=option["id"]: self.guarded(self.pick_filter, f))
+        chip.setOnClickListener(listener)
+        self.chips.append((chip, listener))
         return chip
+
+    def release_chips(self):
+        for chip, _ in getattr(self, "chips", []):
+            try:
+                chip.setOnClickListener(None)
+            except Exception:
+                pass
+        self.chips = []
 
     def pick_provider(self, provider):
         self.provider = provider
@@ -1128,6 +1153,10 @@ class DownloadSearchScreen(RemoteRows):
                 self.field.removeTextChangedListener(self.watcher)
             except Exception:
                 pass
+        self.release_chips()
+        for row, _ in self.suggest_rows:
+            row.setOnClickListener(None)
+        self.suggest_rows = []
         if self.focus is not None:
             self.focus.action = None
             try:

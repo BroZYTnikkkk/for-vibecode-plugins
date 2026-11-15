@@ -343,7 +343,13 @@ class SculptPlayerPlugin(BasePlugin):
             self.hooks.append(handle)
 
     def report(self, name, exc):
-        # Layout hooks fire many times a second: one bulletin per failing hook is enough.
+        # Layout hooks fire many times a second: one bulletin per failing hook is enough. The log hears of every
+        # one, with where it happened, so a second failure of another kind is not lost behind the first.
+        if name in self.reported:
+            import traceback
+            where = traceback.extract_tb(exc.__traceback__)[-3:] if exc.__traceback__ else []
+            _log("%s: %s: %s at %s" % (name, type(exc).__name__, exc,
+                                       " < ".join("%s:%d" % (f.filename.rsplit("/", 1)[-1], f.lineno) for f in reversed(where))))
         if name not in self.reported:
             self.reported.add(name)
             _show_error(tr("Sculpt Player: ошибка в %s") % name, exc)
