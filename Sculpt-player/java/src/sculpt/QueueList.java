@@ -357,6 +357,19 @@ public class QueueList extends RecyclerView {
             }
         }
 
+        /**
+         * A cover of a fixed size: a picture that arrives late changes nothing around it. Without this each one asked
+         * for a layout that went up to the whole player, a dozen times a second while the queue scrolls.
+         */
+        @Override
+        public void requestLayout() {
+            ViewGroup.LayoutParams params = getLayoutParams();
+            if (params != null && params.width > 0 && params.height > 0 && getWidth() > 0) {
+                return;
+            }
+            super.requestLayout();
+        }
+
         @Override
         protected void onAttachedToWindow() {
             super.onAttachedToWindow();

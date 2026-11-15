@@ -65,7 +65,6 @@ class TabPager:
         self.where = jarray(jint)(2)
         self.start = None  # (x, y, time) of the touch, while it may still become a drag or a tap
         self.can_drag = False
-        self.tap_empty = False
         self.dragging = False
         self.offset = 0.0
         self.width = 1.0
@@ -84,9 +83,7 @@ class TabPager:
             if self.animator is not None:
                 self.animator.end()  # a new touch while a tab settles: it lands at once
             self.start = (x, y, now)
-            what = self.under(x, y)
-            self.can_drag = what != DRAG
-            self.tap_empty = what is None or what == STOP
+            self.can_drag = True  # what is under the finger is looked up once a drag or a tap needs it
             self.dragging = False
             return False
         if self.start is None:
@@ -104,6 +101,9 @@ class TabPager:
                     self.can_drag = False  # a scroll up or down: not a page any more
                     return False
                 if abs(dx) > self.slop * 1.5 and abs(dx) > 1.5 * abs(dy):
+                    if self.under(x0, y0) == DRAG:
+                        self.can_drag = False  # it started on something dragged by itself: that one moves
+                        return False
                     self.begin(event, x)
                 return self.dragging
             self.follow(dx, x, now)
@@ -114,7 +114,8 @@ class TabPager:
                 self.release()
                 return True
             self.start = None
-            if abs(dx) < self.slop and abs(dy) < self.slop and (now - t0) * 1000 < TAP_MS and self.tap_empty and self.lyrics_open():
+            if (abs(dx) < self.slop and abs(dy) < self.slop and (now - t0) * 1000 < TAP_MS and self.lyrics_open()
+                    and self.under(x0, y0) in (None, STOP)):
                 run_on_ui_thread(lambda: self.player.plugin.player is self.player and self.close_lyrics())
         return False
 

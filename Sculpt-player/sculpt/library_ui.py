@@ -8,6 +8,7 @@ from android_utils import OnClickListener, run_on_ui_thread
 from java import dynamic_proxy, jarray, jclass
 
 from .i18n import tr
+from . import profiler
 from .common import COLORS_SECONDS, COVERS_DELIVERY_MS, GROUP_COVER_TRIES, NO_TRACK_NUMBER, PANEL_ACTIVE, PERMISSION_POLLS, PERMISSION_REQUEST, PREVIEW_MAX, SORT_MODES, THUMB_AREA, THUMB_H, THUMB_MIN_ROWS, TILE_RADIUS, TILE_SIZE, _dp, tab_scrim
 from .music import first_letter, format_time, local_path, songs_label, sort_text, track_number
 
@@ -93,6 +94,8 @@ class RowsAdapter(dynamic_proxy(jclass("android.widget.ListAdapter"))):
         super().__init__()
         self.screen = screen
         self.observers = []
+        if profiler.enabled():
+            self.getView = profiler.timed("rows.getView", self.getView)
 
     def changed(self):
         for observer in list(self.observers):
@@ -820,10 +823,14 @@ class SongsScreen(ListScreen):
         holder["subtitle"].setText(track["artist"])
         holder["time"].setText(format_time(track.get("duration", 0)))
         playing = path == owner.playing_path()
-        holder["title"].setTextColor(owner.color("accent") if playing else owner.color("text"))
-        holder["title"].setTypeface(owner.bold if playing else owner.regular)
-        holder["subtitle"].setTextColor(owner.color("textSecondary"))
-        holder["time"].setTextColor(owner.color("textSecondary"))
+        # colors change rarely and a row is bound for every step of a scroll: each set is a call into Java
+        look = (playing, owner.color("accent"), owner.color("text"), owner.color("textSecondary"))
+        if holder.get("look") != look:
+            holder["look"] = look
+            holder["title"].setTextColor(look[1] if playing else look[2])
+            holder["title"].setTypeface(owner.bold if playing else owner.regular)
+            holder["subtitle"].setTextColor(look[3])
+            holder["time"].setTextColor(look[3])
         self.paint_flash(convert, holder, path)
         return convert
 

@@ -8,7 +8,7 @@ from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
 from .i18n import language, tr
 from .common import CHECKS, ID_OPEN_SETTINGS, RHYTHM_TAP, _dp, _log
-from . import link_stream
+from . import link_stream, profiler
 from .music import local_path
 
 
@@ -158,31 +158,45 @@ class DrawHook(_Hook):
 
     def after_hooked_method(self, param):
         try:
+            mark = profiler.Marks() if profiler.enabled() else None
             player = self.plugin.player_for(param.thisObject)
+            if mark:
+                mark("draw.player_for")
             if player is not None and player.visualizer is not None:
                 canvas = param.args[0]
                 visualizer = player.visualizer
-                progress = self.plugin.sheet_fields.float(player.sheet, "modeProgress")
-                if progress > 0.003 and player.effects is not None and not (player.library_visible() or player.queue_visible()):
+                covered = player.library_visible() or player.queue_visible()
+                progress = visualizer.lyrics_progress() if not covered else 0.0
+                if progress > 0.003 and player.effects is not None:
                     player.effects.draw(canvas, min(1.0, progress))
+                if mark:
+                    mark("draw.lyrics_backdrop")
                 # over a Spotify Canvas video the cover is only a thumbnail: bars and peeks at its old place would
                 # hang over the video
-                video = progress < 0.5 and player.canvas_amount() > 0.01
+                video = not covered and visualizer.video()
+                if mark:
+                    mark("draw.canvas_check")
                 shift = player.player_shift
                 if shift:
                     canvas.save()
                     canvas.translate(shift, 0.0)
-                if not video:
-                    visualizer.draw(canvas)
-                if player.peeks is not None and not video and not (player.library_visible() or player.queue_visible()):
+                if not video or visualizer.bars is not None:
+                    visualizer.draw(canvas)  # the Java frame sees the video itself, and must keep looking
+                if mark:
+                    mark("draw.visualizer")
+                if player.peeks is not None and not video and not covered:
                     player.peeks.draw(canvas, visualizer.colors)
                 if shift:
                     canvas.restore()
+                if mark:
+                    mark("draw.peeks")
                 # the file's tags arrive after bindMessage, with nothing to tell when
                 now = time.monotonic()
                 if now - player.album_checked > 1.0:
                     player.album_checked = now
                     player.update_album()
+                if mark:
+                    mark("draw.album")
         except Exception as e:
             self.fail(e)
 

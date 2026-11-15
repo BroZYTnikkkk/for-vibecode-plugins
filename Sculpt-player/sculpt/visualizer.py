@@ -7,8 +7,9 @@ import math
 import time
 
 from java import jarray, jclass, jfloat, jint
+from java.lang import Boolean as JBoolean, Double as JDouble, Float as JFloat, Integer as JInteger
 
-from .common import LYRICS_SHIFT, MARGIN, BANDS, BAR_RADIUS, Fields, RHYTHM_ANALYZER, RHYTHM_TAP, VIS_BARS, VIS_BUILD_SECONDS, VIS_CORNER, VIS_COVER_CHECK, VIS_DARKER, VIS_FAR_BINS, VIS_GRAY, VIS_HEIGHT_DP, VIS_HUE_BINS, VIS_LAYERS, VIS_MIN_CHROMA, VIS_MIN_HUE, VIS_MIN_SHARE, VIS_PALE_LIGHT, VIS_SAMPLE, VIS_WIDTHS, _dp, _log
+from .common import sculpt_method, LYRICS_SHIFT, MARGIN, BANDS, BAR_RADIUS, Fields, RHYTHM_ANALYZER, RHYTHM_TAP, VIS_BARS, VIS_BUILD_SECONDS, VIS_CORNER, VIS_COVER_CHECK, VIS_DARKER, VIS_FAR_BINS, VIS_GRAY, VIS_HEIGHT_DP, VIS_HUE_BINS, VIS_LAYERS, VIS_MIN_CHROMA, VIS_MIN_HUE, VIS_MIN_SHARE, VIS_PALE_LIGHT, VIS_SAMPLE, VIS_WIDTHS, _dp, _log
 
 
 def _hls(color):
@@ -170,6 +171,9 @@ class Spectrum:
         return self.current
 
 
+MEASURE_SECONDS = 1.0 / 60.0
+
+
 class Visualizer:
     """Bars above and below the cover, drawn on PlayerLayout's canvas with one gradient across the cover."""
 
@@ -193,12 +197,20 @@ class Visualizer:
         self.butt = caps.BUTT
         self.round = caps.ROUND
         self.batches = []
+        self.profiled = None  # whether the parts below are timed (profiler), known at the first frame
         self.built_at = 0.0
         self.built_key = None
+        self.geometry = None  # (left, size, top, playing, scale) as last measured; () when nothing is drawn
+        self.measured_at = 0.0
         self.moving = False
         self.last_time = 0.0
         self.colors = None
         self.shader_key = None
+        # the bars' heights, layout and paint in this plugin's Java code; None: the Python way below
+        methods = [sculpt_method("sculpt.Bars", name) for name in ("advance", "build", "paint", "frame", "clear", "mode")]
+        self.bars = methods if all(m is not None for m in methods) else None
+        self.flags = 0  # what the last frame said (Bars.LYRICS, VIDEO, BUILD)
+        self.layer_params = jarray(jfloat)([float(v) for layer in VIS_LAYERS for v in layer])
 
     def set_colors(self, colors):
         self.colors = colors
@@ -295,16 +307,72 @@ class Visualizer:
         return moving
 
     def draw(self, canvas):
+        if self.profiled is None:
+            from . import profiler
+            self.profiled = profiler.enabled()
+            if self.profiled:
+                self._build = profiler.timed("vis.build", self._build)
+                self._config = profiler.timed("vis.config", self._config)
+                self.paint_batches = profiler.timed("vis.paint", self.paint_batches)
         if self.player.library_visible() or self.player.queue_visible():
             return  # hidden under the media library or the queue: nothing to draw, and no reason to keep redrawing
+        if self.bars is not None:
+            # one call a frame: Java reads the player's state, paints the bars and says when to lay them out again
+            player = self.player
+            flags = int(self.bars[3].invoke(None, canvas, self.paint, player.sheet, player.layout, player.coverView))
+            self.flags = flags & 7
+            if flags & 8:
+                _log("visualizer: the Java frame failed, Python draws")
+                self.bars = None
+            elif flags & 4 and not flags & 2:
+                self.geometry = self.measure(time.monotonic())
+                if not self.geometry:
+                    self.bars[4].invoke(None)
+            return
         started = time.monotonic()
+        if self.geometry is None or started - self.measured_at >= MEASURE_SECONDS:
+            # the cover's place and the player's state are read 60 times a second at most: each read is a call into
+            # Java, and a 120 Hz screen draws twice as often as any of them needs
+            self.measured_at = started
+            self.geometry = self.measure(started)
+        if not self.geometry:
+            return
+        left, size, top, playing, scale = self.geometry
+        player = self.player
+        lay = player.layout
+
+        # A finger swiping the cover moves it sideways, shrinks it and fades it (PlayerCoverView.drawSide): the
+        # bars go with it, so they never hang in place over the next cover.
+        cover = player.coverView
+        offset = float(cover.getPageOffset())
+        fade = 1.0
+        if offset != 0.0:
+            page = float(cover.getPageWidth())
+            pager = self.plugin.cover_fields.float(cover, "pager")
+            amount = (1.0 - pager) * min(1.0, abs(offset) / page) if page > 0 else 0.0
+            shrink = 1.0 + (0.86 - 1.0) * amount
+            fade = 1.0 + (0.55 - 1.0) * amount
+            canvas.save()
+            canvas.translate(offset, 0.0)
+            canvas.scale(shrink, shrink, left + size / 2.0, top + size / 2.0)
+
+        self.paint_batches(canvas, fade)
+        if offset != 0.0:
+            canvas.restore()
+        # the cover redraws only itself while it slides: the layer under it is asked for each frame here
+        if playing or self.moving or offset != 0.0 or 0.941 < scale < 0.999:
+            lay.postInvalidateOnAnimation()
+
+    def measure(self, started):
+        """Reads where the bars go and lays them out again when it is time; () when there is nothing to draw."""
         show_top, show_bottom, density, color_mode, height_index, style, cover_radius = self._config(started)
         self.top_extent = 0.0
         if not show_top and not show_bottom:
-            return
+            return ()
         player = self.player
         sheet_fields, f = self.plugin.sheet_fields, self.plugin.layout_fields
         lay = player.layout
+        self.raw = None
         mode = max(0.0, min(1.0, sheet_fields.float(player.sheet, "modeProgress")))
         playing = not self.media.getInstance().isMessagePaused()
         # with the lyrics open the bars leave the cover and become a low strip standing on the title
@@ -313,13 +381,16 @@ class Visualizer:
         full_left = f.float(lay, "coverLeft")
         full_size = f.float(lay, "coverSize")
         if full_size <= 0:
-            return
+            return ()
         # the cover shrinks around its center on pause (PlayerCoverView.pauseScale): the bars stay on its edges
         scale = self.plugin.cover_fields.float(player.coverView, "pauseScale")
         inset = full_size * (1.0 - scale) / 2.0
         left = full_left + inset
         size = full_size * scale
-        top = f.float(lay, "coverTop") + inset
+        cover_top = f.float(lay, "coverTop")
+        top = cover_top + inset
+        # what Java compares each frame to know the cover moved: the values as read, before the strip's own place
+        self.raw = (full_left, full_size, cover_top, mode, scale)
         if strip:
             show_top, show_bottom = True, False
             inset = 0.0
@@ -338,22 +409,24 @@ class Visualizer:
                         height_index, show_top, show_bottom, cover_radius, strip)
             self.built_at = started
             self.built_key = (left, size, top, mode, color_mode, style, density, height_index, show_top, show_bottom, self.shader_key)
+        return left, size, top, playing, scale
 
-        # A finger swiping the cover moves it sideways, shrinks it and fades it (PlayerCoverView.drawSide): the
-        # bars go with it, so they never hang in place over the next cover.
-        cover = player.coverView
-        offset = float(cover.getPageOffset())
-        fade = 1.0
-        if offset != 0.0:
-            page = float(cover.getPageWidth())
-            pager = self.plugin.cover_fields.float(cover, "pager")
-            amount = (1.0 - pager) * min(1.0, abs(offset) / page) if page > 0 else 0.0
-            shrink = 1.0 + (0.86 - 1.0) * amount
-            fade = 1.0 + (0.55 - 1.0) * amount
-            canvas.save()
-            canvas.translate(offset, 0.0)
-            canvas.scale(shrink, shrink, left + size / 2.0, top + size / 2.0)
+    def lyrics_progress(self):
+        """How far the lyrics are open, as the last frame saw it; 0 while they are closed."""
+        if self.bars is not None:
+            return float(self.bars[5].invoke(None)) if self.flags & 1 else 0.0
+        return max(0.0, min(1.0, self.plugin.sheet_fields.float(self.player.sheet, "modeProgress")))
 
+    def video(self):
+        """Whether a Spotify Canvas video stands where the cover was."""
+        if self.bars is not None:
+            return bool(self.flags & 2)
+        return self.lyrics_progress() < 0.5 and self.player.canvas_amount() > 0.01
+
+    def paint_batches(self, canvas, fade):
+        if self.bars is not None:
+            self.bars[2].invoke(None, canvas, self.paint, JFloat(fade))
+            return
         paint = self.paint
         for color, width, tip_width, corner_width, body, tips, corners, alpha in self.batches:
             alpha = int(alpha * fade)
@@ -372,18 +445,18 @@ class Visualizer:
                 paint.setStrokeCap(self.round)
                 paint.setStrokeWidth(corner_width)
                 canvas.drawPoints(corners, paint)
-        if offset != 0.0:
-            canvas.restore()
-        # the cover redraws only itself while it slides: the layer under it is asked for each frame here
-        if playing or self.moving or offset != 0.0 or 0.941 < scale < 0.999:
-            lay.postInvalidateOnAnimation()
 
     def _build(self, lay, f, left, size, top, inset, full_left, full_size, mode, playing, color_mode, style, density,
                height_index, show_top, show_bottom, cover_radius, strip=False):
         count = VIS_BARS[density]
         layered = color_mode == 0
         self._check_cover(self.built_at)
-        self.moving = self._advance(count, self.spectrum.poll(playing), layered)
+        bands = self.spectrum.poll(playing)
+        if self.bars is not None:
+            self.moving = bool(self.bars[0].invoke(None, jarray(jfloat)(bands), self.layer_params, JInteger(count),
+                                                   JBoolean(layered), JDouble(time.monotonic())))
+        else:
+            self.moving = self._advance(count, bands, layered)
         wanted = _dp(48) if strip else _dp(VIS_HEIGHT_DP[height_index])
         full_top = top - inset
         ceiling = f.int(lay, "headerBottom") + _dp(4)
@@ -408,6 +481,17 @@ class Visualizer:
         radius = min(_dp(BAR_RADIUS), width * VIS_CORNER)
         offset = width / 2.0 - radius
         alpha = int(255 * 0.85 * max(0.0, 2.0 * mode - 1.0)) if strip else int(255 * max(0.0, 1.0 - 2.0 * mode))
+        self.top_extent = float(rows[0][2]) if show_top and rows else 0.0
+        if self.bars is not None:
+            geometry = [left, step, inside, width, radius, offset]
+            for base, sign, height in rows:
+                geometry += [base, sign, height]
+            raw = self.raw or (0.0, 0.0, 0.0, mode, 1.0)
+            geometry += [left + size / 2.0, rows[0][0] if strip else (top + size / 2.0)] + list(raw)
+            flags = [1 if layered else 0, style, 1 if strip else 0, alpha, len(rows), count]
+            colors = jarray(jint)(list(self.parts)) if layered and self.parts is not None else None
+            self.bars[1].invoke(None, jarray(jfloat)([float(v) for v in geometry]), jarray(jint)(flags), colors)
+            return
         batches = []
         for layer in (2, 1, 0) if layered else (0,):
             values = self.layers[layer]

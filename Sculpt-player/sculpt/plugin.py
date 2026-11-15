@@ -1,5 +1,7 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
+import time
+
 from android_utils import run_on_ui_thread
 from base_plugin import BasePlugin, MenuItemData, MenuItemType
 from java import dynamic_proxy, jarray, jclass
@@ -17,6 +19,7 @@ from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
 from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
+from . import profiler
 from .hooks import CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
@@ -36,6 +39,8 @@ class SculptPlayerPlugin(BasePlugin):
         # "stop after this song": the song's identity, and the one that played last
         self.stop_after = None
         self.last_song = None
+        self.landscape = False
+        self.landscape_at = 0.0
         self.cover_from_cache = False  # inside PlayerCovers.setCover for a song whose square cover is kept
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
         self.listen = None
@@ -98,7 +103,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(covers_cls, "setCover", (_java_class("org.telegram.messenger.ImageReceiver"), message, i, b),
                          CoverSourceHook(self, "coverSource"))
             self.install(covers_cls, "getPlayingAudioInfo", (message,), AudioInfoHook(self, "audioInfo"))
-            self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", PlayHook(self, "playMessage")))
+            self.remember(self.hook_all_methods(self.media_fields.cls, "playMessage", profiler.wrap_hook("playMessage", PlayHook(self, "playMessage"))))
             try:
                 self.install(self.media_fields.cls, "playNextMessageWithoutOrder", (b,), NextSongHook(self, "nextSong"))
             except Exception as e:
@@ -215,6 +220,7 @@ class SculptPlayerPlugin(BasePlugin):
         _log("predictive back: no callback class found")
 
     def install(self, cls, name, types, handler):
+        handler = profiler.wrap_hook(name, handler)
         method = cls.getDeclaredMethod(name, *types)
         method.setAccessible(True)
         handle = self.hook_method(method, handler)
@@ -391,9 +397,12 @@ class SculptPlayerPlugin(BasePlugin):
         player = self.player
         if player is None or layout.hashCode() != player.layout_id:
             return None
-        if self.layout_fields.bool(layout, "landscape"):
-            return None
-        return player
+        # asked on every frame: the turn of the phone is read again twice a second, not each time
+        now = time.monotonic()
+        if now - self.landscape_at > 0.5:
+            self.landscape_at = now
+            self.landscape = bool(self.layout_fields.bool(layout, "landscape"))
+        return None if self.landscape else player
 
     def show_volume(self):
         audio = _ctx().getSystemService("audio")
