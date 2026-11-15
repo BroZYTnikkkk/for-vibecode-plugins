@@ -11,9 +11,11 @@ from java import dynamic_proxy, jclass
 
 from .i18n import plural, tr
 from .common import SEARCH_HISTORY, _dp, _log, advanced
+from android_utils import run_on_ui_thread
 from .extensions import QUALITIES, STAGES, describe
 from .ext_ui import ExtScreen
 from .library_ui import TextChanged
+from . import popularity
 
 URL = re.compile(r"^https?://", re.I)
 SPLIT = re.compile(r",|&|;| feat\.| ft\.", re.I)
@@ -85,6 +87,10 @@ QUALITY_NAMES = {"LOSSLESS": ("FLAC Lossless", tr("16 бит, до 44,1 кГц")
                  "HI_RES_LOSSLESS": (tr("FLAC Max высокого разрешения"), tr("24 бит, до 192 кГц"))}
 HEALTH_COLORS = {"online": 0xFF24D47A, "offline": 0xFFFF5A66}  # anything else: amber
 HEALTH_AMBER = 0xFFFFC247
+LIVE_SEARCH_MS = 700  # a pause in typing this long searches what is typed
+POPULAR_ARTISTS = 6  # rows of one answer whose popularity is asked of Last.fm or Deezer
+POPULAR_TRACKS = 20
+SUGGESTIONS = 6
 SECTIONS = (("artist", tr("Исполнители")), ("album", tr("Альбомы")), ("playlist", tr("Плейлисты")), ("track", tr("Песни")))
 FILTER_ICONS = {"track": "msg_played", "song": "msg_played", "music": "msg_played", "album": "msg_media",
                 "artist": "msg_contacts", "playlist": "msg_list", "video": "msg_video"}
@@ -95,8 +101,86 @@ def signed(color):
     return color - (1 << 32) if color >= (1 << 31) else color
 
 
+class FocusChanged(dynamic_proxy(jclass("android.view.View$OnFocusChangeListener"))):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def onFocusChange(self, view, focused):
+        if self.action is not None:
+            self.action(bool(focused))
+
+
 class RemoteRows(ExtScreen):
     """Shared by the search and the album, playlist and author screens: rows of what a service returned."""
+
+    popular_waiting = None
+
+    def popular(self, kind, item, apply):
+        """apply(found) on the UI thread once the popularity is known: the extension's own at once, else looked up
+        later (fetch_popular) for the first rows of each kind."""
+        found = popularity.from_item(item)
+        if found:
+            apply(found)
+            return
+        if self.popular_waiting is None:
+            self.popular_waiting = []
+        self.popular_waiting.append((kind, str(item.get("name") or ""), str(item.get("artists") or ""), apply))
+
+    def fetch_popular(self):
+        waiting, self.popular_waiting = self.popular_waiting or [], []
+        plugin = self.owner.plugin
+        if not waiting or not (plugin.get_setting("popularity_deezer", True) or plugin.get_setting("lastfm_key", "")):
+            return
+        artists = [w for w in waiting if w[0] == "artist"][:POPULAR_ARTISTS]
+        tracks = [w for w in waiting if w[0] == "track"][:POPULAR_TRACKS]
+
+        def task(manager):
+            out = []
+            for kind, name, artist, apply in artists + tracks:
+                if not self.alive:
+                    break
+                found = popularity.lookup(plugin, kind, name, artist)
+                if found:
+                    out.append((apply, found))
+            return out
+
+        def done(results):
+            for apply, found in results:
+                self.guarded(apply, found)
+
+        self.run(task, done, lambda text: None)
+
+    def popular_view(self, found):
+        """A label with listeners, fans or plays; or five bars for a share of the top."""
+        text = popularity.describe(found)
+        if text:
+            label = self.label(12, "textSecondary")
+            label.setText(text)
+            label.setSingleLine(True)
+            return label
+        count = popularity.bars(found.get("share") or 0.0)
+        if not count:
+            return None
+        owner = self.owner
+        Bitmap = jclass("android.graphics.Bitmap")
+        width, height = _dp(22), _dp(12)
+        bitmap = Bitmap.createBitmap(width, height, jclass("android.graphics.Bitmap$Config").ARGB_8888)
+        canvas = jclass("android.graphics.Canvas")(bitmap)
+        paint = jclass("android.graphics.Paint")(1)
+        ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+        step = width / 5.0
+        for index in range(5):
+            color = owner.color("accent") if index < count else ColorUtils.setAlphaComponent(owner.color("textSecondary"), 70)
+            color = int(color) & 0xFFFFFFFF
+            paint.setARGB(color >> 24, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF)
+            top = height * (0.6 - 0.15 * index)
+            rect = jclass("android.graphics.RectF")(float(index * step + _dp(1)), float(max(0.0, top)), float((index + 1) * step - _dp(1)), float(height))
+            canvas.drawRoundRect(rect, float(_dp(1)), float(_dp(1)), paint)
+        view = jclass("android.widget.ImageView")(owner.context)
+        view.setImageBitmap(bitmap)
+        view.setContentDescription(tr("Популярность: %d из 5") % count)
+        return view
 
     def remote_image(self, item, round_image=False, size=48):
         owner = self.owner
@@ -113,15 +197,34 @@ class RemoteRows(ExtScreen):
             image.setImage(str(url), "96_96", None)
         return image
 
-    def card(self, container, title=None):
-        """A section: its name, then its rows on a rounded plate."""
+    def card(self, container, title=None, action=None):
+        """A section: its name (with an arrow when it opens more of its kind), then its rows on a rounded plate."""
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         if title:
             head = self.label(20, "text", True)
             head.setText(title)
             place = Params(-1, -2)
             place.setMargins(_dp(20), _dp(20), _dp(20), _dp(8))
-            container.addView(head, place)
+            if action is not None:
+                owner = self.owner
+                line = jclass("android.widget.LinearLayout")(owner.context)
+                line.setOrientation(0)
+                line.setGravity(16)
+                line.addView(head, Params(-2, -2))
+                arrow = jclass("android.widget.ImageView")(owner.context)
+                owner.set_icon(arrow, ("msg_arrowright", "arrow_more"))
+                self.tint_icon(arrow, "textSecondary")
+                at = owner.params(18, 18)
+                at.setMarginStart(_dp(4))
+                line.addView(arrow, at)
+                line.setBackground(owner.selector(_dp(12)))
+                line.setContentDescription(tr("%s, показать все") % title)
+                self.click(line, action)
+                place.setMargins(_dp(14), _dp(14), _dp(14), _dp(2))
+                line.setPadding(_dp(6), _dp(6), _dp(6), _dp(6))
+                container.addView(line, place)
+            else:
+                container.addView(head, place)
         plate = jclass("android.widget.LinearLayout")(self.owner.context)
         plate.setOrientation(1)
         plate.setPadding(0, _dp(4), 0, _dp(4))
@@ -140,9 +243,15 @@ class RemoteRows(ExtScreen):
                 self.track_row(container, item)
                 continue
             details = KINDS.get(kind, kind) + (" · %s" % item["artists"] if item.get("artists") and kind != "artist" else "")
-            self.item_row(container, item.get("name") or "", details,
-                          lambda i=item, k=kind: self.owner.open_remote(k, i.get("provider_id"), i.get("id"), i),
-                          image=self.remote_image(item, kind == "artist"))
+            _, _, second = self.item_row(container, item.get("name") or "", details,
+                                         lambda i=item, k=kind: self.owner.open_remote(k, i.get("provider_id"), i.get("id"), i),
+                                         image=self.remote_image(item, kind == "artist"))
+            if kind == "artist" and second is not None:
+                def apply(found, view=second, base=details):
+                    words = popularity.describe(found)
+                    if words:
+                        view.setText("%s · %s" % (base, words))
+                self.popular("artist", item, apply)
 
     def badge(self, text, role, outline=False):
         owner = self.owner
@@ -206,6 +315,14 @@ class RemoteRows(ExtScreen):
             at.setMarginStart(_dp(6))
             line.addView(folder, at)
         column.addView(line)
+        if number is None:
+            def apply(found, line=line):
+                view = self.popular_view(found)
+                if view is not None:
+                    at = Params(-2, -2)
+                    at.setMarginStart(_dp(8))
+                    line.addView(view, at)
+            self.popular("track", item, apply)
         place = Params(0, -2, 1.0)
         place.setMarginStart(_dp(14))
         row.addView(column, place)
@@ -574,6 +691,7 @@ class DownloadSearchScreen(RemoteRows):
     def __init__(self, owner, root=False):
         self.root_tab = root
         self.field = None
+        self.suggest = None
         self.action = None
         self.watcher = None
         self.clear_button = None
@@ -584,9 +702,18 @@ class DownloadSearchScreen(RemoteRows):
         self.filter = None
         self.query = ""
         self.results = None
+        self.sequence = 0  # every search counts up; an answer to an older one is dropped
+        self.typed = 0  # every change of the field counts up; a live search waits for the typing to pause
+        self.focus = None
         self.page()
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         self.content.addView(self.search_field(), self.field_place())
+        self.suggest = jclass("android.widget.LinearLayout")(owner.context)
+        self.suggest.setOrientation(1)
+        self.suggest.setVisibility(8)
+        place = Params(-1, -2)
+        place.setMargins(_dp(12), 0, _dp(12), _dp(4))
+        self.content.addView(self.suggest, place)
         scroller, self.filters = self.sideways()
         scroller.setPadding(_dp(16), _dp(4), _dp(16), _dp(4))
         self.content.addView(scroller, Params(-1, -2))
@@ -651,13 +778,50 @@ class DownloadSearchScreen(RemoteRows):
         self.paint_field()
         self.action = EditorAction(lambda: self.guarded(self.search))
         self.field.setOnEditorActionListener(self.action)
-        self.watcher = TextChanged(lambda text: self.clear_button.setVisibility(0 if text else 8))
+        self.watcher = TextChanged(lambda text: self.guarded(self.typed_text, text))
         self.field.addTextChangedListener(self.watcher)
+        self.focus = FocusChanged(lambda focused: self.guarded(self.focused, focused))
+        self.field.setOnFocusChangeListener(self.focus)
         pill.addView(self.field, jclass("android.widget.LinearLayout$LayoutParams")(0, -1, 1.0))
         self.clear_button = self.icon_button(("msg_close", "ic_close_white"), tr("Очистить"), self.clear)
         self.clear_button.setVisibility(8)
         pill.addView(self.clear_button, owner.params(40, 40))
         return pill
+
+    def typed_text(self, text):
+        self.clear_button.setVisibility(0 if text else 8)
+        self.draw_suggestions()
+        query = text.strip()
+        self.typed += 1
+        mark = self.typed
+        if len(query) < 2 or URL.match(query) or query == self.query or not self.providers:
+            return
+        # search as one types: when the typing pauses, without closing the keyboard or keeping it in the history
+        run_on_ui_thread(lambda: self.alive and mark == self.typed and self.guarded(self.search, True), LIVE_SEARCH_MS)
+
+    def focused(self, focused):
+        self.draw_suggestions(focused)
+
+    def draw_suggestions(self, focused=None):
+        """Under the field while it is pressed: the recent searches that fit what is typed."""
+        if self.suggest is None:
+            return
+        if focused is None:
+            focused = self.field is not None and self.field.hasFocus()
+        self.suggest.removeAllViews()
+        typed = str(self.field.getText()).strip().casefold() if self.field is not None else ""
+        queries = [q for q in self.history() if typed in q.casefold() and q.casefold() != typed][:SUGGESTIONS]
+        if not focused or not queries or not self.root_tab:
+            self.suggest.setVisibility(8)
+            return
+        plate = jclass("android.widget.LinearLayout")(self.owner.context)
+        plate.setOrientation(1)
+        plate.setPadding(0, _dp(4), 0, _dp(4))
+        plate.setBackground(self.owner.rounded(self.owner.color("surfaceContainer"), _dp(20)))
+        for query in queries:
+            self.item_row(plate, query, None, lambda q=query: self.search_again(q), icons=("msg_recent", "msg_clock", "msg_search"))
+        self.suggest.addView(plate)
+        self.suggest.setVisibility(0)
 
     def paint_pill(self):
         self.pill_view.setBackground(self.owner.rounded(self.owner.color("surfaceContainer"), _dp(26)))
@@ -737,6 +901,7 @@ class DownloadSearchScreen(RemoteRows):
         self.field.setText(query)
         self.field.setSelection(len(query))
         self.search()
+        self.suggest.setVisibility(8)
 
     def draw_start(self):
         """Before a search: what was looked for lately, and the mixes that are a plan for now."""
@@ -819,16 +984,21 @@ class DownloadSearchScreen(RemoteRows):
         if self.query:
             self.search()
 
-    def search(self):
+    def search(self, live=False):
         query = str(self.field.getText()).strip()
         if len(query) < 2:
             return
         self.query = query
-        self.close_keyboard()
-        if self.root_tab and not URL.match(query):
-            self.remember(query)
-        self.results = "loading"
-        self.draw()
+        if not live:
+            self.close_keyboard()
+            self.suggest.setVisibility(8)
+            if self.root_tab and not URL.match(query):
+                self.remember(query)
+        self.sequence += 1
+        sequence = self.sequence
+        if self.results is None or not live:
+            self.results = "loading"
+            self.draw()
         provider, filter_id, music = self.provider, self.filter, self.owner.data
 
         def task(manager):
@@ -853,10 +1023,11 @@ class DownloadSearchScreen(RemoteRows):
             return {"items": mark_local(music, items), "provider": used}
 
         def failed(text):
-            self.results = {"error": text}
-            self.draw()
+            if sequence == self.sequence:
+                self.results = {"error": text}
+                self.draw()
 
-        self.run(task, self.found, failed)
+        self.run(task, lambda result: sequence == self.sequence and self.found(result), failed)
 
     def found(self, result):
         self.results = result
@@ -894,7 +1065,18 @@ class DownloadSearchScreen(RemoteRows):
         for kind, title in SECTIONS:
             group = [i for i in items if kind_of(i) == kind]
             if group:
-                self.item_rows(self.card(self.body, title), group)
+                self.item_rows(self.card(self.body, title, self.section_filter(kind)), group)
+        self.fetch_popular()
+
+    def section_filter(self, kind):
+        """A section's name opens the service's filter of that kind, with more of them; None if it has none."""
+        current = self.current()
+        if current is None or self.filter is not None:
+            return None
+        for option in current["filters"]:
+            if filter_kind(option["id"]) == kind:
+                return lambda f=option["id"]: self.pick_filter(f)
+        return None
 
     def draw_url(self, value, ext):
         items = ([value["track"]] if isinstance(value.get("track"), dict) else []) + list(value.get("tracks") or [])
@@ -938,6 +1120,12 @@ class DownloadSearchScreen(RemoteRows):
             self.watcher.action = None
             try:
                 self.field.removeTextChangedListener(self.watcher)
+            except Exception:
+                pass
+        if self.focus is not None:
+            self.focus.action = None
+            try:
+                self.field.setOnFocusChangeListener(None)
             except Exception:
                 pass
         super().dispose()
@@ -1145,7 +1333,8 @@ class DownloadSettingsScreen(ExtScreen):
         switch = self.switch(data["fallback"], lambda on: self.save("auto_fallback", on), tr("Запасные сервисы"))
         self.item_row(self.body, tr("Запасные сервисы"), tr("Если основной сервис не нашёл песню, пробовать следующие по порядку."), trailing=switch)
         if not full:
-            self.note(self.body, tr("Сервис поиска, порядок сервисов и приоритет метаданных — в расширенном режиме: Настройки → Звук."),
+            self.popularity_settings()
+            self.note(self.body, tr("Сервис поиска, порядок сервисов и приоритет метаданных — в расширенном режиме: Настройки → Mornye."),
                       size=13, top=16)
             return
         searchers = [("", tr("Автоматически"))] + [(ext, name(ext)) for ext in data["searchers"]]
@@ -1158,6 +1347,49 @@ class DownloadSettingsScreen(ExtScreen):
         if data["lyrics"]:
             self.order(tr("Приоритет текстов"), "lyrics", data["lyrics"], name,
                        tr("У кого текст песни спрашивать первым. Если никто не нашёл, текст берётся из LRCLIB."))
+        self.popularity_settings()
+
+    def popularity_settings(self):
+        """Where the popularity of found authors and songs comes from, when the extension gives none."""
+        plugin = self.owner.plugin
+        self.section(self.body, tr("Популярность в поиске"))
+        deezer = self.switch(plugin.get_setting("popularity_deezer", True),
+                             lambda on: plugin.set_setting("popularity_deezer", bool(on)), tr("Из Deezer"))
+        self.item_row(self.body, tr("Из Deezer"), tr("Фанаты исполнителей и место песен в топе, когда расширение их не даёт. "
+                                                     "В Deezer уходят только название и исполнитель."), trailing=deezer)
+        key = str(plugin.get_setting("lastfm_key", "") or "")
+        self.item_row(self.body, tr("Ключ API Last.fm"),
+                      tr("Задан: слушатели и прослушивания берутся из Last.fm.") if key
+                      else tr("Свой ключ с last.fm/api даёт настоящие числа слушателей и прослушиваний."),
+                      self.ask_lastfm, icons=("msg_link", "msg_info"))
+
+    def ask_lastfm(self):
+        from .ext_ui import ButtonClick
+        owner = self.owner
+        context = owner.context
+        Theme = jclass("org.telegram.ui.ActionBar.Theme")
+        field = jclass("android.widget.EditText")(context)
+        field.setSingleLine(True)
+        field.setText(str(owner.plugin.get_setting("lastfm_key", "") or ""))
+        field.setHint(tr("Ключ API"))
+        field.setTextSize(1, 16.0)
+        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextHint))
+        frame = jclass("android.widget.FrameLayout")(context)
+        place = jclass("android.widget.FrameLayout$LayoutParams")(-1, -2)
+        place.setMargins(_dp(24), _dp(8), _dp(24), 0)
+        frame.addView(field, place)
+
+        def save():
+            owner.plugin.set_setting("lastfm_key", str(field.getText()).strip())
+            self.refresh()
+
+        builder = jclass("org.telegram.ui.ActionBar.AlertDialog$Builder")(context)
+        builder.setTitle(tr("Ключ API Last.fm"))
+        builder.setView(frame)
+        builder.setPositiveButton(tr("Сохранить"), ButtonClick(save))
+        builder.setNegativeButton(tr("Отмена"), ButtonClick(None))
+        builder.show()
 
     def choice(self, label, current, options, value, chosen):
         row, _, _ = self.item_row(self.body, label, current, None)
