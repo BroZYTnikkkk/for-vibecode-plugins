@@ -703,6 +703,8 @@ UK = {
     'Обложка над Spotify Canvas': 'Обкладинка над Spotify Canvas',
     'Скрыта': 'Прихована',
     'Яркость': 'Яскравість',
+    'раз': 'раз',
+    'раза': 'рази',
 }
 
 EN = {
@@ -1406,4 +1408,6 @@ EN = {
     'Обложка над Spotify Canvas': 'Cover over Spotify Canvas',
     'Скрыта': 'Hidden',
     'Яркость': 'Brightness',
+    'раз': 'plays',
+    'раза': 'plays',
 }

@@ -3,8 +3,11 @@
 """Listening statistics: how long music played, day by day and song by song, and every stretch of listening with
 its exact time. Kept in the plugin's own data folder (stats.json), which clearing Telegram's cache does not touch.
 
-The screen: a week, a month or a year as a chart of bars, the time in total, the songs and authors heard most; a
-day's bar opens that day's stretches of listening, a month's bar in the year opens that month."""
+The screen: a week, a month or a year as a line of points, the time in total, the songs and authors heard most,
+each song with how many times it was heard to the end; a day's point opens that day's stretches of listening, a
+month's point in the year opens that month.
+
+A play counts when one run of the song reaches PLAYED of its length: a song skipped halfway is time, not a play."""
 
 import calendar
 import datetime
@@ -14,7 +17,7 @@ from client_utils import run_on_queue
 from java import jclass
 
 from .common import _dp, _log
-from .i18n import tr
+from .i18n import language, plural, tr
 from .library_ui import Screen
 from .music import local_path, split_artists
 
@@ -24,10 +27,23 @@ SAVE_EVERY = 60.0
 TOP_SONGS = 10
 TOP_ARTISTS = 5
 WEEK, MONTH, YEAR = 0, 1, 2
+PLAYED = 0.9  # the share of a song one run must reach to count as heard once
 
 
 def day_key(stamp):
     return time.strftime("%Y-%m-%d", time.localtime(stamp))
+
+
+def _paint_color(paint, color):
+    """Paint.setColor(int) loses to its long overload from Python (a color long is not a color): the channels."""
+    color = int(color) & 0xFFFFFFFF
+    paint.setARGB(color >> 24, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF)
+
+
+def times_text(count):
+    if language() == "en":
+        return "%d play%s" % (count, "" if count == 1 else "s")  # Russian has one word for one and for many
+    return "%d %s" % (count, plural(count, tr("раз"), tr("раза"), tr("раз")))
 
 
 def duration_text(seconds):
@@ -49,8 +65,32 @@ class StatsStore:
         self.songs = data.get("songs") if isinstance(data.get("songs"), dict) else {}
         self.days = data.get("days") if isinstance(data.get("days"), dict) else {}
         self.sessions = data.get("sessions") if isinstance(data.get("sessions"), list) else []
+        self.plays = data.get("plays") if isinstance(data.get("plays"), dict) else {}
+        # stretches kept before plays were counted are counted once, when the library knows the songs' lengths
+        self.recount = not data.get("plays_recounted")
         self.saved_at = time.monotonic()
         self.dirty = False
+        # the song playing now: its key, how long this run of it has played, whether it has counted already
+        self.run_key = None
+        self.run_seconds = 0.0
+        self.run_counted = False
+
+    def _plays_from_sessions(self):
+        plays = {}
+        for start, seconds, key in self.sessions:
+            track = self.plugin.music.by_path.get(key) if not str(key).startswith("tg:") else None
+            length = float((track or {}).get("duration") or 0)
+            if length <= 0:
+                continue
+            count = int(seconds / length + (1.0 - PLAYED))
+            if count > 0:
+                day = plays.setdefault(day_key(start), {})
+                day[key] = day.get(key, 0) + count
+        return plays
+
+    def new_run(self):
+        """A song started (MediaController.playMessage): the next seconds belong to a new run of it."""
+        self.run_key = None
 
     # -- recording, from music.ListenTimer every few seconds of playing
 
@@ -71,6 +111,20 @@ class StatsStore:
         now = time.time()
         day = self.days.setdefault(day_key(now), {})
         day[key] = round(day.get(key, 0.0) + seconds, 1)
+        if key != self.run_key:
+            self.run_key, self.run_seconds, self.run_counted = key, 0.0, False
+        self.run_seconds += seconds
+        if not self.run_counted:
+            length = float((self.plugin.music.by_path.get(path) or {}).get("duration") or 0) if path else 0.0
+            if length <= 0:
+                try:
+                    length = float(message.getDuration())
+                except Exception:
+                    length = 0.0
+            if length > 0 and self.run_seconds >= PLAYED * length:
+                self.run_counted = True
+                counts = self.plays.setdefault(day_key(now), {})
+                counts[key] = counts.get(key, 0) + 1
         last = self.sessions[-1] if self.sessions else None
         if last is not None and last[2] == key and last[0] + last[1] >= now - seconds - SESSION_GAP:
             last[1] = round(now - last[0], 1)
@@ -87,8 +141,9 @@ class StatsStore:
             return
         self.dirty = False
         self.saved_at = time.monotonic()
-        data = {"version": 1, "songs": dict(self.songs), "days": {k: dict(v) for k, v in self.days.items()},
-                "sessions": [list(s) for s in self.sessions]}
+        data = {"version": 2, "songs": dict(self.songs), "days": {k: dict(v) for k, v in self.days.items()},
+                "sessions": [list(s) for s in self.sessions], "plays": {k: dict(v) for k, v in self.plays.items()},
+                "plays_recounted": not self.recount}
         run_on_queue(lambda: self.plugin.music._save("stats.json", data))
 
     # -- reading, for the screen
@@ -101,6 +156,21 @@ class StatsStore:
         for d in days:
             for key, seconds in self.days.get(d, {}).items():
                 out[key] = out.get(key, 0.0) + seconds
+        return out
+
+    def plays_of(self, days):
+        if self.recount and self.plugin.music.by_path:
+            self.recount = False
+            for day, counts in self._plays_from_sessions().items():
+                kept = self.plays.setdefault(day, {})
+                for key, count in counts.items():
+                    kept[key] = kept.get(key, 0) + count
+            self.dirty = True
+            self.save()
+        out = {}
+        for d in days:
+            for key, count in self.plays.get(d, {}).items():
+                out[key] = out.get(key, 0) + count
         return out
 
     def per_artist(self, songs):
@@ -230,6 +300,59 @@ class StatsScreen(Screen):
         row.addView(amount)
         self.body.addView(row, Params(-1, _dp(52)))
 
+    def song_line(self, title, artist, path, count, seconds):
+        """A song: its cover, its names, how many times it was heard to the end on a pill, and its time."""
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        LinearLayout = jclass("android.widget.LinearLayout")
+        row = LinearLayout(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        cover = jclass("android.widget.ImageView")(owner.context)
+        cover.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER_CROP)
+        cover.setClipToOutline(True)
+        self.back(cover, "tonal", _dp(8))
+        jpg = owner.plugin.music.covers.get(path) if path else None
+        bitmap = jclass("android.graphics.BitmapFactory").decodeFile(jpg) if jpg else None
+        if bitmap is not None:
+            cover.setImageBitmap(bitmap)
+        else:
+            owner.set_icon(cover, ("msg_filled_musicnote", "media_music", "msg_musicnote"))
+            cover.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
+            self.tint_icon(cover, "onTonal")
+        at = Params(_dp(44), _dp(44))
+        at.setMarginEnd(_dp(12))
+        row.addView(cover, at)
+        texts = LinearLayout(owner.context)
+        texts.setOrientation(1)
+        top = self.label(15, "text")
+        top.setText(title)
+        top.setSingleLine(True)
+        texts.addView(top)
+        if artist:
+            bottom = self.label(13, "textSecondary")
+            bottom.setText(artist)
+            bottom.setSingleLine(True)
+            texts.addView(bottom)
+        row.addView(texts, Params(0, -2, 1.0))
+        side = LinearLayout(owner.context)
+        side.setOrientation(1)
+        side.setGravity(5)  # end
+        if count > 0:
+            pill = self.label(12, "onTonal", True)
+            pill.setText(times_text(count))
+            pill.setPadding(_dp(10), _dp(2), _dp(10), _dp(2))
+            self.back(pill, "tonal", _dp(10))
+            side.addView(pill)
+        amount = self.label(12, "textSecondary")
+        amount.setText(duration_text(seconds))
+        amount.setPadding(0, _dp(2), _dp(2), 0)
+        side.addView(amount)
+        at = Params(-2, -2)
+        at.setMarginStart(_dp(8))
+        row.addView(side, at)
+        self.body.addView(row, Params(-1, _dp(60)))
+
     def refresh(self):
         self.body.removeAllViews()
         owner = self.owner
@@ -247,8 +370,9 @@ class StatsScreen(Screen):
         bar = LinearLayout(owner.context)
         bar.setOrientation(0)
         bar.setGravity(16)
-        bar.addView(self.icon_button(("msg_arrow_back", "ic_ab_back"), tr("Раньше"), self.choose, self.kind, self.back_by + 1),
-                    owner.params(40, 40))
+        earlier = self.icon_button(("msg_arrowright",), tr("Раньше"), self.choose, self.kind, self.back_by + 1)
+        earlier.setScaleX(-1.0)  # the same arrow as "later", turned the other way
+        bar.addView(earlier, owner.params(40, 40))
         name = self.label(15, "text", True)
         name.setText(self.period_name(period))
         name.setGravity(17)
@@ -265,8 +389,11 @@ class StatsScreen(Screen):
         big.setPadding(0, _dp(8), 0, 0)
         self.body.addView(big)
         songs = self.store.per_song(days)
+        plays = self.store.plays_of(days)
         under = self.label(14, "textSecondary")
-        under.setText(tr("Песен: %d") % len(songs) if songs else tr("Пока тишина: статистика копится, пока играет музыка."))
+        heard = sum(plays.values())
+        under.setText((tr("Песен: %d") % len(songs) + (" · " + times_text(heard) if heard else "")) if songs
+                      else tr("Пока тишина: статистика копится, пока играет музыка."))
         under.setSingleLine(False)
         self.body.addView(under)
 
@@ -274,9 +401,9 @@ class StatsScreen(Screen):
         if not songs:
             return
         self.section(tr("Песни"))
-        for key, seconds in sorted(songs.items(), key=lambda kv: -kv[1])[:TOP_SONGS]:
-            title, artist = (self.store.songs.get(key) or ["", ""])[:2]
-            self.line(title or tr("Без названия"), artist, duration_text(seconds))
+        for key, seconds in sorted(songs.items(), key=lambda kv: (-plays.get(kv[0], 0), -kv[1]))[:TOP_SONGS]:
+            title, artist, path = (self.store.songs.get(key) or ["", "", ""])[:3]
+            self.song_line(title or tr("Без названия"), artist, path, plays.get(key, 0), seconds)
         artists = sorted(self.store.per_artist(songs).items(), key=lambda kv: -kv[1])[:TOP_ARTISTS]
         if artists:
             self.section(tr("Исполнители"))
@@ -284,38 +411,43 @@ class StatsScreen(Screen):
                 self.line(name_text, "", duration_text(seconds))
 
     def chart(self, period):
-        """One bar per day (per month in a year), its height by the time; today, or this month, in the accent."""
+        """A point per day (per month in a year), its height by the time, joined by lines that stop short of the
+        points; today, or this month, a larger point. Drawn once into a picture; a tap on a point's column opens it."""
         owner = self.owner
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         LinearLayout = jclass("android.widget.LinearLayout")
+        FrameLayout = jclass("android.widget.FrameLayout")
         values = [self.store.total(period.days_of(part)) for part in period.parts]
-        top = max(values) if values else 0.0
-        accent = owner.color("accent")
-        soft = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(accent, 90)
-        height = _dp(150)
-        bars = LinearLayout(owner.context)
-        bars.setOrientation(0)
-        bars.setPadding(0, _dp(16), 0, 0)
-        labels = LinearLayout(owner.context)
-        labels.setOrientation(0)
         today = datetime.date.today()
-        gap = _dp(3) if len(values) > 12 else _dp(6)
-        for index, (part, value) in enumerate(zip(period.parts, values)):
-            slot = jclass("android.widget.FrameLayout")(owner.context)
-            fill = jclass("android.view.View")(owner.context)
-            current = (part.month == today.month and part.year == today.year) if period.kind == YEAR else part == today
-            fill.setBackground(owner.rounded(accent if current else soft, _dp(4)))
-            share = value / top if top > 0 else 0.0
-            place = jclass("android.widget.FrameLayout$LayoutParams")(-1, max(_dp(3), int(height * share)))
-            place.gravity = 80  # bottom
-            slot.addView(fill, place)
+        current = [((part.month == today.month and part.year == today.year) if period.kind == YEAR else part == today)
+                   for part in period.parts]
+        width = owner.context.getResources().getDisplayMetrics().widthPixels - _dp(32)
+        try:
+            pane = owner.plugin.layout_fields.int(owner.player.layout, "paneWidth")
+            if pane > 0:
+                width = pane - _dp(32)
+        except Exception:
+            pass
+        height = _dp(160)
+        frame = FrameLayout(owner.context)
+        picture = jclass("android.widget.ImageView")(owner.context)
+        picture.setImageBitmap(self.draw_line(values, current, max(1, width), height))
+        frame.addView(picture, jclass("android.widget.FrameLayout$LayoutParams")(-1, height))
+        hits = LinearLayout(owner.context)
+        hits.setOrientation(0)
+        for part, value in zip(period.parts, values):
+            slot = jclass("android.view.View")(owner.context)
             slot.setContentDescription("%s: %s" % (self.part_name(period, part), duration_text(value)))
             if value > 0:
                 self.click(slot, self.open_part, period, part)
-            at = Params(0, height, 1.0)
-            at.setMarginStart(gap // 2)
-            at.setMarginEnd(gap // 2)
-            bars.addView(slot, at)
+            hits.addView(slot, Params(0, -1, 1.0))
+        frame.addView(hits, jclass("android.widget.FrameLayout$LayoutParams")(-1, height))
+        at = Params(width, height)
+        at.topMargin = _dp(16)
+        self.body.addView(frame, at)
+        labels = LinearLayout(owner.context)
+        labels.setOrientation(0)
+        for index, part in enumerate(period.parts):
             name = self.label(11, "textSecondary")
             name.setGravity(17)
             if period.kind == WEEK:
@@ -325,8 +457,55 @@ class StatsScreen(Screen):
             elif part.day in (1, 8, 15, 22, 29):
                 name.setText(str(part.day))
             labels.addView(name, Params(0, -2, 1.0))
-        self.body.addView(bars, Params(-1, -2))
-        self.body.addView(labels, Params(-1, -2))
+        self.body.addView(labels, Params(width, -2))
+
+    def draw_line(self, values, current, width, height):
+        owner = self.owner
+        Bitmap = jclass("android.graphics.Bitmap")
+        Paint = jclass("android.graphics.Paint")
+        ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+        bitmap = Bitmap.createBitmap(int(width), int(height), jclass("android.graphics.Bitmap$Config").ARGB_8888)
+        canvas = jclass("android.graphics.Canvas")(bitmap)
+        accent = owner.color("accent")
+        muted = owner.color("textSecondary")
+        count = max(1, len(values))
+        slot = width / float(count)
+        dense = count > 12
+        radius = _dp(3.5) if dense else _dp(5)
+        gap = radius + (_dp(2) if dense else _dp(4))
+        pad_top, pad_bottom = _dp(10), _dp(10)
+        span = height - pad_top - pad_bottom
+        top = max(values) if values else 0.0
+        grid = Paint(1)
+        _paint_color(grid, ColorUtils.setAlphaComponent(muted, 40))
+        grid.setStrokeWidth(float(max(1, _dp(1))))
+        for share in (0.0, 0.5, 1.0):
+            y = pad_top + span * share
+            canvas.drawLine(0.0, float(y), float(width), float(y), grid)
+        points = []
+        for index, value in enumerate(values):
+            x = slot * (index + 0.5)
+            y = pad_top + span * (1.0 - (value / top if top > 0 else 0.0))
+            points.append((x, y))
+        line = Paint(1)
+        _paint_color(line, ColorUtils.setAlphaComponent(accent, 150))
+        line.setStrokeWidth(float(_dp(2.5)))
+        line.setStrokeCap(jclass("android.graphics.Paint$Cap").ROUND)
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            dx, dy = x2 - x1, y2 - y1
+            length = (dx * dx + dy * dy) ** 0.5
+            if length <= 2 * gap + _dp(1):
+                continue
+            ux, uy = dx / length, dy / length
+            canvas.drawLine(float(x1 + ux * gap), float(y1 + uy * gap), float(x2 - ux * gap), float(y2 - uy * gap), line)
+        dot = Paint(1)
+        for (x, y), value, now in zip(points, values, current):
+            if now:
+                _paint_color(dot, ColorUtils.setAlphaComponent(accent, 70))
+                canvas.drawCircle(float(x), float(y), float(radius * 2.0), dot)
+            _paint_color(dot, accent if value > 0 else ColorUtils.setAlphaComponent(muted, 110))
+            canvas.drawCircle(float(x), float(y), float(radius if value > 0 or now else radius * 0.7), dot)
+        return bitmap
 
     # -- names and moves
 

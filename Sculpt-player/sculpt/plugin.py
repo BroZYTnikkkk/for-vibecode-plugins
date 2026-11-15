@@ -312,6 +312,8 @@ class SculptPlayerPlugin(BasePlugin):
         if self.queues is not None:
             self.queues.snapshot()  # the queue comes back at this song after a restart
             self.queues.save()
+        if self.stats is not None:
+            self.stats.new_run()  # the next seconds of playing are a new run, toward one more play
         controller = jclass(MEDIA_CONTROLLER).getInstance()
         playing = controller.getPlayingMessageObject()
         now = self.song_identity(playing)
