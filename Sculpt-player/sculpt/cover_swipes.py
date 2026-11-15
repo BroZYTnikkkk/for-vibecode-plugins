@@ -50,7 +50,8 @@ class CoverSwipes:
                 self.start = (float(event.getX()), float(event.getY()))
                 self.height = max(1.0, float(rect.height()))
                 left = event.getX() < rect.centerX()
-                self.kind = VOLUME if not left else (ALPHA if self.player.canvas_amount() > 0.5 else BRIGHTNESS)
+                canvas_behind = self.player.canvas_amount() > 0.5 and not self.plugin.canvas_in_cover
+                self.kind = VOLUME if not left else (ALPHA if canvas_behind else BRIGHTNESS)
             return False
         if self.start is None:
             return False
@@ -106,9 +107,22 @@ class CoverSwipes:
 
     # -- the three values, each 0..1
 
+    def fine_top(self, audio):
+        """Samsung's own finer media volume: ten steps for each of the usual ones (0..150), so the swipe moves by
+        the percent instead of by 15 steps of about 7%. 0 on a phone without it."""
+        try:
+            if audio.semIsFineVolumeSupported():
+                return max(1, int(audio.getStreamMaxVolume(STREAM_MUSIC))) * 10
+        except Exception:
+            pass
+        return 0
+
     def read(self):
         if self.kind == VOLUME:
             audio = self.audio()
+            fine = self.fine_top(audio)
+            if fine:
+                return int(audio.semGetFineVolume(STREAM_MUSIC)) / float(fine)
             top = max(1, int(audio.getStreamMaxVolume(STREAM_MUSIC)))
             return audio.getStreamVolume(STREAM_MUSIC) / float(top)
         if self.kind == ALPHA:
@@ -126,11 +140,18 @@ class CoverSwipes:
         value = max(0.0, min(1.0, value))
         if self.kind == VOLUME:
             audio = self.audio()
-            top = max(1, int(audio.getStreamMaxVolume(STREAM_MUSIC)))
-            steps = int(round(value * top))
-            if steps != audio.getStreamVolume(STREAM_MUSIC):
-                audio.setStreamVolume(STREAM_MUSIC, steps, 0)  # plain ints: the method takes int, not Integer
-            value = steps / float(top)
+            fine = self.fine_top(audio)
+            if fine:
+                steps = int(round(value * fine))
+                if steps != int(audio.semGetFineVolume(STREAM_MUSIC)):
+                    audio.semSetFineVolume(STREAM_MUSIC, steps, 0)
+                value = steps / float(fine)
+            else:
+                top = max(1, int(audio.getStreamMaxVolume(STREAM_MUSIC)))
+                steps = int(round(value * top))
+                if steps != audio.getStreamVolume(STREAM_MUSIC):
+                    audio.setStreamVolume(STREAM_MUSIC, steps, 0)  # plain ints: the method takes int, not Integer
+                value = steps / float(top)
         elif self.kind == ALPHA:
             value = round(value * 20) / 20.0  # steps of 5%, like the slider in the settings
             if value != self.value:

@@ -35,6 +35,73 @@ def _callback_class():
     return found
 
 
+class FileInfo:
+    """The quality of a song on the phone, read from the file here: exteraGram's TrackQuality keeps its answers
+    by the document's id, and every song from the phone has the id 0, so it told the first song's quality for all."""
+
+    FORMATS = {"audio/flac": "FLAC", "audio/mpeg": "MP3", "audio/mp4a-latm": "AAC", "audio/opus": "Opus",
+               "audio/vorbis": "Vorbis", "audio/alac": "ALAC", "audio/x-wav": "WAV", "audio/raw": "WAV"}
+
+    def __init__(self, path):
+        self.format = None
+        self.bitsPerSample = 0
+        self.sampleRate = 0
+        self.bitrateKbps = 0
+        self.probed = True
+        extractor = jclass("android.media.MediaExtractor")()
+        try:
+            extractor.setDataSource(path)
+            for i in range(extractor.getTrackCount()):
+                fmt = extractor.getTrackFormat(i)
+                mime = str(fmt.getString("mime") or "")
+                if not mime.startswith("audio/"):
+                    continue
+                self.format = self.FORMATS.get(mime, mime.split("/")[-1].upper())
+                if fmt.containsKey("sample-rate"):
+                    self.sampleRate = int(fmt.getInteger("sample-rate"))
+                if fmt.containsKey("bitrate"):
+                    self.bitrateKbps = int(fmt.getInteger("bitrate")) // 1000
+                if fmt.containsKey("bits-per-sample"):
+                    self.bitsPerSample = int(fmt.getInteger("bits-per-sample"))
+                if not self.bitrateKbps and fmt.containsKey("durationUs"):
+                    seconds = fmt.getLong("durationUs") / 1e6
+                    if seconds > 0:
+                        import os
+                        self.bitrateKbps = int(os.path.getsize(path) * 8 / seconds / 1000)
+                break
+        finally:
+            extractor.release()
+        if self.format == "FLAC" and not self.bitsPerSample:
+            self.bitsPerSample = _flac_bits(path)
+        if self.format not in ("FLAC", "WAV", "ALAC"):
+            self.bitsPerSample = 0  # a lossy file has no depth of its own: its bitrate says it
+
+    def formatBitDepth(self):
+        return tr("%d бит") % self.bitsPerSample if self.bitsPerSample > 0 else None
+
+    def formatSampleRate(self):
+        return tr("%s кГц") % ("%g" % (self.sampleRate / 1000.0)) if self.sampleRate > 0 else None
+
+    def formatBitrate(self):
+        return tr("%d кбит/с") % self.bitrateKbps if self.bitrateKbps > 0 else None
+
+
+def _flac_bits(path):
+    """Bits per sample from a FLAC file's STREAMINFO block."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(42)
+        if head[:4] != b"fLaC":
+            return 0
+        info = head[8:42]
+        return (((info[12] & 0x01) << 4) | (info[13] >> 4)) + 1
+    except Exception:
+        return 0
+
+
+_file_infos = {}
+
+
 def short_text(info):
     """"FLAC 24/96", "MP3 320", or the format alone."""
     if info is None:
@@ -133,6 +200,29 @@ class QualityPill:
             self.view.setVisibility(8)
             return
         identity = (message.getDialogId(), message.getId())
+        from .music import local_path
+        path = local_path(message)
+        if path is not None:
+            self.message_id = identity
+            info = _file_infos.get(path)
+            if info is not None:
+                self.show(info)
+                return
+            self.view.setVisibility(8)
+
+            def read():
+                try:
+                    found = _file_infos[path] = FileInfo(path)
+                except Exception as e:
+                    from .common import _log
+                    _log("quality %s: %s" % (path.rsplit("/", 1)[-1], e))
+                    return
+                from android_utils import run_on_ui_thread
+                run_on_ui_thread(lambda: self.probed(identity, found))
+
+            from .common import run_on_work
+            run_on_work(read)
+            return
         quality = jclass(TRACK_QUALITY)
         info = quality.get(message)
         if identity != self.message_id:

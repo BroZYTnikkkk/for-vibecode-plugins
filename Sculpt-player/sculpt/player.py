@@ -423,7 +423,10 @@ class Player:
             mode = self.plugin.sheet_fields.float(self.sheet, "modeProgress")
             if mode > 0.0:
                 return
-            alpha = 1.0 - self.canvas_amount() * (1.0 - self.plugin.canvas_cover_alpha())
+            if self.plugin.canvas_in_cover:
+                alpha = 1.0  # the video plays inside the cover, over it (CoverDrawHook)
+            else:
+                alpha = 1.0 - self.canvas_amount() * (1.0 - self.plugin.canvas_cover_alpha())
             if abs(self.coverView.getAlpha() - alpha) > 0.004:
                 self.coverView.setAlpha(float(alpha))
         except Exception:

@@ -29,4 +29,10 @@ public class ImageReceiver {
     public Bitmap getBitmap() {
         return null;
     }
+
+    public void setRoundRadius(int radius) {
+    }
+
+    public void setAlpha(float alpha) {
+    }
 }

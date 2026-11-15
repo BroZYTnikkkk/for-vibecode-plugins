@@ -31,42 +31,32 @@ class _Run(dynamic_proxy(jclass("java.lang.Runnable"))):
 
 
 def register(plugin, on_click):
-    """Adds the pill to the registry and to the stack the user sees. False when this build has no pill stack."""
-    pill_class = sculpt_class("sculpt.MusicPill")
-    if pill_class is None:
+    """Adds the pill to the registry and to the stack the user sees. False when this build has no pill stack.
+
+    The creator is Java's own (MusicPill.register): Python never holds a MusicPill, which after a reinstall of
+    the plugin Chaquopy can no longer wrap."""
+    register_method = sculpt_method("sculpt.MusicPill", "register")
+    if register_method is None:
         return False
     try:
-        Registry = jclass(REGISTRY)
-        Info = jclass(REGISTRY + "$PillInfo")
-        Creator = jclass(REGISTRY + "$PillCreator")
+        jclass(REGISTRY)
     except Exception as e:
         _log("pill: no pill stack (%s)" % type(e).__name__)
         return False
-    Object = jclass("java.lang.Object")
-    maker = pill_class.getConstructor(jarray(jclass("java.lang.Class"))(
-        [_class("android.content.Context"), _class("org.telegram.ui.ActionBar.Theme$ResourcesProvider")]))
-
-    class Made(dynamic_proxy(Creator)):
-        def create(self, context, provider):
-            try:
-                return maker.newInstance(jarray(Object)([context, provider]))
-            except Exception as e:
-                _log("pill: %s" % e)
-                return None
-
     sculpt_method("sculpt.MusicPill", "setClick").invoke(None, _Run(on_click))
-    creator = Made()
+    _kept[:] = [on_click]
     icon = _ctx().getResources().getIdentifier("msg_played", "drawable", _ctx().getPackageName())
-    info = Info(PILL_ID, "Sculpt Player", icon, ICON_TOP, ICON_BOTTOM, creator)
-    _kept[:] = [creator, info]
-    Registry.register(info)
+    Integer = jclass("java.lang.Integer")
+    register_method.invoke(None, "Sculpt Player", Integer(icon), Integer(ICON_TOP), Integer(ICON_BOTTOM))
     _show(True)
     return True
 
 
 def unregister():
+    method = sculpt_method("sculpt.MusicPill", "unregister")
     try:
-        jclass(REGISTRY).unregister(PILL_ID)
+        if method is not None:
+            method.invoke(None)
     except Exception:
         pass
     _show(False)

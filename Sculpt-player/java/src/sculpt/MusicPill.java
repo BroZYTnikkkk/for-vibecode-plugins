@@ -75,6 +75,20 @@ public final class MusicPill extends BasePill {
         onUpdateData(false);
     }
 
+    /**
+     * From Python: the pill in exteraGram's registry, made here. Python never holds an object of this DEX's classes:
+     * after a reinstall Chaquopy cannot make a proxy of a class loaded again, so the creator lives in Java.
+     */
+    public static void register(String title, int icon, int colorTop, int colorBottom) {
+        com.exteragram.messenger.pillstack.core.PillRegistry.register(
+                new com.exteragram.messenger.pillstack.core.PillRegistry.PillInfo(ID, title, icon, colorTop, colorBottom,
+                        MusicPill::new));
+    }
+
+    public static void unregister() {
+        com.exteragram.messenger.pillstack.core.PillRegistry.unregister(ID);
+    }
+
     /** From Python: what a tap does (posted on the UI thread by the caller's own runnable). */
     public static void setClick(Runnable action) {
         click = action;

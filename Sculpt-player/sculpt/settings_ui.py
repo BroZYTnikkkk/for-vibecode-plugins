@@ -317,6 +317,7 @@ class LookScreen(ExtScreen):
             radius = RADIUS_VALUES[min(3, max(0, int(get("cover_radius", 1))))]
         slider_row(self, self.body, tr("Скругление углов"), 0, 40, 2, float(radius),
                    lambda v: tr("Нет") if v == 0 else "%d dp" % v, lambda v: self.save("cover_radius_dp", int(v)))
+        self.choice("canvas_place", tr("Spotify Canvas"), [tr("На весь экран"), tr("В обложке")], 0)
         slider_row(self, self.body, tr("Обложка над Spotify Canvas"), 0, 100, 5, float(get("canvas_cover_alpha", 50)),
                    lambda v: tr("Скрыта") if v == 0 else "%d%%" % v, lambda v: self.canvas_alpha(int(v)))
         self.choice("quality_pill", tr("Качество песни"), [tr("Не показывать"), tr("Под обложкой"), tr("В углу обложки")], 1)

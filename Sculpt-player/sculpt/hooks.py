@@ -195,6 +195,39 @@ class NoCanvasHook(_Hook):
             param.args[0] = JFloat(0.0)
 
 
+class CanvasBackgroundHook(_Hook):
+    """SpotifyCanvasBackground.draw: with the video set inside the cover (canvas_place), the player draws no video
+    behind itself; CoverDrawHook draws the same frames in the cover's square."""
+
+    def before_hooked_method(self, param):
+        if self.plugin.canvas_in_cover:
+            param.setResult(JBoolean.FALSE)
+
+
+class CoverDrawHook(_Hook):
+    """PlayerCoverView.onDraw, after the covers: the Canvas video in the current cover's square (sculpt.CanvasFx)."""
+
+    def __init__(self, plugin, name):
+        super().__init__(plugin, name)
+        self.method = None
+
+    def after_hooked_method(self, param):
+        if not self.plugin.canvas_in_cover:
+            return
+        player = self.plugin.player
+        if player is None or param.thisObject.hashCode() != player.coverView.hashCode():
+            return
+        try:
+            if self.method is None:
+                from .common import sculpt_method
+                self.method = sculpt_method("sculpt.CanvasFx", "inCover")
+            if self.method is not None:
+                self.method.invoke(None, player.sheet, param.thisObject, param.args[0])
+        except Exception as e:
+            self.method = None
+            self.fail(e)
+
+
 class DrawHook(_Hook):
     """PlayerLayout.onDraw, after the background and under the views: the visualizer."""
 
@@ -214,13 +247,16 @@ class DrawHook(_Hook):
                 if mark:
                     mark("draw.lyrics_backdrop")
                 player.apply_cover_alpha()
+                if self.plugin.canvas_in_cover and player.canvas_amount() > 0.01:
+                    # the video's frames wake the player's layout, not the cover view, which draws them now
+                    player.coverView.invalidate()
                 blur = player.tab_amount()
-                if blur > 0.0 and player.canvas_amount() > 0.01:
+                if blur > 0.0 and player.canvas_amount() > 0.01 and not self.plugin.canvas_in_cover:
                     player.blur_canvas(canvas, blur)
                 if mark:
                     mark("draw.canvas_blur")
-                # over a Spotify Canvas video the cover is only a thumbnail: bars and peeks at its old place would
-                # hang over the video
+                # over a Spotify Canvas video the bars stay away from the moving picture; the names a swipe brings in
+                # are drawn as always, since the cover stays big there (NoCanvasHook)
                 video = not covered and visualizer.video()
                 if mark:
                     mark("draw.canvas_check")
@@ -232,7 +268,7 @@ class DrawHook(_Hook):
                     visualizer.draw(canvas)  # the Java frame sees the video itself, and must keep looking
                 if mark:
                     mark("draw.visualizer")
-                if player.peeks is not None and not video and not covered:
+                if player.peeks is not None and not covered:
                     player.peeks.draw(canvas, visualizer.colors)
                 if shift:
                     canvas.restore()

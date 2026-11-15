@@ -135,7 +135,108 @@ public final class CanvasFx {
         }
     }
 
+    // -- the video inside the big cover instead of behind the whole player (setting canvas_place)
+
+    private static Field sheetCanvas;
+    private static Field sheetProgress;
+    private static Field sheetMode;
+    private static Field coverRadius;
+    private static java.lang.reflect.Method checkVideo;
+    private static java.lang.reflect.Method coverRect;
+    private static java.lang.reflect.Method pageOffset;
+    private static boolean coverBroken;
+    public static String why = "";  // the last answer of inCover, for the log
+    private static final RectF square = new RectF();
+
+    /**
+     * Called after the cover view drew itself: the current song's Canvas video in the cover's square, rounded like
+     * it, moved by a swipe like it. Returns true while a video was drawn.
+     */
+    public static boolean inCover(Object sheet, Object cover, Canvas canvas) {
+        if (coverBroken) {
+            return false;
+        }
+        try {
+            if (sheetCanvas == null) {
+                Class<?> type = sheet.getClass();
+                sheetCanvas = field(type, "spotifyCanvas");
+                sheetProgress = field(type, "canvasProgress");
+                sheetMode = field(type, "modeProgress");
+                coverRadius = field(cover.getClass(), "radius");
+                coverRect = cover.getClass().getMethod("getCoverRect");
+                pageOffset = cover.getClass().getMethod("getPageOffset");
+            }
+            float shown = Math.max(0f, Math.min(1f, sheetProgress.getFloat(sheet)))
+                    * (1f - Math.max(0f, Math.min(1f, sheetMode.getFloat(sheet))));
+            if (shown <= 0.01f) {
+                why = "no canvas shown";
+                return false;
+            }
+            Object background = sheetCanvas.get(sheet);
+            if (background == null) {
+                why = "no background";
+                return false;
+            }
+            Field slotsOf = background.getClass().getDeclaredField("slots");
+            slotsOf.setAccessible(true);
+            Object[] slots = (Object[]) slotsOf.get(background);
+            if (slots == null || slots.length < 2 || slots[1] == null) {
+                why = "no slot";
+                return false;
+            }
+            Object slot = slots[1];
+            if (checkVideo == null) {
+                checkVideo = slot.getClass().getDeclaredMethod("checkVideo");
+                checkVideo.setAccessible(true);
+            }
+            boolean video = (Boolean) checkVideo.invoke(slot);
+            Field which = slot.getClass().getDeclaredField(video ? "receiver" : "thumbReceiver");
+            which.setAccessible(true);
+            ImageReceiver receiver = (ImageReceiver) which.get(slot);
+            if (receiver == null) {
+                why = "no receiver, video " + video;
+                return false;
+            }
+            RectF rect = (RectF) coverRect.invoke(cover);
+            float offset = (Float) pageOffset.invoke(cover);
+            square.set(rect);
+            square.offset(offset, 0f);
+            receiver.setRoundRadius(Math.round(coverRadius.getFloat(cover)));
+            receiver.setImageCoords(square.left, square.top, square.width(), square.height());
+            receiver.setAlpha(shown);
+            receiver.draw(canvas);
+            why = "drew video=" + video + " at " + square;
+            return true;
+        } catch (Throwable t) {
+            why = "broken: " + t;
+            coverBroken = true;  // another build of the app: the video stays behind the player as exteraGram has it
+            return false;
+        }
+    }
+
+    private static Field field(Class<?> type, String name) throws NoSuchFieldException {
+        Field found = type.getDeclaredField(name);
+        found.setAccessible(true);
+        return found;
+    }
+
+    public static String why() {
+        return why;
+    }
+
     public static void release() {
+        sheetCanvas = null;
+        sheetProgress = null;
+        sheetMode = null;
+        coverRadius = null;
+        checkVideo = null;
+        coverRect = null;
+        pageOffset = null;
+        coverBroken = false;
+        releaseBlur();
+    }
+
+    private static void releaseBlur() {
         if (node != null) {
             node.discardDisplayList();
         }

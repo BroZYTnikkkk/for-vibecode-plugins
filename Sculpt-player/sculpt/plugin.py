@@ -21,7 +21,7 @@ from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
 from .stats import StatsStore
 from . import profiler
-from .hooks import NoCanvasHook, CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import CanvasBackgroundHook, CoverDrawHook, NoCanvasHook, CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -43,6 +43,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.landscape = False
         self.landscape_at = 0.0
         self.canvas_delegate_hooked = False
+        self.canvas_in_cover = False  # the Canvas video inside the cover, not behind the player (setting canvas_place)
         self.canvas_alpha_live = None  # the cover's alpha over a Canvas video while a finger sets it (CoverSwipes)
         self.cover_from_cache = False  # inside PlayerCovers.setCover for a song whose square cover is kept
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
@@ -94,6 +95,9 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
             self.install(cover, "setCurrentCanvas", (f,), NoCanvasHook(self, "setCurrentCanvas"))
+            self.install(cover, "onDraw", (_java_class("android.graphics.Canvas"),), CoverDrawHook(self, "coverDraw"))
+            self.remember(self.hook_all_methods(_java_class("com.exteragram.messenger.player.ui.SpotifyCanvasBackground"),
+                                                "draw", CanvasBackgroundHook(self, "canvasBackground")))
             self.install(cover, "setCover", (_java_class(MESSAGE_OBJECT), b, i), CoverSwapHook(self, "coverSetCover"))
             self.install(cover, "dispatchTouchEvent", (_java_class("android.view.MotionEvent"),), CoverTouchHook(self, "coverTouch"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
@@ -140,6 +144,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(_java_class("com.exteragram.messenger.player.lyrics.LyricsRepository"), "requestLrclib",
                          (_java_class("com.exteragram.messenger.player.TrackQuery"),), LyricsHook(self, "requestLrclib"))
             self.register_entries()
+            self.read_canvas_place()
             self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
                 text=tr("Установить расширение"),
@@ -518,6 +523,9 @@ class SculptPlayerPlugin(BasePlugin):
         # long enough to read and reach the button: the default short one is gone in under three seconds
         factory.createSimpleBulletin(resource, text, tr("Отменить"), run).setDuration(5000).show()
 
+    def read_canvas_place(self):
+        self.canvas_in_cover = int(self.get_setting("canvas_place", 0)) == 1
+
     def canvas_cover_alpha(self):
         """How solid the big cover stays over a Spotify Canvas video, 0..1."""
         if self.canvas_alpha_live is not None:
@@ -571,6 +579,7 @@ class SculptPlayerPlugin(BasePlugin):
             run_on_ui_thread(lambda: BulletinHelper.show_error(tr("На этом телефоне нет системного эквалайзера")))
 
     def settings_changed(self):
+        self.read_canvas_place()
         player = self.player
         if player is None:
             return
