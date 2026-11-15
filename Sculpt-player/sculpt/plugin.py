@@ -10,7 +10,7 @@ from ui.bulletin import BulletinHelper
 from ui.settings import Divider
 
 from .i18n import tr
-from .common import CHECKS, ID_OPEN_SETTINGS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, _java_class, _log, _show_error
+from .common import CHECKS, ID_OPEN_SETTINGS, COLORS, CONFIG, CONTROLS, COVER, Fields, ID_COVER_RADIUS, ID_FLAT_SEEK, ID_VIS_BOTTOM, ID_VIS_COLORS, ID_VIS_DENSITY, ID_VIS_HEIGHT, ID_VIS_STYLE, ID_VIS_TOP, LAYOUT, MEDIA_CONTROLLER, MESSAGE_OBJECT, PLAYER_COVERS, RADIUS_LABELS, RADIUS_VALUES, SEGMENT_DRAWABLE, SETTINGS_SHEET, SHEET, VERSION, VIS_COLORS, VIS_DENSITIES, VIS_HEIGHTS, VIS_STYLES, _ctx, sculpt_method, _java_class, _log, _show_error
 from .music import ListenTimer, MusicData, local_path
 from .library_ui import Run
 from .player import Player
@@ -21,7 +21,7 @@ from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
 from .stats import StatsStore
 from . import profiler
-from .hooks import CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import CanvasLayoutHook, CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -88,6 +88,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(layout, "onDraw", (_java_class("android.graphics.Canvas"),), DrawHook(self, "onDraw"))
             self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
+            self.install(cover, "setCanvasLayout", (f, f, f, f, f, f), CanvasLayoutHook(self, "setCanvasLayout"))
             self.install(cover, "setCover", (_java_class(MESSAGE_OBJECT), b, i), CoverSwapHook(self, "coverSetCover"))
             self.install(cover, "dispatchTouchEvent", (_java_class("android.view.MotionEvent"),), CoverTouchHook(self, "coverTouch"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
@@ -170,6 +171,14 @@ class SculptPlayerPlugin(BasePlugin):
         self.player = None
         if self.listen is not None:
             self.listen.stopped = True
+        if self.music is not None:
+            self.music.covers.close()  # the covers' own thread ends with the plugin
+        release = sculpt_method("sculpt.CanvasFx", "release")
+        if release is not None:
+            try:
+                release.invoke(None)
+            except Exception:
+                pass
         if self.extensions is not None:
             if self.link_share is not None:
                 self.link_share.stop()
@@ -387,6 +396,10 @@ class SculptPlayerPlugin(BasePlugin):
         factory = self.sheet_method("bulletins").invoke(sheet)
         # long enough to read and reach the button: the default short one is gone in under three seconds
         factory.createSimpleBulletin(resource, text, tr("Отменить"), run).setDuration(5000).show()
+
+    def canvas_cover_alpha(self):
+        """How solid the big cover stays over a Spotify Canvas video, 0..1."""
+        return max(0.0, min(100.0, float(self.get_setting("canvas_cover_alpha", 50)))) / 100.0
 
     def cover_radius(self):
         radius = self.get_setting("cover_radius_dp", None)

@@ -700,6 +700,8 @@ UK = {
     'Количество столбиков': 'Кількість стовпчиків',
     'Форматы и качество, порядок сервисов, репозитории и журналы расширений.': 'Формати та якість, порядок сервісів, репозиторії та журнали розширень.',
     'Настройки плеера exteraGram и плагины': 'Налаштування плеєра exteraGram і плагіни',
+    'Обложка над Spotify Canvas': 'Обкладинка над Spotify Canvas',
+    'Скрыта': 'Прихована',
 }
 
 EN = {
@@ -1400,4 +1402,6 @@ EN = {
     'Количество столбиков': 'Number of bars',
     'Форматы и качество, порядок сервисов, репозитории и журналы расширений.': 'Formats and quality, the order of services, extension repositories and logs.',
     'Настройки плеера exteraGram и плагины': 'exteraGram player settings and plugins',
+    'Обложка над Spotify Canvas': 'Cover over Spotify Canvas',
+    'Скрыта': 'Hidden',
 }

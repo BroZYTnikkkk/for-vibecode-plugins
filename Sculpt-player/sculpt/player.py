@@ -2,10 +2,10 @@
 
 from android_utils import OnClickListener, run_on_ui_thread
 from java import jarray, jclass
-from java.lang import Boolean as JBoolean, Integer as JInteger
+from java.lang import Boolean as JBoolean, Float as JFloat, Integer as JInteger
 
 from .i18n import tr
-from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, LYRICS_SHIFT, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp
+from .common import ALBUM_H, ALBUM_OFFSET, ARTIST_OFFSET, BUTTON, HEADER_H, MARGIN, MEDIA_CONTROLLER, MODE_PLAYER, MODE_QUEUE, PANEL_ACTIVE, PANEL_H, PANEL_LIBRARY, PANEL_MORNYE, PANEL_PLAYLISTS, PANEL_QUEUE, PANEL_SEARCH, PANEL_SETTINGS, PANEL_STACKS, PANEL_TABS, LYRICS_SHIFT, SEEK_H, SEEK_LINE, STEP, TEXT_BLOCK, TIME_WIDTH, TITLE_H, TRANSPORT_H, _dp, sculpt_method
 from .visualizer import Visualizer
 from .peeks import Peeks
 from .player_taps import Taps
@@ -47,6 +47,7 @@ class Player:
         self.taps = None
         self.effects = None
         self.gestures = None
+        self._canvas_blur = None  # CanvasFx.blur, found when a tab first covers a Canvas video
         self.player_shift = 0.0  # how far the player's own views are moved while a finger pages between tabs
         self.album_checked = 0.0
         self.tabs = []
@@ -320,6 +321,36 @@ class Player:
         """The tag editor, in the library tab: it is the library's songs whose tags it writes."""
         self.show_tab(PANEL_LIBRARY)
         self.library.edit_tags(path)
+
+    def tab_amount(self):
+        """How far a tab of the plugin covers the player, 0..1: a whole tab, or the share a finger has paged."""
+        try:
+            if self.coverView.getTransitionAlpha() < 0.5:
+                return 1.0  # the player's views stepped aside for a tab (cover_player)
+            width = float(self.layout.getWidth())
+            return min(1.0, abs(self.player_shift) / width) if width > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def blur_canvas(self, canvas, amount):
+        """The Spotify Canvas video under a tab: blurred and dimmed in Java (CanvasFx), drawn over the sharp one."""
+        method = self._canvas_blur
+        if method is None:
+            method = self._canvas_blur = sculpt_method("sculpt.CanvasFx", "blur")
+            if method is None:
+                return
+        try:
+            f = self.plugin.sheet_fields
+            background = f.get(self.sheet, "spotifyCanvas")
+            mode = min(1.0, max(0.0, f.float(self.sheet, "modeProgress")))
+            shown = min(1.0, max(0.0, f.float(self.sheet, "canvasProgress"))) * (1.0 - mode)
+            rect = self.plugin.layout_fields.get(self.layout, "backgroundRect")
+            colors = f.get(self.sheet, "colors")
+            method.invoke(None, background, canvas, rect, JFloat(float(amount * shown)), JFloat(float(_dp(36))),
+                          JInteger(int(colors.background)), JFloat(0.35))
+        except Exception as e:
+            self._canvas_blur = None
+            self.plugin.report("blur_canvas", e)
 
     def canvas_amount(self):
         """How far Spotify Canvas has taken over the cover: a video fills the screen, the cover is a thumbnail."""

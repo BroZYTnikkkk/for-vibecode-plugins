@@ -135,9 +135,33 @@ class CoverRectHook(_Hook):
 
 
 class TransitionsHook(_Hook):
-    """applyTransitions runs on every frame of a mode change: the album line leaves with the big cover."""
+    """applyTransitions runs on every frame of a mode change: the album line leaves with the big cover.
+
+    With Spotify Canvas the player moves the title aside for a thumbnail of the cover; here the cover stays big
+    (CanvasLayoutHook), so the title stays where it is: the title's share of the Canvas is 0 while it runs."""
+
+    def __init__(self, plugin, name):
+        super().__init__(plugin, name)
+        self.title_canvas = None
+
+    def before_hooked_method(self, param):
+        try:
+            f = self.plugin.sheet_fields
+            value = f.float(param.thisObject, "canvasTitleProgress")
+            if value != 0.0:
+                self.title_canvas = value
+                f.set_float(param.thisObject, "canvasTitleProgress", 0.0)
+        except Exception as e:
+            self.title_canvas = None
+            self.fail(e)
 
     def after_hooked_method(self, param):
+        if self.title_canvas is not None:
+            try:
+                self.plugin.sheet_fields.set_float(param.thisObject, "canvasTitleProgress", self.title_canvas)
+            except Exception as e:
+                self.fail(e)
+            self.title_canvas = None
         try:
             player = self.plugin.player
             if player is not None and player.album is not None:
@@ -149,6 +173,31 @@ class TransitionsHook(_Hook):
                 player.recenter()
                 player.lyrics_layout(max(0.0, min(1.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress"))))
                 player.hide_panel(self.plugin.layout_fields.bool(player.layout, "keyboardLayout"))
+        except Exception as e:
+            self.fail(e)
+
+
+class CanvasLayoutHook(_Hook):
+    """PlayerCoverView.setCanvasLayout(left, top, size, radius, alpha, pageWidth): where the cover goes while a Spotify
+    Canvas video fills the screen. The player shrinks it to a thumbnail by the title; here it stays the big cover, at
+    its own place and corners, see-through at the chosen alpha, so the video shows through it."""
+
+    def before_hooked_method(self, param):
+        try:
+            cover = param.thisObject
+            rect = cover.getCoverRect()
+            if rect.width() <= 0:
+                return
+            mode = 0.0
+            player = self.plugin.player
+            if player is not None:
+                mode = min(1.0, max(0.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress")))
+            alpha = self.plugin.canvas_cover_alpha()
+            param.args[0] = JFloat(float(rect.left))
+            param.args[1] = JFloat(float(rect.top))
+            param.args[2] = JFloat(float(rect.width()))
+            param.args[3] = JFloat(float(self.plugin.cover_fields.float(cover, "radius")))
+            param.args[4] = JFloat(float(alpha + (1.0 - alpha) * mode))  # toward the lyrics: whole, as before
         except Exception as e:
             self.fail(e)
 
@@ -171,6 +220,11 @@ class DrawHook(_Hook):
                     player.effects.draw(canvas, min(1.0, progress))
                 if mark:
                     mark("draw.lyrics_backdrop")
+                blur = player.tab_amount()
+                if blur > 0.0 and player.canvas_amount() > 0.01:
+                    player.blur_canvas(canvas, blur)
+                if mark:
+                    mark("draw.canvas_blur")
                 # over a Spotify Canvas video the cover is only a thumbnail: bars and peeks at its old place would
                 # hang over the video
                 video = not covered and visualizer.video()

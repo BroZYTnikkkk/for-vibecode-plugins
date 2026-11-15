@@ -134,8 +134,8 @@ class Taps:
         if action == 0:  # down
             player = self.player
             mode = self.plugin.sheet_fields.float(player.sheet, "modeProgress")
+            # over a Spotify Canvas video the cover stays big and see-through (CanvasLayoutHook): taps as always
             self.inside = (cover.getCoverRect().contains(event.getX(), event.getY()) and mode < 0.01
-                           and player.canvas_amount() < 0.5  # a video fills the screen: the cover is a thumbnail
                            and not (player.library_visible() or player.queue_visible()))
         if self.inside:
             self.detector.onTouchEvent(event)

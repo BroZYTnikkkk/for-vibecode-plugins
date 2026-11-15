@@ -11,7 +11,7 @@ import time
 from android_utils import run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_files_dir
-from java import jarray, jbyte, jclass, jint
+from java import dynamic_proxy, jarray, jbyte, jclass, jint
 from java.lang import Integer as JInteger, Long as JLong
 
 from . import storage
@@ -92,6 +92,19 @@ def track_number(track):
 
 
 COVER_VERSION = 2  # 2: a cover that is not square is fitted into a square, not cut by the views that show it
+STEP_HANG = 8.0  # seconds one cover may take before the covers' queue moves to a new thread
+
+
+class _Runnable(dynamic_proxy(jclass("java.lang.Runnable"))):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def run(self):
+        try:
+            self.action()
+        except Exception as e:
+            _log("covers: %s" % e)
 
 
 class CoverCache:
@@ -102,9 +115,12 @@ class CoverCache:
         os.makedirs(self.dir, exist_ok=True)
         self._drop_older()
         self.lock = threading.Lock()
+        self.extracting = threading.Lock()  # ensure() on the plugins' queue and a step here never read one file twice
         self.wanted = collections.deque()
         self.queued = set()
         self.working = False
+        self.beat = 0.0  # when the covers' thread last started a step: a step that hangs is noticed by warm()
+        self.thread = None
         # called on the covers' thread for every cover asked for, once it is known; every list that shows covers
         # is here, each finds its own rows
         self.listeners = []
@@ -170,10 +186,11 @@ class CoverCache:
         return jpg
 
     def ensure(self, path):
-        """Reads the cover now, on the calling thread (the plugins' queue, like the covers' own steps)."""
+        """Reads the cover now, on the calling thread."""
         try:
-            if not self.cached(path)[0]:
-                self._extract(path)
+            with self.extracting:
+                if not self.cached(path)[0]:
+                    self._extract(path)
         except Exception as e:
             _log("cover %s: %s" % (os.path.basename(path), e))
 
@@ -194,21 +211,45 @@ class CoverCache:
                     if path not in self.queued:
                         self.queued.add(path)
                         self.wanted.append(path)
-            if self.working or not self.wanted:
+            if not self.wanted:
                 return
+            if self.working:
+                # The covers' thread runs a step that never ends (a file that hangs its reader): a new thread
+                # takes the rest, the old one finds the queue taken when it wakes. Before, one such file
+                # left every later cover unread until the plugin was loaded again.
+                if time.time() - self.beat < STEP_HANG:
+                    return
+                _log("covers: a step hangs for %.0f s, a new thread takes the queue" % (time.time() - self.beat))
+                self.thread = None
             self.working = True
-        run_on_queue(self._step)
+            self.beat = time.time()
+            thread = self.thread = self._thread()
+        self._post(thread)
 
-    def _step(self):
-        # One file at a time: other plugins share this queue.
+    @staticmethod
+    def _thread():
+        # Its own thread, not the plugins' queue: a task of another plugin that blocks that queue must not stop
+        # the covers. A Java thread, so the app's classes are found from it.
+        return jclass("org.telegram.messenger.DispatchQueue")("sculptCovers")
+
+    def _post(self, thread):
+        thread.postRunnable(_Runnable(lambda: self._step(thread)))
+
+    def _step(self, thread):
         with self.lock:
+            if thread is not self.thread:
+                return  # replaced while this step hung
             if not self.wanted:
                 self.working = False
                 return
             path = self.wanted.popleft()
+            self.beat = time.time()
         try:
-            if not self.cached(path)[0]:
-                self._extract(path)
+            with self.extracting:
+                fresh = not self.cached(path)[0]
+                if fresh:
+                    self._extract(path)
+            if fresh:
                 extracted = self.on_extracted
                 if extracted is not None:
                     extracted(path)
@@ -216,7 +257,23 @@ class CoverCache:
                 callback(path)
         except Exception as e:
             _log("cover %s: %s" % (os.path.basename(path), e))
-        run_on_queue(self._step)
+        finally:
+            with self.lock:
+                if path not in self.wanted:
+                    self.queued.discard(path)  # asked again later, it is looked at again
+        self._post(thread)
+
+    def close(self):
+        with self.lock:
+            thread, self.thread = self.thread, None
+            self.wanted.clear()
+            self.queued.clear()
+            self.working = False
+        if thread is not None:
+            try:
+                thread.recycle()
+            except Exception:
+                pass
 
     def _extract(self, path):
         base = self._name(path)
@@ -225,14 +282,18 @@ class CoverCache:
         os.makedirs(self.dir, exist_ok=True)  # the cache folder may have been cleared while the plugin runs
         retriever = jclass("android.media.MediaMetadataRetriever")()
         data = None
+        why = "no picture"
         try:
             retriever.setDataSource(path)
             data = retriever.getEmbeddedPicture()
-        except Exception:
-            data = None
+        except Exception as e:
+            data, why = None, "read failed: %s" % e
         finally:
             retriever.release()
+        if data is not None:
+            why = "decode failed (%d bytes)" % len(data)
         if data is None or not self._save_scaled(data, base + ".jpg"):
+            _log("cover none %s: %s" % (os.path.basename(path), why))
             open(base + ".none", "w").close()
 
     @staticmethod

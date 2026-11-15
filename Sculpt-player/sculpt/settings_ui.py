@@ -264,6 +264,8 @@ class LookScreen(ExtScreen):
             radius = RADIUS_VALUES[min(3, max(0, int(get("cover_radius", 1))))]
         slider_row(self, self.body, tr("Скругление углов"), 0, 40, 2, float(radius),
                    lambda v: tr("Нет") if v == 0 else "%d dp" % v, lambda v: self.save("cover_radius_dp", int(v)))
+        slider_row(self, self.body, tr("Обложка над Spotify Canvas"), 0, 100, 5, float(get("canvas_cover_alpha", 50)),
+                   lambda v: tr("Скрыта") if v == 0 else "%d%%" % v, lambda v: self.canvas_alpha(int(v)))
         self.native("getPlayerCoverColors", "setPlayerCoverColors", tr("Цвета обложки в плеере"),
                     tr("Плеер окрашивается в цвета обложки."), "onCoverColorsChanged")
         self.native("getPlayerMiniCoverColors", "setPlayerMiniCoverColors", tr("Цвета обложки в мини-плеере"),
@@ -304,6 +306,15 @@ class LookScreen(ExtScreen):
     def save(self, key, value):
         self.plugin.set_setting(key, value)
         self.plugin.settings_changed()
+
+    def canvas_alpha(self, value):
+        self.plugin.set_setting("canvas_cover_alpha", value)
+        player = self.plugin.player
+        if player is not None:
+            try:
+                self.plugin.sheet_method("applyTransitions").invoke(player.sheet)  # the cover takes it at once
+            except Exception as e:
+                self.plugin.report("applyTransitions", e)
 
 
 class LyricsScreen(LookScreen):

@@ -1,6 +1,7 @@
 // Compile-time stand-in for exteraGram 13.1.1's ImageReceiver, never packed into the DEX.
 package org.telegram.messenger;
 
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.view.View;
 
@@ -23,5 +24,9 @@ public class ImageReceiver {
     }
 
     public void setImageCoords(float x, float y, float width, float height) {
+    }
+
+    public Bitmap getBitmap() {
+        return null;
     }
 }
