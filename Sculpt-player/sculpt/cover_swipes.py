@@ -135,7 +135,7 @@ class CoverSwipes:
             value = round(value * 20) / 20.0  # steps of 5%, like the slider in the settings
             if value != self.value:
                 self.plugin.canvas_alpha_live = value
-                self.plugin.sheet_method("applyTransitions").invoke(self.player.sheet)
+                self.player.apply_cover_alpha()
         else:
             value = max(0.02, value)
             window = self.player.sheet.getWindow()

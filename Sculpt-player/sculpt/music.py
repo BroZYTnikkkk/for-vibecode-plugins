@@ -333,9 +333,10 @@ class CoverCache:
             bitmap.recycle()
             bitmap = square
         temp = "%s.%d.tmp" % (out, threading.get_ident())
+        os.makedirs(os.path.dirname(out), exist_ok=True)
         stream = jclass("java.io.FileOutputStream")(temp)
         try:
-            bitmap.compress(jclass("android.graphics.Bitmap$CompressFormat").JPEG, 88, stream)
+            bitmap.compress(jclass("android.graphics.Bitmap$CompressFormat").JPEG, 85, stream)
         finally:
             stream.close()
             bitmap.recycle()
@@ -373,7 +374,9 @@ class MusicData:
         # user data lives in the internal files dir (Telegram's Clear Cache empties get_files_dir()); covers are a cache
         self.dir = storage.data_dir()
         storage.migrate(os.path.join(get_files_dir(), "sculpt_player"), self.dir)
-        self.covers = CoverCache(storage.cache_dir())
+        # the plugin's data folder, not the app's cache folder: Android empties caches whenever the phone is short of
+        # space, and a full phone wiped the covers every few minutes, in the middle of writing them too
+        self.covers = CoverCache(self.dir)
         self.tracks = []
         self.by_path = {}
         self.queue_settling = False  # a saved queue is being built around the song it started from

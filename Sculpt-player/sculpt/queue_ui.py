@@ -486,7 +486,7 @@ class QueueScreen:
         self.hide_keyboard()
         if entry is None or self.is_active():
             if row.message is not None:
-                self.controller().playMessage(row.message)
+                self.jump_to(row.message)
             return
         # a song of another queue: that queue plays, from this song
         if entry["kind"] == "library":
@@ -527,6 +527,17 @@ class QueueScreen:
         self.order = list(range(len(self.rows)))
         current = self.current_index()
         self.position_text.setText("%d / %d" % (current + 1 if current >= 0 else 0, len(self.rows)))
+
+    def jump_to(self, message):
+        """A song further on (or back) in the queue that plays. playMessage alone leaves MediaController's place in
+        the list where it was, so "next" was the song after the old one: the place moves to the pressed song too."""
+        controller = self.controller()
+        playlist = self.active_list()[0]
+        index = playlist.indexOf(message) if playlist is not None else -1
+        if index >= 0:
+            self.plugin.media_fields.set_int(controller, "currentPlaylistNum", index)
+        controller.playMessage(message)
+        self.keep_position()
 
     def keep_position(self):
         """After a change to the list that plays, MediaController's position points at the playing song again."""

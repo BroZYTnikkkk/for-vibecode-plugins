@@ -127,7 +127,10 @@ class CoverRectHook(_Hook):
                 param.args[4] = JFloat(0.0)
                 param.thisObject.setAlpha(max(0.0, 1.0 - compact * 1.6))
                 return
-            param.thisObject.setAlpha(1.0)
+            if player is not None:
+                player.apply_cover_alpha()
+            else:
+                param.thisObject.setAlpha(1.0)
             radius = _dp(self.plugin.cover_radius()) * (1.0 - compact) + _dp(14) * compact
             param.args[3] = JFloat(float(radius))
         except Exception as e:
@@ -179,29 +182,17 @@ class TransitionsHook(_Hook):
             self.fail(e)
 
 
-class CanvasLayoutHook(_Hook):
-    """PlayerCoverView.setCanvasLayout(left, top, size, radius, alpha, pageWidth): where the cover goes while a Spotify
-    Canvas video fills the screen. The player shrinks it to a thumbnail by the title; here it stays the big cover, at
-    its own place and corners, see-through at the chosen alpha, so the video shows through it."""
+class NoCanvasHook(_Hook):
+    """PlayerCoverView.setCurrentCanvas(amount) and its delegate's hasCanvas(message): the cover view never turns into
+    the small thumbnail of exteraGram's Canvas mode. In that mode every slot is drawn at the thumbnail's place, so a
+    swipe changed the song while the cover stood still. The video still fills the screen (the sheet's own
+    canvasProgress); the cover is the big one, see-through by its alpha (Player.apply_cover_alpha)."""
 
     def before_hooked_method(self, param):
-        try:
-            cover = param.thisObject
-            rect = cover.getCoverRect()
-            if rect.width() <= 0:
-                return
-            mode = 0.0
-            player = self.plugin.player
-            if player is not None:
-                mode = min(1.0, max(0.0, self.plugin.sheet_fields.float(player.sheet, "modeProgress")))
-            alpha = self.plugin.canvas_cover_alpha()
-            param.args[0] = JFloat(float(rect.left))
-            param.args[1] = JFloat(float(rect.top))
-            param.args[2] = JFloat(float(rect.width()))
-            param.args[3] = JFloat(float(self.plugin.cover_fields.float(cover, "radius")))
-            param.args[4] = JFloat(float(alpha + (1.0 - alpha) * mode))  # toward the lyrics: whole, as before
-        except Exception as e:
-            self.fail(e)
+        if self.name == "hasCanvas":
+            param.setResult(JBoolean.FALSE)
+        else:
+            param.args[0] = JFloat(0.0)
 
 
 class DrawHook(_Hook):
@@ -222,6 +213,7 @@ class DrawHook(_Hook):
                     player.effects.draw(canvas, min(1.0, progress))
                 if mark:
                     mark("draw.lyrics_backdrop")
+                player.apply_cover_alpha()
                 blur = player.tab_amount()
                 if blur > 0.0 and player.canvas_amount() > 0.01:
                     player.blur_canvas(canvas, blur)
@@ -433,12 +425,31 @@ class BindHook(_Hook):
             if player is not None:
                 player.update_album()
                 player.update_like()
+                self.empty_cover(player)
                 if getattr(player, "quality", None) is not None:
                     player.quality.update()
                 if player.queue_visible():
                     player.queue_screen.playing_changed()
         except Exception as e:
             self.fail(e)
+
+
+def _empty_cover(plugin, player):
+    """The current slot shows the empty note although the cover of its song is kept by now: drawn again."""
+    try:
+        f = plugin.cover_fields
+        cover = player.coverView
+        current = f.int(cover, "current")
+        if not f.get(cover, "placeholders")[current]:
+            return
+        path = local_path(f.get(cover, "messages")[current])
+        if path is not None and plugin.music.covers.cached(path)[1] is not None:
+            cover.refreshCover()
+    except Exception as e:
+        _log("empty cover: %s" % e)
+
+
+BindHook.empty_cover = staticmethod(lambda player: _empty_cover(player.plugin, player))
 
 
 class SettingsFillHook(_Hook):
@@ -567,11 +578,14 @@ class CoverSourceHook(_Hook):
             covers = self.plugin.music.covers
             known, jpg = covers.cached(path) if path is not None else (True, None)
             self.plugin.cover_from_cache = jpg is not None
-            if path is not None and jpg is None and path not in self.told:
+            if path is not None and path not in self.told:
                 # one line per song for the next time a cover stays empty: what the cache and its queue knew
                 self.told.add(path)
-                _log("cover: %s not ready (read %s, queue %s, waiting %d, last step %.0f s ago)" % (
-                    path.rsplit("/", 1)[-1], known, covers.working, len(covers.wanted), time.time() - covers.beat))
+                import os
+                size = os.path.getsize(jpg) if jpg is not None and os.path.exists(jpg) else -1
+                _log("cover: %s read %s, kept %s (%d bytes), queue %s, waiting %d, last step %.0f s ago" % (
+                    path.rsplit("/", 1)[-1], known, jpg is not None, size, covers.working, len(covers.wanted),
+                    time.time() - covers.beat))
         except Exception as e:
             self.plugin.cover_from_cache = False
             self.fail(e)

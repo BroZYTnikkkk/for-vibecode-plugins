@@ -1,5 +1,6 @@
 # Sculpt Player for exteraGram. Copyright 2026 BroNik (@BroZYTnikkkk).
 
+import time
 import base64
 import os
 import re
@@ -11,7 +12,7 @@ from ui.bulletin import BulletinHelper
 from .i18n import tr
 
 
-VERSION = "0.49.4"
+VERSION = "0.49.9"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -177,9 +178,28 @@ def stop_work():
         pass
 
 
+_log_file = {"path": None}
+LOG_FILE_MAX = 256 * 1024
+
+
 def _log(text):
     try:
         jclass("android.util.Log").i("SculptPlayer", str(text))
+    except Exception:
+        pass
+    # also in the app's own files on the shared storage: the phone's logcat is flooded by other apps and forgets
+    # these lines within minutes, this file keeps them for a look over adb
+    try:
+        path = _log_file["path"]
+        if path is None:
+            folder = _ctx().getExternalFilesDir(None)
+            if folder is None:
+                return
+            path = _log_file["path"] = os.path.join(str(folder.getAbsolutePath()), "sculpt_log.txt")
+        if os.path.exists(path) and os.path.getsize(path) > LOG_FILE_MAX:
+            os.replace(path, path + ".1")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%m-%d %H:%M:%S"), text))
     except Exception:
         pass
 
@@ -338,3 +358,6 @@ class Fields:
 
     def set_float(self, obj, name, value):
         self.field(name).setFloat(obj, float(value))
+
+    def set(self, obj, name, value):
+        self.field(name).set(obj, value)

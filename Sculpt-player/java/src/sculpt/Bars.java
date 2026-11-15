@@ -263,7 +263,8 @@ public final class Bars {
             float mode = Math.max(0f, Math.min(1f, getFloat(sheet, "modeProgress")));
             lastMode = mode;
             int flags = mode > 0.003f ? LYRICS : 0;
-            if (mode < 0.5f && call(cover, "getCurrentCanvas") > 0.01f) {
+            // the sheet's own canvasProgress: the cover view never goes into its Canvas mode (NoCanvasHook)
+            if (mode < 0.5f && getFloat(sheet, "canvasProgress") > 0.01f) {
                 return flags | VIDEO;
             }
             float scale = getFloat(cover, "pauseScale");

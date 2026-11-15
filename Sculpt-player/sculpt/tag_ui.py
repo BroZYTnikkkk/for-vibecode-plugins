@@ -549,6 +549,8 @@ class TagScreen(RemoteRows):
             owner.data_changed()
         self.say(tr("Теги записаны"), "saved_messages")
         owner.data.covers.warm([path], first=True)
+        if hasattr(owner.plugin, "song_rewritten"):
+            owner.plugin.song_rewritten(path)
         tags.rescan(path, owner.data.scan)
         if self.alive:
             owner.back()

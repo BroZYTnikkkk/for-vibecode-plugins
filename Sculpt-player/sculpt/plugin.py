@@ -21,7 +21,7 @@ from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
 from .stats import StatsStore
 from . import profiler
-from .hooks import CanvasLayoutHook, CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
+from .hooks import NoCanvasHook, CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
 
 class SculptPlayerPlugin(BasePlugin):
@@ -42,6 +42,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.last_song = None
         self.landscape = False
         self.landscape_at = 0.0
+        self.canvas_delegate_hooked = False
         self.canvas_alpha_live = None  # the cover's alpha over a Canvas video while a finger sets it (CoverSwipes)
         self.cover_from_cache = False  # inside PlayerCovers.setCover for a song whose square cover is kept
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
@@ -92,7 +93,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.install(layout, "onDraw", (_java_class("android.graphics.Canvas"),), DrawHook(self, "onDraw"))
             self.install(controls, "setColors", (i, i, i, i), ControlsColorsHook(self, "setColors"))
             self.install(cover, "setCoverRect", (f, f, f, f, f), CoverRectHook(self, "setCoverRect"))
-            self.install(cover, "setCanvasLayout", (f, f, f, f, f, f), CanvasLayoutHook(self, "setCanvasLayout"))
+            self.install(cover, "setCurrentCanvas", (f,), NoCanvasHook(self, "setCurrentCanvas"))
             self.install(cover, "setCover", (_java_class(MESSAGE_OBJECT), b, i), CoverSwapHook(self, "coverSetCover"))
             self.install(cover, "dispatchTouchEvent", (_java_class("android.view.MotionEvent"),), CoverTouchHook(self, "coverTouch"))
             self.install(config, "getNewPlayerStyle", (), NewPlayerHook(self, "getNewPlayerStyle"))
@@ -168,11 +169,12 @@ class SculptPlayerPlugin(BasePlugin):
         if get("entry_drawer", True):
             wanted.append(dict(item_id="sculpt_drawer", menu_type="DRAWER_MENU", text="Sculpt Player", icon="msg_played",
                                on_click=lambda context: run_on_ui_thread(self.open_from_menu)))
-        if get("entry_main", True) and not get("entry_drawer", True):
-            # the main menu: the menu of the Settings tab in the bottom bar, and the menu exteraGram lets one arrange.
-            # exteraGram puts the side menu's items there as well, so with the side menu on it is there already.
-            wanted.append(dict(item_id="sculpt_main", menu_type="MAIN_MENU", text="Sculpt Player", icon="msg_played",
-                               on_click=lambda context: run_on_ui_thread(self.open_from_menu)))
+        # the bottom bar of the chats screen: a tab of its own, as KPM has (bottom_tab follows the switch)
+        try:
+            from . import bottom_tab
+            bottom_tab.install(self)
+        except Exception as e:
+            _log("bottom tab: %s" % e)
         if get("entry_message", True):
             for item_id, text, icon, action in (
                     ("sculpt_msg_next", tr("Играть следующей"), "msg_played", lambda m: self.queue_message(m, True)),
@@ -228,6 +230,11 @@ class SculptPlayerPlugin(BasePlugin):
             BulletinHelper.show_info(tr("Эта песня уже есть в «Песни из Telegram»."))
 
     def on_plugin_unload(self):
+        try:
+            from . import bottom_tab
+            bottom_tab.unload()
+        except Exception:
+            pass
         if getattr(self, "pill_on", False):
             from . import pill
             pill.unregister()
@@ -368,8 +375,9 @@ class SculptPlayerPlugin(BasePlugin):
 
         The player asks for the artwork once, when the song starts, and again only when a file finishes
         downloading, which never happens for a song that is already on the phone."""
-        playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
-        if self.player is not None and local_path(playing) == path:
+        if self.player is not None:
+            # not only the playing song: a neighbor's slot, loaded before its cover was read, would keep the empty
+            # note after a swipe or the next song made it the current one
             run_on_ui_thread(lambda: self.refresh_cover(path))
         player = self.player
         if player is not None and player.queue_visible():
@@ -427,15 +435,45 @@ class SculptPlayerPlugin(BasePlugin):
         except Exception as e:
             self.report("warm_neighbors", e)
 
+    def song_rewritten(self, path):
+        """The tag editor wrote the playing song's file: the player reads its tags again (the lyrics come from the
+        tags MediaController read when the song started) and shows the lyrics and the cover anew."""
+        try:
+            controller = jclass(MEDIA_CONTROLLER).getInstance()
+            if local_path(controller.getPlayingMessageObject()) != path:
+                return
+            File = jclass("java.io.File")
+            info = jclass("org.telegram.messenger.audioinfo.AudioInfo").getAudioInfo(File(path))
+            self.media_fields.set(controller, "audioInfo", info)
+            player = self.player
+            if player is not None:
+                self.sheet_method("loadLyrics", JBoolean.TYPE).invoke(player.sheet, JBoolean(True))
+            self.refresh_cover(path)
+        except Exception as e:
+            _log("song rewritten: %s" % e)
+
     def refresh_cover(self, path):
         player = self.player
         if player is None:
             return
         try:
             cover = self.sheet_fields.get(player.sheet, "coverView")
-            message = cover.getMessageObject()
-            if local_path(message) == path:
-                cover.refreshCover()
+            messages = self.cover_fields.get(cover, "messages")
+            current = self.cover_fields.int(cover, "current")
+            placeholders = receivers = None
+            for slot in range(len(messages)):
+                if local_path(messages[slot]) != path:
+                    continue
+                if slot == current:
+                    cover.refreshCover()
+                    continue
+                # a neighbor's slot (PlayerCoverView.load sets it the same way): its image and its empty-note flag
+                if placeholders is None:
+                    placeholders = self.cover_fields.get(cover, "placeholders")
+                    receivers = self.cover_fields.get(cover, "receivers")
+                found = jclass(PLAYER_COVERS).setCover(receivers[slot], messages[slot], 360, True)
+                placeholders[slot] = not bool(found)
+                cover.invalidate()
         except Exception as e:
             self.report("refreshCover", e)
 
@@ -497,6 +535,14 @@ class SculptPlayerPlugin(BasePlugin):
         player = Player(self, sheet)
         player.build(context)
         self.player = player
+        if not self.canvas_delegate_hooked:
+            # the cover's delegate is an anonymous class of the sheet: its hasCanvas is hooked once it exists
+            try:
+                delegate = self.cover_fields.get(player.coverView, "delegate")
+                self.install(delegate.getClass(), "hasCanvas", (_java_class(MESSAGE_OBJECT),), NoCanvasHook(self, "hasCanvas"))
+                self.canvas_delegate_hooked = True
+            except Exception as e:
+                _log("canvas delegate: %s" % e)
         player.layout.requestLayout()
 
     def player_for(self, layout):

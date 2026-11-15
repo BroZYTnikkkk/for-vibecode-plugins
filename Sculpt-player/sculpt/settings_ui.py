@@ -85,7 +85,7 @@ class SettingsRoot(Screen):
         self.section_title(player, tr("Где открывать плеер"))
         for key, title, hint in (("entry_drawer", tr("Боковое меню"), tr("Пункт «Sculpt Player» в боковом меню Telegram.")),
                                  ("entry_main", tr("Нижняя панель"),
-                                  tr("В меню вкладки «Настройки» внизу (долгое нажатие) → «Плагины». Пока включено боковое меню, пункт там и так есть.")),
+                                  tr("Вкладка «Музыка» в нижней панели списка чатов, перед профилем.")),
                                  ("entry_pill", tr("Пилл у поиска чатов"),
                                   tr("Пилл в ряду exteraGram рядом с поиском: что играет сейчас, нажатие открывает плеер.")),
                                  ("entry_message", tr("Меню песни в чате"),
@@ -366,7 +366,7 @@ class LookScreen(ExtScreen):
         player = self.plugin.player
         if player is not None:
             try:
-                self.plugin.sheet_method("applyTransitions").invoke(player.sheet)  # the cover takes it at once
+                player.apply_cover_alpha()  # the cover takes it at once
             except Exception as e:
                 self.plugin.report("applyTransitions", e)
 

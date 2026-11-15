@@ -409,11 +409,25 @@ class Player:
             self.plugin.report("blur_canvas", e)
 
     def canvas_amount(self):
-        """How far Spotify Canvas has taken over the cover: a video fills the screen, the cover is a thumbnail."""
+        """How far a Spotify Canvas video has come in behind the player, 0..1 (the sheet's own canvasProgress; the
+        cover view itself never goes into its Canvas mode, NoCanvasHook)."""
         try:
-            return float(self.coverView.getCurrentCanvas())
+            return max(0.0, min(1.0, self.plugin.sheet_fields.float(self.sheet, "canvasProgress")))
         except Exception:
             return 0.0
+
+    def apply_cover_alpha(self):
+        """Over a Canvas video the big cover is see-through at the chosen alpha; toward the lyrics CoverRectHook
+        dissolves it on its own."""
+        try:
+            mode = self.plugin.sheet_fields.float(self.sheet, "modeProgress")
+            if mode > 0.0:
+                return
+            alpha = 1.0 - self.canvas_amount() * (1.0 - self.plugin.canvas_cover_alpha())
+            if abs(self.coverView.getAlpha() - alpha) > 0.004:
+                self.coverView.setAlpha(float(alpha))
+        except Exception:
+            pass
 
     def queue_visible(self):
         return self.queue_screen is not None and self.queue_screen.visible
