@@ -525,6 +525,23 @@ class SculptPlayerPlugin(BasePlugin):
 
     def read_canvas_place(self):
         self.canvas_in_cover = int(self.get_setting("canvas_place", 0)) == 1
+        from .music import CoverCache
+        crop = bool(self.get_setting("crop_bars", True))
+        if crop != CoverCache.crop_bars:
+            CoverCache.crop_bars = crop
+            if self.music is not None:
+                # the kept covers have other names now: every list and the player ask for them again
+                self.music.covers.known.clear()
+                self.music.covers.names.clear()
+                player = self.player
+                if player is not None:
+                    for _, stack in player.stacks():
+                        if stack is not None:
+                            stack.data_changed()
+                    playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+                    path = local_path(playing)
+                    if path is not None:
+                        self.music.covers.warm([path], first=True)
 
     def canvas_cover_alpha(self):
         """How solid the big cover stays over a Spotify Canvas video, 0..1."""

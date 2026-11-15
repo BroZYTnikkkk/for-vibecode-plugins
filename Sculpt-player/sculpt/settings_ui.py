@@ -320,6 +320,8 @@ class LookScreen(ExtScreen):
         self.choice("canvas_place", tr("Spotify Canvas"), [tr("На весь экран"), tr("В обложке")], 0)
         slider_row(self, self.body, tr("Обложка над Spotify Canvas"), 0, 100, 5, float(get("canvas_cover_alpha", 50)),
                    lambda v: tr("Скрыта") if v == 0 else "%d%%" % v, lambda v: self.canvas_alpha(int(v)))
+        self.toggle("crop_bars", tr("Обрезать полосы по бокам"),
+                    tr("Картинка из видео с однотонными полосами по краям показывается без них: только квадрат обложки."))
         self.choice("quality_pill", tr("Качество песни"), [tr("Не показывать"), tr("Под обложкой"), tr("В углу обложки")], 1)
         self.native("getPlayerCoverColors", "setPlayerCoverColors", tr("Цвета обложки в плеере"),
                     tr("Плеер окрашивается в цвета обложки."), "onCoverColorsChanged")

@@ -109,6 +109,10 @@ class _Runnable(dynamic_proxy(jclass("java.lang.Runnable"))):
 class CoverCache:
     """Covers read from the files once and kept as small square JPEGs, so a list never decodes a whole picture."""
 
+    # a picture with plain bars at its sides (a video's thumbnail around a square cover) is cut to what is between
+    # them; setting crop_bars, on by default. Part of the kept file's name, so switching it reads the covers again.
+    crop_bars = True
+
     def __init__(self, directory):
         self.dir = os.path.join(directory, "covers")
         os.makedirs(self.dir, exist_ok=True)
@@ -154,7 +158,8 @@ class CoverCache:
             mtime = int(os.path.getmtime(path))
         except OSError:
             return None
-        name = os.path.join(self.dir, hashlib.sha1(("%s|%d|%d" % (path, mtime, COVER_VERSION)).encode("utf-8")).hexdigest())
+        key = "%s|%d|%d" % (path, mtime, COVER_VERSION) + ("|bars" if CoverCache.crop_bars else "")
+        name = os.path.join(self.dir, hashlib.sha1(key.encode("utf-8")).hexdigest())
         self.names[path] = name
         return name
 
@@ -303,6 +308,65 @@ class CoverCache:
             open(base + ".none", "w").close()
 
     @staticmethod
+    def _inside_bars(bitmap):
+        """(x, y, width, height) of the picture between plain bars at its long sides, when what is left is about
+        square; None for a picture without such bars. Looked for on a copy 160 px across, one line at a time."""
+        width, height = bitmap.getWidth(), bitmap.getHeight()
+        if abs(width - height) <= max(width, height) * 0.04:
+            return None
+        wide = width > height
+        long_side, short_side = (width, height) if wide else (height, width)
+        small_long = 160
+        small_short = max(8, int(round(small_long * short_side / float(long_side))))
+        sw, sh = (small_long, small_short) if wide else (small_short, small_long)
+        Bitmap = jclass("android.graphics.Bitmap")
+        small = Bitmap.createScaledBitmap(bitmap, sw, sh, True)
+        pixels = jarray(jint)(sw * sh)
+        small.getPixels(pixels, 0, sw, 0, 0, sw, sh)
+        if small is not bitmap:
+            small.recycle()
+        px = list(pixels)
+
+        def line(i):
+            """The colors of one line across the bars: a column of a wide picture, a row of a tall one."""
+            if wide:
+                return [px[y * sw + i] for y in range(sh)]
+            return px[i * sw:(i + 1) * sw]
+
+        def plain(colors, like=None):
+            channels = [[(c >> shift) & 255 for c in colors] for shift in (16, 8, 0)]
+            if any(max(ch) - min(ch) > 26 for ch in channels):
+                return None
+            mean = tuple(sum(ch) // len(ch) for ch in channels)
+            if like is not None and any(abs(a - b) > 30 for a, b in zip(mean, like)):
+                return None
+            return mean
+
+        def bar(order):
+            edge = plain(line(order[0]))
+            if edge is None:
+                return 0
+            count = 0
+            for i in order:
+                if plain(line(i), edge) is None:
+                    break
+                count += 1
+            return count
+
+        lines = small_long
+        first = bar(range(lines))
+        last = bar(range(lines - 1, -1, -1))
+        inside = lines - first - last
+        if first < lines * 0.04 or last < lines * 0.04 or inside <= 0:
+            return None
+        if not 0.8 <= inside / float(small_short) <= 1.25:
+            return None  # what is left is not a square cover: the picture stays whole
+        scale = long_side / float(small_long)
+        start = int(round(first * scale))
+        size = min(long_side - start, int(round(inside * scale)))
+        return (start, 0, size, height) if wide else (0, start, width, size)
+
+    @staticmethod
     def _save_scaled(data, out):
         Factory = jclass("android.graphics.BitmapFactory")
         Options = jclass("android.graphics.BitmapFactory$Options")
@@ -320,6 +384,13 @@ class CoverCache:
         bitmap = Factory.decodeByteArray(data, 0, len(data), options)
         if bitmap is None:
             return False
+        if CoverCache.crop_bars:
+            box = CoverCache._inside_bars(bitmap)
+            if box is not None:
+                cut = Bitmap.createBitmap(bitmap, *box)
+                if cut is not bitmap:
+                    bitmap.recycle()
+                bitmap = cut
         width, height = bitmap.getWidth(), bitmap.getHeight()
         scale = float(COVER_SIZE) / max(1, min(width, height))
         if scale < 1.0:
