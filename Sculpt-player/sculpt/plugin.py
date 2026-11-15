@@ -178,12 +178,30 @@ class SculptPlayerPlugin(BasePlugin):
                 wanted.append(dict(item_id=item_id, menu_type="MESSAGE_CONTEXT_MENU", text=text, icon=icon,
                                    condition=self.MUSIC_CONDITION,
                                    on_click=lambda context, a=action: self.message_action(context, a)))
+        from . import pill
+        if get("entry_pill", False):
+            try:
+                self.pill_on = pill.register(self, lambda: run_on_ui_thread(self.open_from_menu))
+                self.update_pill()
+            except Exception as e:
+                _log("pill: %s" % e)
+        elif getattr(self, "pill_on", False):
+            pill.unregister()
+            self.pill_on = False
         for item in wanted:
             try:  # one place this build of exteraGram does not know must not stop the others
                 item["menu_type"] = getattr(MenuItemType, item["menu_type"])
                 self.add_menu_item(MenuItemData(**item))
             except Exception as e:
                 _log("menu item %s: %s" % (item["item_id"], e))
+
+    def update_pill(self):
+        """The pill beside the chats' search says what plays."""
+        if not getattr(self, "pill_on", False):
+            return
+        from . import pill
+        playing = jclass(MEDIA_CONTROLLER).getInstance().getPlayingMessageObject()
+        pill.set_text(str(playing.getMusicTitle() or "") if playing is not None else "")
 
     def message_action(self, context, action):
         message = context.get("message") if context else None
@@ -207,6 +225,10 @@ class SculptPlayerPlugin(BasePlugin):
             BulletinHelper.show_info(tr("Эта песня уже есть в «Песни из Telegram»."))
 
     def on_plugin_unload(self):
+        if getattr(self, "pill_on", False):
+            from . import pill
+            pill.unregister()
+            self.pill_on = False
         self.sleep_timer.cancel()  # a pause posted for later must not outlive the plugin
         if self.stats is not None:
             self.stats.save()
@@ -366,6 +388,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.queues.save()
         if self.stats is not None:
             self.stats.new_run()  # the next seconds of playing are a new run, toward one more play
+        self.update_pill()
         controller = jclass(MEDIA_CONTROLLER).getInstance()
         playing = controller.getPlayingMessageObject()
         now = self.song_identity(playing)

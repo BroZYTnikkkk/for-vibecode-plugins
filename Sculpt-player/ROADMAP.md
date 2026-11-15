@@ -166,6 +166,9 @@
 
 Все под `lib/`: `services/replaygain_service.dart`, `widgets/player_lyrics_word_sweep.dart`, `providers/lyrics_translation_provider.dart`, `screens/lyrics_share_screen.dart`, `services/autoplay_taste.dart`, `services/library_mixes.dart`, `screens/listening_rewind_screen.dart`, `widgets/duplicate_review_sheet.dart`, `widgets/hires_check_card.dart`, `widgets/audio_analysis_spectrogram.dart`, `screens/track_metadata_edit_sheet.dart`.
 
+### Миксы на месте вкладки «Плейлисты» (автор, 2026-11-15)
+Вкладка «Плейлисты» потом может стать «Миксы»: подборки из того, что слушается (статистика 0.43 уже копит прослушивания), рядом со своими плейлистами. См. п. 20 (`autoplay_taste.dart`, `library_mixes.dart` в Mornye).
+
 ### Приложение-компаньон
 
 Пока не делаем: сборку очереди оно не ускорит, потому что Telegram играет только `MessageObject` из своего процесса, а скан MediaStore и так быстрый. Нужно для того, что должно работать при закрытом Telegram:

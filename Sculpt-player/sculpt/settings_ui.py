@@ -86,9 +86,12 @@ class SettingsRoot(Screen):
         for key, title, hint in (("entry_drawer", tr("Боковое меню"), tr("Пункт «Sculpt Player» в боковом меню Telegram.")),
                                  ("entry_main", tr("Нижняя панель"),
                                   tr("В меню вкладки «Настройки» внизу (долгое нажатие) → «Плагины». Пока включено боковое меню, пункт там и так есть.")),
+                                 ("entry_pill", tr("Пилл у поиска чатов"),
+                                  tr("Пилл в ряду exteraGram рядом с поиском: что играет сейчас, нажатие открывает плеер.")),
                                  ("entry_message", tr("Меню песни в чате"),
                                   tr("«Играть следующей», «В конец очереди» и «В „Песни из Telegram“» по нажатию на музыку в чате."))):
-            self.switch_row(player, title, hint, self.plugin.get_setting(key, True), lambda on, k=key: self.entry_changed(k, on))
+            self.switch_row(player, title, hint, self.plugin.get_setting(key, key != "entry_pill"),
+                            lambda on, k=key: self.entry_changed(k, on))
 
         mornye = self.parts[1]
         self.nav_row(mornye, ("msg_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)
