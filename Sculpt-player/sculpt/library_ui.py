@@ -5,7 +5,7 @@ import re
 import time
 
 from android_utils import OnClickListener, run_on_ui_thread
-from java import dynamic_proxy, jarray, jclass
+from java import dynamic_proxy, jarray, jclass, jfloat
 
 from .i18n import tr
 from . import profiler
@@ -24,6 +24,8 @@ FLASH_FADE_MS = 900
 FLASH_STEP_MS = 50
 FLASH_ALPHA = 96
 
+
+BRIGHTER = ("tonal", "onTonal", "surfaceContainer")  # roles made lighter by LibraryView.brighter
 
 class Run(dynamic_proxy(jclass("java.lang.Runnable"))):
     def __init__(self, action):
@@ -1302,9 +1304,28 @@ class LibraryView:
         # PlayerColors is a Java object: each field read goes through reflection, so a value is read once per change
         value = self.color_cache.get(role)
         if value is None:
-            value = getattr(self.colors, role)
+            value = self.brighter(role) if role in BRIGHTER else getattr(self.colors, role)
             self.color_cache[role] = value
         return value
+
+    def brighter(self, role):
+        """The player's tonal and container colors, lighter and more colorful: the plates, the fields, the circles
+        under icons and the pills read as colored buttons, not as grey. Their text is picked against the result."""
+        ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+        colors = self.colors
+        if role == "onTonal":
+            tonal = self.color("tonal")
+            return colors.background if float(ColorUtils.calculateLuminance(tonal)) > 0.42 else colors.text
+        light_theme = float(ColorUtils.calculateLuminance(colors.background)) > 0.5
+        base, toward, lift, boost = ((colors.tonal, 0.30, 0.10, 0.30) if role == "tonal"
+                                     else (colors.surfaceContainer, 0.20, 0.06, 0.25))
+        mixed = ColorUtils.blendARGB(base, colors.accent, toward)
+        hsl = jarray(jfloat)([0.0, 0.0, 0.0])
+        ColorUtils.colorToHSL(mixed, hsl)
+        hsl[1] = min(1.0, float(hsl[1]) * (1.0 + boost) + 0.06)
+        if not light_theme:
+            hsl[2] = min(0.62, float(hsl[2]) + lift)
+        return ColorUtils.HSLToColor(hsl)
 
     def selector(self, radius):
         color = jclass("androidx.core.graphics.ColorUtils").setAlphaComponent(self.colors.text, 24)
@@ -1352,7 +1373,7 @@ class LibraryView:
         note.setColorFilter(jclass("android.graphics.PorterDuffColorFilter")(self.colors.textSecondary, jclass("android.graphics.PorterDuff$Mode").SRC_IN))
         inset = jclass("android.graphics.drawable.InsetDrawable")(note, _dp(size * 0.28))
         Drawable = jclass("android.graphics.drawable.Drawable")
-        image.setBackground(jclass("android.graphics.drawable.LayerDrawable")(jarray(Drawable)([self.rounded(self.colors.surfaceContainer, _dp(radius)), inset])))
+        image.setBackground(jclass("android.graphics.drawable.LayerDrawable")(jarray(Drawable)([self.rounded(self.color("surfaceContainer"), _dp(radius)), inset])))
         return image
 
     def bind_cover(self, image, path, size):
@@ -1459,7 +1480,7 @@ class LibraryView:
         Frame = jclass("android.widget.FrameLayout$LayoutParams")
         if kind == "artists":
             frame = jclass("android.widget.FrameLayout")(self.context)
-            frame.setBackground(self.rounded(self.colors.surfaceContainer, _dp(24)))
+            frame.setBackground(self.rounded(self.color("surfaceContainer"), _dp(24)))
             holder["letter"] = self.text_view(20, True)
             holder["letter"].setGravity(17)
             frame.addView(holder["letter"], Frame(-1, -1))

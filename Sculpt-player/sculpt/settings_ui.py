@@ -82,7 +82,6 @@ class SettingsRoot(Screen):
         self.nav_row(player, ("msg_photo_settings", "msg_settings"), tr("Вид плеера"), owner.open_look)
         self.nav_row(player, ("msg_message", "msg_text_outline"), tr("Текст песни"), owner.open_lyrics_settings)
         self.nav_row(player, ("msg_stats",), tr("Статистика"), owner.open_stats)
-        self.nav_row(player, ("msg_plugins", "msg_bots"), tr("Настройки плеера exteraGram и плагины"), owner.player.open_stock_menu)
 
         mornye = self.parts[1]
         self.nav_row(mornye, ("msg_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)

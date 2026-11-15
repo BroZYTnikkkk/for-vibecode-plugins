@@ -153,44 +153,86 @@ def release_sliders(screen):
 
 
 def segments(screen, items, selected, choose):
-    """Two or three parts side by side, like Mornye's bottom bar: an icon on a pill, its name under it.
+    """Two or three parts in one capsule with a thin outline, like Mornye's bottom bar: each an icon and its name in
+    a line; the chosen one sits on a tonal pill that slides over to the part pressed.
 
     items: (icons, title). choose(index) when another one is pressed. Returns the row and a repaint(index)."""
+    from android_utils import run_on_ui_thread
     owner = screen.owner
     Params = jclass("android.widget.LinearLayout$LayoutParams")
+    FrameParams = jclass("android.widget.FrameLayout$LayoutParams")
     LinearLayout = jclass("android.widget.LinearLayout")
     ImageView = jclass("android.widget.ImageView")
+    GradientDrawable = jclass("android.graphics.drawable.GradientDrawable")
+    ColorUtils = jclass("androidx.core.graphics.ColorUtils")
+    height = _dp(48)
+    inner = _dp(4)
+    outer = LinearLayout(owner.context)
+    outer.setPadding(_dp(16), _dp(4), _dp(16), _dp(10))
+    capsule = jclass("android.widget.FrameLayout")(owner.context)
+    outline = GradientDrawable()
+    outline.setCornerRadius(float(height / 2))
+    capsule.setBackground(outline)
+    capsule.setPadding(inner, inner, inner, inner)
+    pill = jclass("android.view.View")(owner.context)
+    capsule.addView(pill, FrameParams(0, height - 2 * inner))
     row = LinearLayout(owner.context)
     row.setOrientation(0)
-    row.setPadding(_dp(12), _dp(4), _dp(12), _dp(8))
+    capsule.addView(row, FrameParams(-1, height - 2 * inner))
+    outer.addView(capsule, Params(-1, height))
     parts = []
     for index, (icons, title) in enumerate(items):
         part = LinearLayout(owner.context)
-        part.setOrientation(1)
-        part.setGravity(1)
+        part.setOrientation(0)
+        part.setGravity(17)
         icon = ImageView(owner.context)
         owner.set_icon(icon, icons)
-        icon.setScaleType(jclass("android.widget.ImageView$ScaleType").CENTER)
-        part.addView(icon, owner.params(64, 32))
-        name = owner.text_view(12)
+        icon.setScaleType(jclass("android.widget.ImageView$ScaleType").FIT_CENTER)
+        part.addView(icon, owner.params(20, 20))
+        name = owner.text_view(14)
         name.setText(title)
-        name.setGravity(1)
-        place = Params(-2, -2)
-        place.topMargin = _dp(4)
-        part.addView(name, place)
+        at = Params(-2, -2)
+        at.setMarginStart(_dp(8))
+        part.addView(name, at)
         part.setContentDescription(title)
         screen.click(part, choose, index)
-        row.addView(part, Params(0, _dp(60), 1.0))
+        row.addView(part, Params(0, -1, 1.0))
         parts.append((icon, name))
+    state = {"current": selected, "placed": False}
+
+    def place(animate, tries=0):
+        width = int(row.getWidth())
+        if width <= 0:
+            if tries < 20:
+                run_on_ui_thread(lambda: place(False, tries + 1), 50)
+            return
+        share = width // max(1, len(parts))
+        params = pill.getLayoutParams()
+        if int(params.width) != share:
+            params.width = share
+            pill.setLayoutParams(params)
+        target = float(share * state["current"])
+        pill.animate().cancel()
+        if animate and state["placed"]:
+            pill.animate().translationX(target).setDuration(220).setInterpolator(
+                jclass("android.view.animation.DecelerateInterpolator")()).start()
+        else:
+            pill.setTranslationX(target)
+        state["placed"] = True
 
     def paint(current):
+        moved = current != state["current"]
+        state["current"] = current
+        outline.setColor(0)
+        outline.setStroke(max(1, _dp(1)), ColorUtils.setAlphaComponent(owner.color("textSecondary"), 110))
+        pill.setBackground(owner.rounded(owner.color("tonal"), (height - 2 * inner) // 2))
         for index, (icon, name) in enumerate(parts):
             on = index == current
-            icon.setBackground(owner.rounded(owner.color("tonal"), _dp(16)) if on else None)
             owner.tint(icon, owner.color("onTonal") if on else owner.color("textSecondary"))
-            name.setTextColor(owner.color("text") if on else owner.color("textSecondary"))
+            name.setTextColor(owner.color("onTonal") if on else owner.color("textSecondary"))
             name.setTypeface(owner.bold if on else owner.regular)
             name.setSelected(on)
+        place(moved)
 
     paint(selected)
-    return row, paint
+    return outer, paint
