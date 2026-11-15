@@ -82,6 +82,13 @@ class SettingsRoot(Screen):
         self.nav_row(player, ("msg_photo_settings", "msg_settings"), tr("Вид плеера"), owner.open_look)
         self.nav_row(player, ("msg_message", "msg_text_outline"), tr("Текст песни"), owner.open_lyrics_settings)
         self.nav_row(player, ("msg_stats",), tr("Статистика"), owner.open_stats)
+        self.section_title(player, tr("Где открывать плеер"))
+        for key, title, hint in (("entry_drawer", tr("Боковое меню"), tr("Пункт «Sculpt Player» в боковом меню Telegram.")),
+                                 ("entry_main", tr("Нижняя панель"),
+                                  tr("В меню вкладки «Настройки» внизу (долгое нажатие) → «Плагины». Пока включено боковое меню, пункт там и так есть.")),
+                                 ("entry_message", tr("Меню песни в чате"),
+                                  tr("«Играть следующей», «В конец очереди» и «В „Песни из Telegram“» по нажатию на музыку в чате."))):
+            self.switch_row(player, title, hint, self.plugin.get_setting(key, True), lambda on, k=key: self.entry_changed(k, on))
 
         mornye = self.parts[1]
         self.nav_row(mornye, ("msg_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)
@@ -90,6 +97,46 @@ class SettingsRoot(Screen):
         self.advanced_row(mornye)
         self.nav_row(mornye, ("msg_info",), tr("О Mornye"), owner.open_about)
         self.show_part()
+
+    def section_title(self, container, text):
+        label = self.label(14, "accent", True)
+        label.setText(text)
+        label.setPadding(_dp(20), _dp(20), _dp(20), _dp(4))
+        container.addView(label)
+
+    def entry_changed(self, key, on):
+        self.plugin.set_setting(key, bool(on))
+        self.plugin.register_entries()
+
+    def switch_row(self, container, title, hint, value, changed):
+        owner = self.owner
+        Params = jclass("android.widget.LinearLayout$LayoutParams")
+        row = jclass("android.widget.LinearLayout")(owner.context)
+        row.setOrientation(0)
+        row.setGravity(16)
+        row.setPadding(_dp(20), _dp(8), _dp(16), _dp(8))
+        texts = jclass("android.widget.LinearLayout")(owner.context)
+        texts.setOrientation(1)
+        name = self.label(16, "text")
+        name.setText(title)
+        texts.addView(name)
+        if hint:
+            note = self.label(13, "textSecondary")
+            note.setSingleLine(False)
+            note.setText(hint)
+            texts.addView(note)
+        row.addView(texts, Params(0, -2, 1.0))
+        switch = jclass("android.widget.Switch")(owner.context)
+        switch.setChecked(bool(value))
+        switch.setContentDescription(title)
+        from .ext_ui import Checked
+        listener = Checked(lambda on: self.guarded(changed, bool(on)))
+        switch.setOnCheckedChangeListener(listener)
+        if not hasattr(self, "switch_listeners"):
+            self.switch_listeners = []
+        self.switch_listeners.append((switch, listener))
+        row.addView(switch)
+        container.addView(row, Params(-1, -2))
 
     def advanced_row(self, container):
         """The switch that shows the details of sound and services, right on the first screen."""
@@ -140,6 +187,10 @@ class SettingsRoot(Screen):
             switch[0].setOnCheckedChangeListener(None)
             switch[1].action = None
             self.switch_listener = None
+        for view, listener in getattr(self, "switch_listeners", []):
+            view.setOnCheckedChangeListener(None)
+            listener.action = None
+        self.switch_listeners = []
         super().dispose()
 
 

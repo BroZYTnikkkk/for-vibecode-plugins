@@ -344,7 +344,7 @@ class Extensions:
         def installed(ext):
             manifest = self.get().manifest(ext)
             name = manifest.display_name if manifest is not None else ext
-            BulletinHelper.show_success(tr("Расширение «%s» установлено. Оно во вкладке Mornye плеера.") % name)
+            BulletinHelper.show_success(tr("Расширение «%s» установлено. Оно во вкладке «Загрузки» плеера, в «Расширениях».") % name)
             player = self.plugin.player
             if player is not None:
                 for _, stack in player.stacks():

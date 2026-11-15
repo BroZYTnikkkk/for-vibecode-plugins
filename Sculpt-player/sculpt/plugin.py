@@ -135,12 +135,7 @@ class SculptPlayerPlugin(BasePlugin):
                          LyricsSetHook(self, "setLyrics"))
             self.install(_java_class("com.exteragram.messenger.player.lyrics.LyricsRepository"), "requestLrclib",
                          (_java_class("com.exteragram.messenger.player.TrackQuery"),), LyricsHook(self, "requestLrclib"))
-            self.add_menu_item(MenuItemData(
-                menu_type=MenuItemType.DRAWER_MENU,
-                text="Sculpt Player",
-                icon="msg_played",
-                on_click=lambda context: run_on_ui_thread(self.open_from_menu),
-            ))
+            self.register_entries()
             self.add_menu_item(MenuItemData(
                 menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
                 text=tr("Установить расширение"),
@@ -153,6 +148,63 @@ class SculptPlayerPlugin(BasePlugin):
             _log("loaded %s, mutagen %s" % (VERSION, getattr(tags, "version_string", None) if tags else "missing"))
         except Exception as e:
             _show_error(tr("Sculpt Player: не удалось загрузиться"), e)
+
+    # -- the ways into the player from the rest of Telegram, each with its switch in Settings > Player
+
+    ENTRIES = (("entry_drawer", True), ("entry_main", True), ("entry_message", True))
+    MUSIC_CONDITION = "message != null && message.isMusic()"
+
+    def register_entries(self):
+        for item_id in ("sculpt_drawer", "sculpt_main", "sculpt_msg_next", "sculpt_msg_last", "sculpt_msg_tg"):
+            try:
+                self.remove_menu_item(item_id)
+            except Exception:
+                pass
+        get = self.get_setting
+        wanted = []
+        if get("entry_drawer", True):
+            wanted.append(dict(item_id="sculpt_drawer", menu_type="DRAWER_MENU", text="Sculpt Player", icon="msg_played",
+                               on_click=lambda context: run_on_ui_thread(self.open_from_menu)))
+        if get("entry_main", True) and not get("entry_drawer", True):
+            # the main menu: the menu of the Settings tab in the bottom bar, and the menu exteraGram lets one arrange.
+            # exteraGram puts the side menu's items there as well, so with the side menu on it is there already.
+            wanted.append(dict(item_id="sculpt_main", menu_type="MAIN_MENU", text="Sculpt Player", icon="msg_played",
+                               on_click=lambda context: run_on_ui_thread(self.open_from_menu)))
+        if get("entry_message", True):
+            for item_id, text, icon, action in (
+                    ("sculpt_msg_next", tr("Играть следующей"), "msg_played", lambda m: self.queue_message(m, True)),
+                    ("sculpt_msg_last", tr("В конец очереди"), "msg_list", lambda m: self.queue_message(m, False)),
+                    ("sculpt_msg_tg", tr("В «Песни из Telegram»"), "msg_fave", self.keep_message)):
+                wanted.append(dict(item_id=item_id, menu_type="MESSAGE_CONTEXT_MENU", text=text, icon=icon,
+                                   condition=self.MUSIC_CONDITION,
+                                   on_click=lambda context, a=action: self.message_action(context, a)))
+        for item in wanted:
+            try:  # one place this build of exteraGram does not know must not stop the others
+                item["menu_type"] = getattr(MenuItemType, item["menu_type"])
+                self.add_menu_item(MenuItemData(**item))
+            except Exception as e:
+                _log("menu item %s: %s" % (item["item_id"], e))
+
+    def message_action(self, context, action):
+        message = context.get("message") if context else None
+        if message is not None:
+            run_on_ui_thread(lambda: self.guard_message(action, message))
+
+    def guard_message(self, action, message):
+        try:
+            action(message)
+        except Exception as e:
+            self.report("message menu", e)
+
+    def queue_message(self, message, next_song):
+        played = self.music.insert_message(message, next_song)
+        BulletinHelper.show_info(tr("Заиграла.") if played else (tr("Заиграет следующей.") if next_song else tr("Добавлено в конец очереди.")))
+
+    def keep_message(self, message):
+        if self.playlists.add_telegram(message):
+            BulletinHelper.show_info(tr("Добавлено в «Песни из Telegram»."))
+        else:
+            BulletinHelper.show_info(tr("Эта песня уже есть в «Песни из Telegram»."))
 
     def on_plugin_unload(self):
         self.sleep_timer.cancel()  # a pause posted for later must not outlive the plugin

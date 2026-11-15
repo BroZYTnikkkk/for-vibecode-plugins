@@ -1024,6 +1024,28 @@ class MusicData:
         if table is not None:
             table.put(JInteger(message.getId()), message)
 
+    def insert_message(self, message, next_song):
+        """A song from a chat, next or at the end of what plays now; nothing plays: it starts. True if it started."""
+        controller = jclass("org.telegram.messenger.MediaController").getInstance()
+        if controller.getPlayingMessageObject() is None:
+            controller.playMessage(message)
+            return True
+        self._insert(controller, message, next_song)
+        return False
+
+    def _insert(self, controller, message, next_song):
+        """As play_next and play_last do for a library song: the normal order plays toward index 0."""
+        config, playlist, active = self._active_list(controller)
+        number = controller.getPlayingMessageObjectNum()
+        if active is None or number < 0 or number >= active.size():
+            return
+        if config.playOrderReversed:
+            active.add(number + 1 if next_song else active.size(), message)
+        else:
+            active.add(number if next_song else 0, message)
+            self.plugin.media_fields.set_int(controller, "currentPlaylistNum", number + 1)
+        self._remember(controller, config, playlist, message)
+
     def play_next(self, track):
         controller = jclass("org.telegram.messenger.MediaController").getInstance()
         if controller.getPlayingMessageObject() is None:
