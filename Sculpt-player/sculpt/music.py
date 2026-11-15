@@ -1023,10 +1023,15 @@ class ListenTimer:
         try:
             controller = jclass("org.telegram.messenger.MediaController").getInstance()
             message = controller.getPlayingMessageObject()
+            stats = getattr(self.plugin, "stats", None)
             if self.stopped or message is None or controller.isMessagePaused():
                 self.running = False
+                if stats is not None:
+                    stats.save()  # a pause ends a stretch of listening: it is kept now, not a minute later
                 return
             now = time.monotonic()
+            if stats is not None:
+                stats.add(message, min(now - self.last, LISTEN_TICK_MS / 1000.0 + 1.0))
             path = local_path(message)
             if path != self.path:
                 self.path = path

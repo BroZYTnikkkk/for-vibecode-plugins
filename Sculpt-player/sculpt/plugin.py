@@ -19,6 +19,7 @@ from .extensions import SFLX_CONDITION, Extensions
 from . import link_share, link_stream
 from .playlists import PlaylistStore
 from .sleep_timer import SleepTimer
+from .stats import StatsStore
 from . import profiler
 from .hooks import CoverSourceHook, AudioInfoHook, SheetTouchHook, NextSongHook, LyricsStateHook, ShowMenuHook, LinkSourceHook, ArtworkHook, BackHook, BindHook, ColorsHook, ConstructorHook, ControlsColorsHook, CoverRectHook, DetachHook, DrawHook, HeaderHook, NeighborHook, CoverSwapHook, CoverTouchHook, LyricsHook, LyricsPositionHook, LyricsSetHook, LayoutHook, ModeHook, ModeSegmentColorsHook, ModeSegmentsHook, NeedsArtworkHook, NewPlayerHook, PlayHook, PlaylistHook, PredictiveBackHook, RhythmHook, SettingsClickHook, SettingsFillHook, SpeedColorsHook, SwipeAreaHook, TransitionsHook
 
@@ -45,6 +46,7 @@ class SculptPlayerPlugin(BasePlugin):
         self.song_ended = False  # inside MediaController's move to the next song after one played to its end
         self.listen = None
         self.sleep_timer = SleepTimer(self)
+        self.stats = None
         self.media_fields = None
         self.sheet_methods = {}
         self.extensions = None
@@ -57,6 +59,7 @@ class SculptPlayerPlugin(BasePlugin):
             self.music.covers.on_extracted = self.cover_extracted
             self.queues = QueueStore(self)
             self.playlists = PlaylistStore(self)
+            self.stats = StatsStore(self)
             self.listen = ListenTimer(self)
             self.layout_fields = Fields(LAYOUT)
             self.cover_fields = Fields(COVER)
@@ -151,6 +154,8 @@ class SculptPlayerPlugin(BasePlugin):
 
     def on_plugin_unload(self):
         self.sleep_timer.cancel()  # a pause posted for later must not outlive the plugin
+        if self.stats is not None:
+            self.stats.save()
         for handle in self.hooks:
             try:
                 self.unhook_method(handle)

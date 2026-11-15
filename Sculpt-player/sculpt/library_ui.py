@@ -960,23 +960,6 @@ class GroupsScreen(ListScreen):
         self.owner.open_group(self.kind, self.items[index])
 
 
-class BlankScreen(Screen):
-    """Popular songs: only the place for them, until there is something to count."""
-
-    def __init__(self, owner, title, text):
-        super().__init__(owner, title)
-        page = jclass("android.widget.LinearLayout")(owner.context)
-        page.setOrientation(1)
-        page.addView(self.header())
-        label = self.label(15, "textSecondary")
-        label.setText(text)
-        label.setGravity(17)
-        label.setSingleLine(False)
-        label.setPadding(_dp(32), 0, _dp(32), _dp(56))
-        page.addView(label, jclass("android.widget.LinearLayout$LayoutParams")(-1, 0, 1.0))
-        self.view = page
-
-
 class SearchScreen(SongsScreen):
     """Songs of the library by name, author or album; each letter narrows the list."""
 
@@ -1130,7 +1113,7 @@ class RootScreen(Screen):
         self.search_pill(self.content, tr("Искать в медиатеке"), owner.open_search)
         self.nav("all",("msg_filled_data_music", "msg_played"), tr("Все песни"), owner.open_all)
         self.nav("favorites", ("media_like",), tr("Любимые"), owner.open_favorites)
-        self.nav(None, ("msg_stats",), tr("Популярные"), owner.open_popular)
+        self.nav(None, ("msg_stats",), tr("Статистика"), owner.open_stats)
         self.tiles()
         self.added_row = self.preview(tr("Недавно добавленные"), owner.open_added)
         self.played_row = self.preview(tr("Недавно сыгранные"), owner.open_played)
@@ -1690,8 +1673,9 @@ class LibraryView:
         self.push(SongsScreen(self, tr("Недавно сыгранные"), self.data.history_tracks, None, "title",
                               tr("Здесь появятся песни, которые ты слушаешь. Песня попадёт сюда после 30 секунд.")))
 
-    def open_popular(self):
-        self.push(BlankScreen(self, tr("Популярные"), tr("Здесь появятся песни, которые ты слушаешь чаще всего.")))
+    def open_stats(self):
+        from .stats import StatsScreen
+        self.push(StatsScreen(self))
 
     def open_groups(self, kind, title):
         self.push(GroupsScreen(self, kind, title))
