@@ -11,7 +11,7 @@ from ui.bulletin import BulletinHelper
 from .i18n import tr
 
 
-VERSION = "0.45.1"
+VERSION = "0.46.0"
 
 
 SHEET = "com.exteragram.messenger.player.MusicPlayerSheet"
@@ -49,7 +49,7 @@ PANEL_TABS = (
     (tr("Медиатека"), ("msg_folders", "msg2_folder")),
     (tr("Поиск"), ("outline_search_1_24", "msg_search")),
     (tr("Плейлисты"), ("files_music", "filled_widget_music")),
-    ("Mornye", ("menu_download_round", "msg_download")),
+    (tr("Загрузки"), ("menu_download_round", "msg_download")),
     (tr("Настройки"), ("msg_settings",)),
 )
 PANEL_QUEUE = 0  # the player's own queue mode, moved here from the icon row
@@ -57,7 +57,7 @@ PANEL_ACTIVE = 1  # the player tab, which every opening of the player starts on
 PANEL_LIBRARY = 2
 PANEL_SEARCH = 3  # in the middle of the panel and filled with the accent: songs to download, Mornye's search
 PANEL_PLAYLISTS = 4
-PANEL_MORNYE = 5  # downloads and extensions from Mornye; search of one's own songs is in the library
+PANEL_MORNYE = 5  # downloads (from Mornye's extensions), with the extensions on top; a count on its icon
 PANEL_SETTINGS = 6  # the gear in the panel's last place, where the player's ⋯ was; the ⋯ is beside the title now
 PANEL_STACKS = (PANEL_LIBRARY, PANEL_SEARCH, PANEL_PLAYLISTS, PANEL_MORNYE, PANEL_SETTINGS)  # tabs that are a stack of screens
 SEARCH_HISTORY = 8  # recent download searches kept on the Search tab

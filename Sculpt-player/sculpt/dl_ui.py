@@ -948,9 +948,13 @@ class DownloadsScreen(ExtScreen):
 
     STATUS = {"queued": tr("В очереди"), "done": tr("Скачано, уже в медиатеке"), "cancelled": tr("Отменено")}
 
+    ROOT = False  # the first screen of the Downloads tab: a large header, the extensions on top
+
     def __init__(self, owner):
         super().__init__(owner, tr("Загрузки"))
-        self.page(self.icon_button(("msg_settings",), tr("Настройки скачивания"), owner.open_download_settings))
+        self.page(self.icon_button(("msg_settings",), tr("Настройки скачивания"), owner.open_download_settings), self.ROOT)
+        if self.ROOT:
+            self.nav_row(self.content, ("msg_plugins", "filter_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)
         self.rows = {}
         self.names = {}
         self.signature = None
@@ -1003,7 +1007,9 @@ class DownloadsScreen(ExtScreen):
         active = sum(1 for i in items if i["status"] in ("queued", "running"))
         self.set_subtitle(tr("идёт: %d") % active if active else "")
         if not items:
-            self.note(self.body, tr("Пока ничего не скачивалось. Найди песню в поиске вкладки Mornye: строка «Найти песню для скачивания»."), size=15)
+            self.note(self.body, tr("Пока ничего не скачивается. Найди песню во вкладке «Поиск» и нажми «Скачать»: "
+                                    "здесь будет видно, как она качается, а готовая появится в медиатеке."), size=15)
+            self.item_row(self.body, tr("Открыть поиск"), "", self.open_search, icons=("outline_search_1_24", "msg_search"))
             return
         if any(i["status"] in ("done", "failed", "cancelled") for i in items):
             self.item_row(self.body, tr("Убрать завершённые"), tr("Файлы останутся на телефоне."), self.clear_finished, icons=("msg_clear", "msg_delete"))
@@ -1076,6 +1082,10 @@ class DownloadsScreen(ExtScreen):
         extensions = self.owner.plugin.extensions
         self.run(lambda m: extensions.downloads().clear_finished(), lambda _: self.refresh())
 
+    def open_search(self):
+        from .common import PANEL_SEARCH
+        self.owner.player.show_tab(PANEL_SEARCH)
+
     def play(self, path):
         track = self.owner.data.by_path.get(path)
         if track is None:
@@ -1088,6 +1098,10 @@ class DownloadsScreen(ExtScreen):
         if self.refresh in listeners:
             listeners.remove(self.refresh)
         super().dispose()
+
+
+class DownloadsRoot(DownloadsScreen):
+    ROOT = True
 
 
 class DownloadSettingsScreen(ExtScreen):

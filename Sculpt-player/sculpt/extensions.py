@@ -216,6 +216,14 @@ class Extensions:
                 self.queue = DownloadQueue(manager, download_dir, on_change=self.changed, on_done=self.done)
             return self.queue
 
+    def active_count(self):
+        """How many downloads wait or run; 0 before the queue is made. Cheap enough for the UI thread."""
+        queue = self.queue
+        if queue is None:
+            return 0
+        with queue.lock:
+            return sum(1 for item in queue.items if item.get("status") in ("queued", "running"))
+
     def changed(self):
         """From a download's thread, many times a second while it runs: the screens hear of it at most 4 times a second."""
         if self.change_posted:

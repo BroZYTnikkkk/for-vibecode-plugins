@@ -48,13 +48,13 @@ class ExtScreen(Screen):
         self.body = None
         self.marks = (0, 0, 0, 0)
 
-    def page(self, trailing=None):
+    def page(self, trailing=None, large=False):
         owner = self.owner
         LinearLayout = jclass("android.widget.LinearLayout")
         Params = jclass("android.widget.LinearLayout$LayoutParams")
         page = LinearLayout(owner.context)
         page.setOrientation(1)
-        page.addView(self.header(False, trailing))
+        page.addView(self.header(large, trailing))
         scroll = jclass("android.widget.ScrollView")(owner.context)
         scroll.setVerticalScrollBarEnabled(False)
         scroll.setOverScrollMode(2)

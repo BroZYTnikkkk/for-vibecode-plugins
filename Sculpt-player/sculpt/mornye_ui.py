@@ -5,7 +5,7 @@ from java import jclass
 
 from .i18n import tr
 from .common import _dp
-from .dl_ui import DownloadSearchScreen, DownloadSettingsScreen, DownloadsScreen
+from .dl_ui import DownloadSearchScreen, DownloadSettingsScreen, DownloadsRoot, DownloadsScreen
 from .ext_ui import CatalogScreen, ExtensionScreen, ExtensionsScreen, ReposScreen
 from .library_ui import LibraryView, Screen
 from .remote_ui import RemoteScreen
@@ -21,42 +21,6 @@ MORNYE_SUPPORT = (
     ("GitHub Sponsors", "https://github.com/sponsors/zarzet"),
 )
 MORNYE_CONTRIBUTORS = "Amonoman, Ruubiiiii, binimum, sachinsenal0x64, Pedro Marcondes, Serhii Ilchenko"
-
-
-class MornyeRoot(Screen):
-    """The first level of the Mornye tab: search for songs to download, then the places to go."""
-
-    def __init__(self, owner):
-        super().__init__(owner, "Mornye")
-        LinearLayout = jclass("android.widget.LinearLayout")
-        Params = jclass("android.widget.LinearLayout$LayoutParams")
-        page = LinearLayout(owner.context)
-        page.setOrientation(1)
-        extensions = self.icon_button(("msg_plugins", "filter_plugins", "msg_bots"), tr("Расширения"), owner.open_extensions)
-        page.addView(self.header(True, extensions))
-        scroll = jclass("android.widget.ScrollView")(owner.context)
-        scroll.setVerticalScrollBarEnabled(False)
-        scroll.setOverScrollMode(2)
-        content = LinearLayout(owner.context)
-        content.setOrientation(1)
-        content.setPadding(0, 0, 0, _dp(16))
-        scroll.addView(content)
-        page.addView(scroll, Params(-1, 0, 1.0))
-        self.view = page
-
-        self.nav_row(content, ("msg2_devices", "menu_devices", "msg_link"), "Mornye Link", owner.open_mornye_link)
-        self.nav_row(content, ("msg_download",), tr("Загрузки"), owner.open_downloads)
-        self.nav_row(content, ("msg_info",), tr("О Mornye"), owner.open_about)
-
-        note = self.label(13, "textSecondary")
-        note.setSingleLine(False)
-        note.setText(tr("Скачивание, расширения и поиск тегов пришли сюда из Mornye, музыкального плеера zarzet. "
-                     "Песни для скачивания ищи во вкладке «Поиск» в центре панели, теги — в «Изменить теги» в меню песни."))
-        note.setPadding(_dp(20), _dp(16), _dp(20), 0)
-        content.addView(note, Params(-1, -2))
-
-    def colors_changed(self):
-        self.paint_pills()
 
 
 class AboutScreen(Screen):
@@ -157,11 +121,11 @@ class AboutScreen(Screen):
 
 
 class MornyeView(LibraryView):
-    """The Mornye tab: the same stack of screens as the library, with its own first screen."""
+    """The Downloads tab: the same stack of screens as the library; first the downloads, the extensions on top."""
 
 
     def first_screen(self):
-        return MornyeRoot(self)
+        return DownloadsRoot(self)
 
     def shown(self):
         self.data_changed()

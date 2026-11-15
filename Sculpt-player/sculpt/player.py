@@ -56,6 +56,8 @@ class Player:
         self.panel_top = 0
         self.divider = None
         self.indicator = None
+        self.badge = None
+        self.badge_listener = None
         self.panel_hidden = False
         self.context = None
         self.active_tab = PANEL_ACTIVE
@@ -154,6 +156,7 @@ class Player:
         self.update_like()
         self.apply_colors(self.plugin.sheet_fields.get(self.sheet, "colors"))
         self.update_album()
+        self.update_badge()
 
     def build_panel(self, context):
         View = jclass("android.view.View")
@@ -173,7 +176,53 @@ class Player:
         self.tabs[PANEL_SEARCH].setBackground(pill)
         self.indicator = View(context)
         self.layout.addOwnView(self.indicator)
+        # how many songs download now, on the Downloads tab's icon
+        self.badge = jclass("android.widget.TextView")(context)
+        self.badge.setTextSize(1, 10.0)
+        self.badge.setGravity(17)
+        self.badge.setSingleLine(True)
+        self.badge.setPadding(_dp(4), 0, _dp(4), 0)
+        self.badge.setVisibility(8)
+        self.badge.setImportantForAccessibility(2)  # the tab's own description says it (update_badge)
+        self.layout.addOwnView(self.badge)
+        extensions = getattr(self.plugin, "extensions", None)
+        if extensions is not None:
+            self.badge_listener = lambda: self.update_badge()
+            extensions.listeners.append(self.badge_listener)
         self.moreButton.bringToFront()
+
+    def panel_views(self):
+        """The tab bar's own views: they stay when a tab covers the player."""
+        views = self.tabs + [self.divider, self.indicator]
+        badge = getattr(self, "badge", None)
+        return views + [badge] if badge is not None else views
+
+    def update_badge(self):
+        badge = getattr(self, "badge", None)
+        if badge is None:
+            return
+        extensions = getattr(self.plugin, "extensions", None)
+        count = extensions.active_count() if extensions is not None else 0
+        title = PANEL_TABS[PANEL_MORNYE][0]
+        if count <= 0:
+            badge.setVisibility(8)
+            self.tabs[PANEL_MORNYE].setContentDescription(title)
+            return
+        colors = self.plugin.sheet_fields.get(self.sheet, "colors")
+        if colors is not None:
+            badge.setBackground(self.rounded_plate(colors.accent, _dp(8)))
+            badge.setTextColor(colors.onAccent)
+        badge.setText(str(count) if count < 100 else "99+")
+        badge.setVisibility(0)
+        self.tabs[PANEL_MORNYE].setContentDescription("%s, %d" % (title, count))
+        self.layout.requestLayout()
+
+    @staticmethod
+    def rounded_plate(color, radius):
+        drawable = jclass("android.graphics.drawable.GradientDrawable")()
+        drawable.setColor(color)
+        drawable.setCornerRadius(float(radius))
+        return drawable
 
     def tab_pressed(self, index):
         if index == self.active_tab:
@@ -227,7 +276,7 @@ class Player:
 
     def own_views(self):
         """The player's own views: everything in its layout but the panel and the tabs' screens."""
-        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator]}
+        keep = {view.hashCode() for view in self.panel_views()}
         for screen in [stack for _, stack in self.stacks()] + [self.queue_screen]:
             if screen is not None:
                 keep.add(screen.root.hashCode())
@@ -299,7 +348,7 @@ class Player:
         Transition alpha multiplies the alpha the player animates on its own, so neither undoes the other. The
         tab's root takes the touches, so nothing hidden can be pressed.
         """
-        keep = {view.hashCode() for view in self.tabs + [self.divider, self.indicator]}
+        keep = {view.hashCode() for view in self.panel_views()}
         for screen in [stack for _, stack in self.stacks()] + [self.queue_screen]:
             if screen is not None:
                 keep.add(screen.root.hashCode())
@@ -494,6 +543,10 @@ class Player:
         menu.show()
 
     def dispose(self):
+        extensions = getattr(self.plugin, "extensions", None)
+        if getattr(self, "badge_listener", None) is not None and extensions is not None and self.badge_listener in extensions.listeners:
+            extensions.listeners.remove(self.badge_listener)
+        self.badge_listener = None
         """The sheet is gone: its buttons and the library let go of their listeners.
 
         Each listener's closure holds this player, and a cycle through Java and Python is never collected:
@@ -898,6 +951,13 @@ class Player:
                                self.lyricsView.getTop() + self.lyricsView.getMeasuredHeight())
         for index, tab in enumerate(self.tabs):
             put(tab, pane_left + index * slot, self.panel_top)
+        if getattr(self, "badge", None) is not None and self.badge.getVisibility() == 0:
+            spec = jclass("android.view.View$MeasureSpec")
+            self.badge.measure(spec.makeMeasureSpec(_dp(40), spec.AT_MOST), spec.makeMeasureSpec(_dp(16), spec.EXACTLY))
+            width = max(_dp(16), self.badge.getMeasuredWidth())
+            self.badge.measure(spec.makeMeasureSpec(width, spec.EXACTLY), spec.makeMeasureSpec(_dp(16), spec.EXACTLY))
+            center = pane_left + PANEL_MORNYE * slot + slot // 2
+            put(self.badge, center + _dp(4), self.panel_top + _dp(PANEL_H) // 2 - _dp(18))
         self.place_indicator()
         if getattr(self, "swipes", None) is not None:
             self.swipes.place(put, f.float(lay, "coverLeft"), f.float(lay, "coverTop"), f.float(lay, "coverSize"))
