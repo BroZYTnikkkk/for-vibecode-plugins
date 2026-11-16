@@ -137,6 +137,7 @@ class QualityPill:
         self.view = None
         self.plate = None
         self.pressed = None  # (x, y) of a finger that went down on the pill
+        self.faded = False  # the lyrics are open: the pill is out of sight and out of touch
 
     def where(self):
         return int(self.plugin.get_setting("quality_pill", UNDER))
@@ -245,13 +246,20 @@ class QualityPill:
         self.colors(self.plugin.sheet_fields.get(self.player.sheet, "colors"))
         self.view.setText(text)
         self.view.setContentDescription(tr("Качество: %s") % long_text(info))
-        self.view.setVisibility(0)
+        self.view.setVisibility(4 if self.faded else 0)
         self.view.requestLayout()
 
     def mode(self, progress):
-        """Toward the lyrics the pill leaves with the big cover."""
-        if self.view is not None:
-            self.view.setAlpha(max(0.0, 1.0 - progress))
+        """Toward the lyrics the pill leaves with the big cover. Gone from sight, it is gone from touch too: an
+        invisible pill still took the taps meant for the lyrics' button under it ("save the lyrics in the song")."""
+        if self.view is None:
+            return
+        self.view.setAlpha(max(0.0, 1.0 - progress))
+        faded = progress > 0.5
+        if faded != self.faded:
+            self.faded = faded
+            if self.view.getVisibility() != 8:  # a pill with nothing to say stays gone
+                self.view.setVisibility(4 if faded else 0)
 
     def touch(self, cover, event):
         """From CoverTouchHook: the cover view lies over the pill and takes its touches first, so a tap on the
