@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mornye extensions</title></head><body><script>
+(function () {
+  "use strict";
+  var workers = {};
+  function report(key, text) {
+    try { fetch("werr?k=" + encodeURIComponent(key), {method: "POST", body: String(text || "")}); } catch (e) {}
+  }
+  function spawn(cmd) {
+    kill(cmd.key);
+    var worker;
+    try {
+      worker = new Worker("worker.js?e=" + encodeURIComponent(cmd.e) + "&l=" + encodeURIComponent(cmd.l) + "&g=" + encodeURIComponent(cmd.g));
+    } catch (e) { report(cmd.key, "spawn: " + e); return; }
+    worker.onerror = function (event) {
+      report(cmd.key, (event && event.message ? event.message : "error") + (event && event.lineno ? " @" + event.lineno : ""));
+      if (event && event.preventDefault) event.preventDefault();
+    };
+    workers[cmd.key] = worker;
+  }
+  function kill(key) {
+    var worker = workers[key];
+    if (worker) { try { worker.terminate(); } catch (e) {} delete workers[key]; }
+  }
+  function poll() {
+    fetch("ctl", {method: "POST", cache: "no-store"}).then(function (r) { return r.json(); }).then(function (commands) {
+      for (var i = 0; i < commands.length; i++) {
+        var c = commands[i];
+        if (c.op === "spawn") spawn(c); else if (c.op === "kill") kill(c.key);
+      }
+      setTimeout(poll, 0);
+    }).catch(function () { setTimeout(poll, 1000); });
+  }
+  poll();
+})();
+</script></body></html>
